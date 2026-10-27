@@ -29,6 +29,7 @@
     "@dnd-kit/helpers": "^0.5.1",
     "@dnd-kit/react": "^0.5.1",
     "@fontsource/atkinson-hyperlegible-next": "^5.3.0",
+    "@moq/watch": "0.6.6",
     "@sentry/react": "^11.8.0",
     "@streamplace/core": "workspace:*",
     "@streamplace/i18n": "workspace:*",

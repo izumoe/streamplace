@@ -31,6 +31,24 @@ Get available playback servers for a livestream.
 | Name      | Type              | Req'd | Description                                 | Constraints |
 | --------- | ----------------- | ----- | ------------------------------------------- | ----------- |
 | `servers` | Array of `string` | ✅    | List of available playback server addresses |             |
+| `moq`     | [`#moq`](#moq)    | ❌    |                                             |             |
+
+---
+
+<a name="moq"></a>
+
+### `moq`
+
+**Type:** `object`
+
+Media over QUIC playback advertised by the active origin
+
+**Properties:**
+
+| Name   | Type     | Req'd | Description                                                      | Constraints   |
+| ------ | -------- | ----- | ---------------------------------------------------------------- | ------------- |
+| `url`  | `string` | ✅    | Origin endpoint, including its certificate hash when self-signed | Format: `uri` |
+| `name` | `string` | ✅    | Broadcast path to subscribe to at the origin                     |               |
 
 ---
 
@@ -66,11 +84,31 @@ Get available playback servers for a livestream.
                 "type": "string"
               },
               "description": "List of available playback server addresses"
+            },
+            "moq": {
+              "type": "ref",
+              "ref": "#moq"
             }
           }
         }
       },
       "errors": []
+    },
+    "moq": {
+      "type": "object",
+      "description": "Media over QUIC playback advertised by the active origin",
+      "required": ["url", "name"],
+      "properties": {
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "description": "Origin endpoint, including its certificate hash when self-signed"
+        },
+        "name": {
+          "type": "string",
+          "description": "Broadcast path to subscribe to at the origin"
+        }
+      }
     }
   }
 }

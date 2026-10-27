@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/pion/webrtc/v4"
@@ -16,10 +17,26 @@ import (
 )
 
 func (s *Server) handlePlaceStreamPlaybackGetPlaybackServer(ctx context.Context, stream string) (*placestream.PlaybackGetPlaybackServer_Output, error) {
+	streamer, err := s.resolveStreamer(ctx, stream)
+	if err != nil {
+		return nil, err
+	}
 	addr := strings.TrimPrefix(s.cli.ServerDID(), "did:web:")
-	return &placestream.PlaybackGetPlaybackServer_Output{
+	out := &placestream.PlaybackGetPlaybackServer_Output{
 		Servers: []string{fmt.Sprintf("https://%s", addr)},
-	}, nil
+	}
+	origin, err := s.statefulDB.GetLatestBroadcastOriginForStreamer(streamer)
+	if err != nil {
+		return nil, fmt.Errorf("get broadcast origin: %w", err)
+	}
+	// Origins refresh every 30 seconds while ingest is active.
+	if origin != nil && origin.MoqURL != "" && time.Since(origin.UpdatedAt) < time.Minute {
+		out.Moq = &placestream.PlaybackGetPlaybackServer_Moq{
+			Url:  origin.MoqURL,
+			Name: "playback/" + streamer,
+		}
+	}
+	return out, nil
 }
 
 func (s *Server) handlePlaceStreamPlaybackWhep(ctx context.Context, rendition string, streamer string, r io.Reader, _contentType string) (io.Reader, error) {

@@ -111,7 +111,7 @@ func (r *WebsocketReplicator) serveMoQ(ctx context.Context) error {
 	return g.Wait()
 }
 
-// serveBroadcast answers a peer's request for a streamer's broadcast: a
+// serveBroadcast answers a request for a streamer's broadcast: a
 // stream that is not live here is refused rather than waited on, and a
 // live one is served until it ends on the bus.
 func (r *WebsocketReplicator) serveBroadcast(ctx context.Context, req *official.BroadcastRequest) {
@@ -119,7 +119,12 @@ func (r *WebsocketReplicator) serveBroadcast(ctx context.Context, req *official.
 	if err != nil {
 		return
 	}
-	if r.cli.DisableSyndication || !r.bus.HasSegments(streamer, moqSourceChannel) {
+	sourceChannel := moqSourceChannel
+	if strings.HasPrefix(streamer, "playback/") {
+		streamer = strings.TrimPrefix(streamer, "playback/")
+		sourceChannel = media.PlaybackSourceRendition
+	}
+	if r.cli.DisableSyndication || !r.bus.HasSegments(streamer, sourceChannel) {
 		_ = req.Reject(404)
 		return
 	}
@@ -139,14 +144,14 @@ func (r *WebsocketReplicator) serveBroadcast(ctx context.Context, req *official.
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if !r.bus.HasSegments(streamer, moqSourceChannel) {
+				if !r.bus.HasSegments(streamer, sourceChannel) {
 					cancel()
 					return
 				}
 			}
 		}
 	}()
-	r.serveTracks(ctx, streamer, broadcast, func() error { return req.Accept(broadcast) })
+	r.serveTracks(ctx, streamer, sourceChannel, broadcast, func() error { return req.Accept(broadcast) })
 }
 
 // serveTracks feeds broadcast from the streamer's bus until ctx ends or a
@@ -156,9 +161,9 @@ func (r *WebsocketReplicator) serveBroadcast(ctx context.Context, req *official.
 // broadcast reachable once the first source segment's tracks are all in the
 // catalog: it grows a track at a time, and a subscriber that saw part of
 // the set would reassemble partial segments.
-func (r *WebsocketReplicator) serveTracks(ctx context.Context, streamer string, broadcast *official.BroadcastProducer, publish func() error) {
-	source := r.bus.SubscribeSegmentBuf(ctx, streamer, moqSourceChannel, 2)
-	defer r.bus.UnsubscribeSegment(context.Background(), streamer, moqSourceChannel, source)
+func (r *WebsocketReplicator) serveTracks(ctx context.Context, streamer, sourceChannel string, broadcast *official.BroadcastProducer, publish func() error) {
+	source := r.bus.SubscribeSegmentBuf(ctx, streamer, sourceChannel, 2)
+	defer r.bus.UnsubscribeSegment(context.Background(), streamer, sourceChannel, source)
 	renditions := r.bus.SubscribeSegmentBuf(ctx, streamer, media.RenditionsChannel, 4)
 	defer r.bus.UnsubscribeSegment(context.Background(), streamer, media.RenditionsChannel, renditions)
 	tracks := moqTracks{}
@@ -166,6 +171,7 @@ func (r *WebsocketReplicator) serveTracks(ctx context.Context, streamer string, 
 	// The tracks of one source segment share a group sequence, which is
 	// how a peer puts the segment back together (see consumeSource).
 	var sequence uint64
+	var batchDuration time.Duration
 	for {
 		var err error
 		select {
@@ -174,6 +180,20 @@ func (r *WebsocketReplicator) serveTracks(ctx context.Context, streamer string, 
 		case seg := <-source.C:
 			if !seg.Published {
 				continue
+			}
+			// CMAF passthrough has no native handoff-jitter measurement. Tell
+			// browser playback how much signed media arrives in one burst,
+			// before any catalog or media from that batch becomes reachable.
+			if sourceChannel == media.PlaybackSourceRendition && seg.PacketizedData != nil && seg.PacketizedData.BatchDuration > batchDuration {
+				batchDuration = seg.PacketizedData.BatchDuration
+				milliseconds := batchDuration / time.Millisecond
+				if batchDuration%time.Millisecond != 0 {
+					milliseconds++
+				}
+				if err := broadcast.SetCatalogSection("streamplace", fmt.Sprintf(`{"batchDurationMs":%d}`, milliseconds)); err != nil {
+					log.Warn(ctx, "moq: could not publish playback timing", "streamer", streamer, "error", err)
+					return
+				}
 			}
 			n := sequence
 			sequence++

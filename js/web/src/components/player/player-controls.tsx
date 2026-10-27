@@ -1,4 +1,4 @@
-// Custom controls overlay for the HLS player. Replaces the native HTML5
+// Custom controls overlay for the shared player. Replaces the native HTML5
 // `controls` attribute so the player matches the rest of the web brand.
 // Hides when the video is playing and the user is idle; stays visible
 // when the video is paused or has errored.
@@ -34,11 +34,20 @@ import type { QualityOption } from "./player";
 
 export type PlayerControlsProps = {
   videoRef: RefObject<HTMLVideoElement | null>;
+  /** State and actions for a backend rendered outside the video element. */
+  playback?: {
+    playing: boolean;
+    muted: boolean;
+    volume: number;
+    togglePlay: () => void;
+    toggleMute: () => void;
+    setVolume: (volume: number) => void;
+  };
   /** Element to send into browser fullscreen. Defaults to the parent of the video. */
   containerRef: RefObject<HTMLElement | null>;
   /** Live streams hide the scrubber and show a "LIVE" badge in its place. */
   isLive: boolean;
-  /** Parent controls visibility; auto-hide logic lives in the HLSPlayer. */
+  /** Parent controls visibility and auto-hide behavior. */
   showControls: boolean;
   /** When true, show a centered play button (no control bar). */
   bigPlay: boolean;
@@ -50,9 +59,9 @@ export type PlayerControlsProps = {
   currentQuality: number;
   /** Request a quality change; the backend decides what to do. */
   onQualityChange: (index: number) => void;
-  /** Whether the user picked low-latency (WebRTC) over standard (HLS). */
+  /** Whether the user picked low latency over standard HLS. */
   useWebRTC: boolean;
-  /** Toggle between standard (HLS) and low (WebRTC) transport. */
+  /** Toggle between standard HLS and low latency playback. */
   onUseWebRTCChange: (useWebRTC: boolean) => void;
   /** Whether the "Stats for nerds" overlay is visible. */
   showStats: boolean;
@@ -70,6 +79,7 @@ export function shouldShowUnmutePrompt(playing: boolean, muted: boolean) {
 
 export function PlayerControls({
   videoRef,
+  playback,
   containerRef,
   isLive,
   showControls,
@@ -85,9 +95,13 @@ export function PlayerControls({
   showDanmu,
   onShowDanmuChange,
 }: PlayerControlsProps) {
-  const [playing, setPlaying] = useState(false);
-  const [muted, setMuted] = useState(true);
-  const [volume, setVolume] = useState(1);
+  const [videoPlaying, setPlaying] = useState(false);
+  const [videoMuted, setMuted] = useState(true);
+  const [videoVolume, setVolume] = useState(1);
+  const playing = playback?.playing ?? videoPlaying;
+  const muted = playback?.muted ?? videoMuted;
+  const volume = playback?.volume ?? videoVolume;
+  const canvasPlayback = !!playback;
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -100,6 +114,7 @@ export function PlayerControls({
 
   // Mirror video element state into React.
   useEffect(() => {
+    if (canvasPlayback) return;
     const video = videoRef.current;
     if (!video) return;
 
@@ -134,7 +149,7 @@ export function PlayerControls({
       video.removeEventListener("timeupdate", onTimeUpdate);
       video.removeEventListener("loadedmetadata", onLoadedMetadata);
     };
-  }, [videoRef, isLive]);
+  }, [videoRef, isLive, canvasPlayback]);
 
   // Track browser fullscreen state.
   useEffect(() => {
@@ -161,7 +176,9 @@ export function PlayerControls({
   }, [videoRef]);
 
   const pipSupported =
-    typeof document !== "undefined" && !!document.pictureInPictureEnabled;
+    !canvasPlayback &&
+    typeof document !== "undefined" &&
+    !!document.pictureInPictureEnabled;
 
   const togglePiP = useCallback(async () => {
     const video = videoRef.current;
@@ -178,6 +195,7 @@ export function PlayerControls({
   }, [videoRef]);
 
   const togglePlay = useCallback(() => {
+    if (playback) return playback.togglePlay();
     const video = videoRef.current;
     if (!video) return;
     if (video.paused) {
@@ -185,23 +203,25 @@ export function PlayerControls({
     } else {
       video.pause();
     }
-  }, [videoRef]);
+  }, [videoRef, playback]);
 
   const toggleMute = useCallback(() => {
+    if (playback) return playback.toggleMute();
     const video = videoRef.current;
     if (!video) return;
     video.muted = !video.muted;
-  }, [videoRef]);
+  }, [videoRef, playback]);
 
   const onVolumeInput = useCallback(
     (v: number) => {
+      if (playback) return playback.setVolume(v);
       const video = videoRef.current;
       if (!video) return;
       video.volume = v;
       // Unmuting requires volume > 0 on some browsers.
       if (v > 0) video.muted = false;
     },
-    [videoRef],
+    [videoRef, playback],
   );
 
   const onSeekInput = useCallback(

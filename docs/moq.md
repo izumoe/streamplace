@@ -1,24 +1,25 @@
 # Media over QUIC
 
-Streamplace nodes hand live streams to each other over Media over QUIC,
-using the official implementation: `moq.dev/moq`, the Go wrapper over the
+Streamplace uses Media over QUIC for live video between nodes and browser
+playback. Nodes use `moq.dev/moq`, the official Go wrapper over the
 Rust `moq-ffi` that Meson builds from source into the node (see
 `rust/streamplace-native`). `pkg/moq` holds only what Streamplace adds, the
 listener's certificate handling. The listener and the pull side live in the
 `websocketrep` replicator (`pkg/replication/websocketrep/moq.go`), which
-prefers an origin's MoQ URL over its websocket when one is advertised.
+prefers an origin's MoQ URL over its websocket when one is advertised. The
+browser uses `@moq/watch`.
 
 ## Wire convention
 
 Every byte a broadcast carries is signed MUXL, laid out the way the rest of
 the MoQ ecosystem reads media: a hang catalog and one CMAF track per media
-track. The MoQ tools (`moq export`, `moq play`) and the `@moq/watch` player
-can play a Streamplace broadcast, and a Streamplace node reassembles the
-exact signed segments and verifies them as before.
+track. A Streamplace node reassembles the exact signed segments and verifies
+them as before. Browser playback uses the same CMAF format, with the timing
+section described below for signed media batches.
 
 | MoQ                                         | Streamplace                                                                                                 |
 | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| broadcast path                              | the streamer's DID (`did:plc:...`)                                                                          |
+| broadcast path                              | the streamer's DID (`did:plc:...`) for peers; `playback/did:plc:...` for browser playback                   |
 | `catalog.json`, `catalog.json.z`, `catalog` | the hang and MSF catalogs, one CMAF rendition per track                                                     |
 | track                                       | one MUXL track, named by its MUXL rendition (`video1`, `audio2`, `audio3`; renditions `video100` up)        |
 | group                                       | that track's canonical segment for one GoP                                                                  |
@@ -66,6 +67,57 @@ moq --connect moqt://host:38443 --connect-tls-fingerprint <certhash> \
 One UDP port serves raw QUIC (`moqt://host:port`) and WebTransport, which
 is the binding a browser uses. The transport negotiates the protocol
 version by ALPN.
+
+## Web playback
+
+The DOM player's low-latency mode tries MoQ in a secure browser with
+WebTransport, WebCodecs and Web Audio support. It falls back to WebRTC and
+then HLS when discovery or playback fails. Standard mode and VOD use HLS.
+An explicit `webrtc://` source keeps its WebRTC selection.
+
+`place.stream.playback.getPlaybackServer?stream=<handle-or-DID>` returns
+the existing `servers` list and, when an origin refreshed within the last
+minute advertises MoQ, an optional `moq` object:
+
+```json
+{
+  "moq": {
+    "url": "moqt://origin.example:38443?certhash=<SHA-256-hex>",
+    "name": "playback/did:plc:..."
+  }
+}
+```
+
+The player converts the transport URL to HTTPS for WebTransport and pins
+the advertised certificate hash when present. The origin's UDP listener
+must be reachable by the browser; an HTTP reverse proxy alone does not
+carry this connection. Discovery uses the configured node, independently
+of whether Bluesky's public AppView has indexed the streamer's profile.
+
+The playback broadcast uses independently verified source media before
+the ingest worker finishes adding AAC. Peers continue to receive the
+completed, signed canonical media on the ordinary DID path. Signature,
+streamer identity and distribution checks apply before source playback;
+unpublished segments are not served over MoQ. When a live bitrate limit
+requires admission of completed media, playback waits for that admission.
+
+Signed segments arrive as whole GoP batches. The playback catalog carries
+`streamplace.batchDurationMs`, the rounded-up presentation span of a batch,
+including track offsets and final sample durations. It grows to the largest
+batch observed by that broadcast and resets for a new broadcast. The
+publisher sends this section before making the first media reachable.
+
+The pinned `@moq/watch` player registers this duration with its existing
+sync mechanism, which combines publication jitter with network buffering.
+Audio starts after that buffer covers the batch. Missing or invalid timing,
+or batches at least as long as the player's ten-second progress budget,
+select the existing fallback transports. This preserves the signed segment
+boundary; it does not make media available before a GoP has been signed.
+
+MoQ renders to a canvas and Web Audio, using the shared playback controls
+for pause, volume, quality and fullscreen. Picture-in-picture is available
+on video-element transports. Switching transports or leaving playback
+closes the MoQ player, audio contexts and connection.
 
 ## Configuration
 

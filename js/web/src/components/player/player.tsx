@@ -13,6 +13,8 @@ import { cn } from "../../lib/utils";
 import { Loader } from "../ui/loader";
 import { ContentWarningOverlay } from "./content-warning-overlay";
 import { HLSPlayer } from "./hls-player";
+import { MoQPlayer } from "./moq-player";
+import { supportsMoqPlayback } from "./moq-source";
 import {
   getBufferingOverlayPresentation,
   getBufferingState,
@@ -90,18 +92,18 @@ export type PlayerStats = {
   /** Seconds of buffer ahead of the playhead. */
   buffered: number;
   /** Decoded-and-dropped video frames since load. */
-  droppedFrames: number;
+  droppedFrames?: number;
   /** Total decoded video frames since load. */
   totalFrames: number;
   /** Computed from frame deltas (current interval, fps). */
   fps?: number;
-  /** Current level bitrate in bits per second (HLS-specific). */
+  /** Current stream bitrate in bits per second. */
   bitrate?: number;
   /** hls.js's time-to-first-byte estimate in milliseconds (HLS-specific). */
   ttfbEstimate?: number;
   /** Current level index (-1 for auto in HLS). */
   level: number;
-  /** Comma-separated codec string for the current level (HLS-specific). */
+  /** Comma-separated codec strings for the current audio and video. */
   codecs?: string;
   /** hls.js package version, e.g. "1.5.17" (HLS-specific). */
   hlsVersion?: string;
@@ -177,6 +179,7 @@ export function Player({
   isStreamer,
 }: PlayerProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const { fullscreen } = useFullscreen();
   const backendRef = useRef<PlayerBackendHandle | null>(null);
@@ -192,6 +195,22 @@ export function Player({
   const [qualities, setQualities] = useState<QualityOption[]>([]);
   const [currentQuality, setCurrentQuality] = useState<number>(-1);
   const [useWebRTC, setUseWebRTC] = useState(readTransportPreference);
+  const [moqUnavailableFor, setMoqUnavailableFor] = useState<string | null>(
+    null,
+  );
+  const [moqPaused, setMoqPaused] = useState(false);
+  const [moqMuted, setMoqMuted] = useState(true);
+  const [moqVolume, setMoqVolume] = useState(1);
+  const transport =
+    mode === "vod"
+      ? "hls"
+      : src.startsWith("webrtc://")
+        ? "webrtc"
+        : !useWebRTC
+          ? "hls"
+          : supportsMoqPlayback() && moqUnavailableFor !== src
+            ? "moq"
+            : "webrtc";
   const [showStats, setShowStats] = useState(false);
   const [stats, setStats] = useState<PlayerStats | null>(null);
   // Stable per-mount id for video playback
@@ -202,30 +221,73 @@ export function Player({
   // listeners on every transport toggle or parent re-render.
   const useWebRTCRef = useRef(useWebRTC);
   const onErrorRef = useRef(onError);
-  useWebRTCRef.current = useWebRTC;
+  useWebRTCRef.current = transport === "webrtc";
   onErrorRef.current = onError;
 
-  const surfaceError = useCallback((msg: string) => {
-    if (isStreamer) {
-      setError(msg);
-      onErrorRef.current?.(msg);
-      return;
-    }
-    // WebRTC failed; fall back to HLS automatically.
-    if (useWebRTCRef.current) {
-      setUseWebRTC(false);
-      writeTransportPreference(false);
-    }
-  }, []);
+  const surfaceError = useCallback(
+    (msg: string) => {
+      if (isStreamer) {
+        setError(msg);
+        onErrorRef.current?.(msg);
+        return;
+      }
+      // WebRTC failed; fall back to HLS automatically.
+      if (useWebRTCRef.current) {
+        setUseWebRTC(false);
+        writeTransportPreference(false);
+      }
+    },
+    [isStreamer],
+  );
 
-  const handleWebRTCChange = useCallback((value: boolean) => {
-    setUseWebRTC(value);
-    writeTransportPreference(value);
-  }, []);
+  const handleWebRTCChange = useCallback(
+    (value: boolean) => {
+      const video = videoRef.current;
+      if (video) {
+        if (transport === "moq") {
+          video.muted = moqMuted;
+          video.volume = moqVolume;
+        } else if (value) {
+          setMoqMuted(video.muted);
+          setMoqVolume(video.volume);
+        }
+      }
+      setMoqUnavailableFor(null);
+      setMoqPaused(false);
+      setUseWebRTC(value);
+      writeTransportPreference(value);
+    },
+    [transport, moqMuted, moqVolume],
+  );
+
+  const handlePlaying = useCallback(() => {
+    setPlaying(true);
+    setBuffering(false);
+    setHasPlayed(true);
+    setManifestReady(true);
+    setError(null);
+    onPlaying?.();
+  }, [onPlaying]);
+
+  const handleMoqUnavailable = useCallback(() => {
+    if (videoRef.current) {
+      videoRef.current.muted = moqMuted;
+      videoRef.current.volume = moqVolume;
+    }
+    setMoqUnavailableFor(src);
+  }, [src, moqMuted, moqVolume]);
+
+  const toggleMoqPlay = useCallback(() => {
+    setMoqPaused(playing);
+    setPlaying(!playing && hasPlayed);
+  }, [playing, hasPlayed]);
 
   // Reset per-source state when src or active changes.
   useEffect(() => {
     setError(null);
+    setPlaying(false);
+    setMoqPaused(false);
+    setMoqUnavailableFor(null);
     setBuffering(active);
     setHasPlayed(false);
     setManifestReady(false);
@@ -236,26 +298,23 @@ export function Player({
 
   // reset chrome's per-transport state.
   useEffect(() => {
+    setPlaying(false);
     setBuffering(active);
+    setHasPlayed(false);
+    setManifestReady(false);
     setQualities([]);
     setCurrentQuality(-1);
     setStats(null);
-  }, [active, useWebRTC]);
+  }, [active, transport]);
 
   // Mirror the video element's state into React.
   useEffect(() => {
+    if (transport === "moq") return;
     const video = videoRef.current;
     if (!video) return;
 
     const onPlay = () => setPlaying(true);
     const onPause = () => setPlaying(false);
-    const onPlayingEvt = () => {
-      setBuffering(false);
-      setHasPlayed(true);
-      setManifestReady(true);
-      setError(null);
-      onPlaying?.();
-    };
     const onLoadedMetadata = () => setManifestReady(true);
     const onBufferingChange = (event: Event) => {
       setBuffering(getBufferingState(event.type as BufferingMediaEvent));
@@ -278,7 +337,7 @@ export function Player({
 
     video.addEventListener("play", onPlay);
     video.addEventListener("pause", onPause);
-    video.addEventListener("playing", onPlayingEvt);
+    video.addEventListener("playing", handlePlaying);
     video.addEventListener("loadedmetadata", onLoadedMetadata);
     video.addEventListener("error", onErrorEvt);
     const bufferingEvents = [
@@ -298,14 +357,14 @@ export function Player({
     return () => {
       video.removeEventListener("play", onPlay);
       video.removeEventListener("pause", onPause);
-      video.removeEventListener("playing", onPlayingEvt);
+      video.removeEventListener("playing", handlePlaying);
       video.removeEventListener("loadedmetadata", onLoadedMetadata);
       video.removeEventListener("error", onErrorEvt);
       for (const event of bufferingEvents) {
         video.removeEventListener(event, onBufferingChange);
       }
     };
-  }, [active, onPlaying, surfaceError]);
+  }, [active, transport, handlePlaying, surfaceError]);
 
   // Big play button shows whenever playback is gated (paused, or
   // manifest not yet ready and the user hasn't successfully played).
@@ -337,14 +396,18 @@ export function Player({
     };
   }, [bumpControls]);
 
-  const setQuality = useCallback((index: number) => {
-    backendRef.current?.setQuality(index);
-    writeQualityPreference(index);
-  }, []);
+  const setQuality = useCallback(
+    (index: number) => {
+      backendRef.current?.setQuality(index);
+      if (transport === "hls") writeQualityPreference(index);
+    },
+    [transport],
+  );
 
   return (
     <div
       ref={containerRef}
+      data-playback-transport={active ? transport : undefined}
       className="group relative h-full w-full bg-black"
       onMouseMove={bumpControls}
       onMouseLeave={() => {
@@ -358,6 +421,7 @@ export function Player({
       }}
       onClick={() => {
         if (showBigPlay) return; // big play button handles it
+        if (transport === "moq") return toggleMoqPlay();
         const video = videoRef.current;
         if (!video) return;
         if (video.paused) {
@@ -386,21 +450,49 @@ export function Player({
         />
       )}
 
-      {active && (
-        <PlayerBackend
+      {active && transport === "moq" && (
+        <canvas
+          ref={canvasRef}
+          aria-hidden="true"
+          className={cn(
+            "absolute inset-0 h-full w-full object-contain",
+            hasPlayed ? "opacity-100" : "opacity-0",
+          )}
+        />
+      )}
+
+      {active && transport === "moq" ? (
+        <MoQPlayer
+          ref={backendRef}
+          canvasRef={canvasRef}
           src={src}
-          useWebRTC={useWebRTC}
-          mode={mode}
-          startTime={startTime}
-          lowLatency={lowLatency}
-          videoRef={videoRef}
-          active={active}
-          onError={surfaceError}
+          paused={moqPaused}
+          muted={moqMuted}
+          volume={moqVolume}
+          onUnavailable={handleMoqUnavailable}
+          onPlaying={handlePlaying}
+          onBufferingChange={setBuffering}
           onQualitiesChange={setQualities}
           onCurrentQualityChange={setCurrentQuality}
           onStatsChange={setStats}
-          ref={backendRef}
         />
+      ) : (
+        active && (
+          <PlayerBackend
+            src={src}
+            useWebRTC={transport === "webrtc"}
+            mode={mode}
+            startTime={startTime}
+            lowLatency={lowLatency}
+            videoRef={videoRef}
+            active={active}
+            onError={surfaceError}
+            onQualitiesChange={setQualities}
+            onCurrentQualityChange={setCurrentQuality}
+            onStatsChange={setStats}
+            ref={backendRef}
+          />
+        )
       )}
 
       {active && (
@@ -426,6 +518,21 @@ export function Player({
 
       {active && (
         <PlayerControls
+          playback={
+            transport === "moq"
+              ? {
+                  playing,
+                  muted: moqMuted,
+                  volume: moqVolume,
+                  togglePlay: toggleMoqPlay,
+                  toggleMute: () => setMoqMuted(!moqMuted),
+                  setVolume: (value) => {
+                    setMoqVolume(value);
+                    if (value > 0) setMoqMuted(false);
+                  },
+                }
+              : undefined
+          }
           videoRef={videoRef}
           containerRef={containerRef}
           isLive={mode === "live"}
@@ -448,11 +555,18 @@ export function Player({
         <StatsOverlay
           stats={stats}
           protocol={
-            useWebRTC ? t("player-protocol-webrtc") : t("player-protocol-hls")
+            transport === "moq"
+              ? "MoQ"
+              : transport === "webrtc"
+                ? t("player-protocol-webrtc")
+                : t("player-protocol-hls")
           }
           latencyMode={
-            useWebRTC ? t("player-latency-low") : t("player-latency-standard")
+            transport === "hls"
+              ? t("player-latency-standard")
+              : t("player-latency-low")
           }
+          renderSurface={transport === "moq" ? "canvas" : "video"}
           sessionId={sessionId}
         />
       )}
@@ -500,7 +614,7 @@ function PlayerBackend({
   onStatsChange: (stats: PlayerStats) => void;
   ref: RefObject<PlayerBackendHandle | null>;
 }) {
-  if (useWebRTC || src.startsWith("webrtc://")) {
+  if (mode === "live" && (useWebRTC || src.startsWith("webrtc://"))) {
     return (
       <WebRTCPlayer
         ref={ref}
@@ -533,11 +647,13 @@ function StatsOverlay({
   stats,
   protocol,
   latencyMode,
+  renderSurface,
   sessionId,
 }: {
   stats: PlayerStats;
   protocol: string;
   latencyMode: string;
+  renderSurface: "canvas" | "video";
   sessionId: string;
 }) {
   const { t } = useTranslation();
@@ -612,20 +728,21 @@ function StatsOverlay({
           label={t("player-stats-viewport")}
           value={`${stats.viewportWidth}×${stats.viewportHeight}`}
         />
-        <Row label={t("player-stats-bitrate")} value={bitrateDisplay} />
+        {stats.bitrate !== undefined && (
+          <Row label={t("player-stats-bitrate")} value={bitrateDisplay} />
+        )}
         {stats.ttfbEstimate !== undefined && stats.ttfbEstimate > 0 && (
           <Row label="TTFB" value={`${Math.round(stats.ttfbEstimate)} ms`} />
         )}
-        <Row
-          label="FPS"
-          value={
-            stats.fps !== undefined ? Math.round(stats.fps).toString() : "N/A"
-          }
-        />
-        <Row
-          label={t("player-stats-skipped")}
-          value={`${stats.droppedFrames} / ${stats.totalFrames}`}
-        />
+        {stats.fps !== undefined && (
+          <Row label="FPS" value={Math.round(stats.fps).toString()} />
+        )}
+        {stats.droppedFrames !== undefined && (
+          <Row
+            label={t("player-stats-skipped")}
+            value={`${stats.droppedFrames} / ${stats.totalFrames}`}
+          />
+        )}
         <Row
           label={t("player-stats-buffer")}
           value={`${stats.buffered.toFixed(2)} sec`}
@@ -641,7 +758,7 @@ function StatsOverlay({
         )}
         <Row label={t("player-stats-protocol")} value={protocol} />
         <Row label={t("player-stats-latency-mode")} value={latencyMode} />
-        <Row label={t("player-stats-render-surface")} value="video" />
+        <Row label={t("player-stats-render-surface")} value={renderSurface} />
         {stats.hlsVersion && (
           <Row label="hls.js version" value={stats.hlsVersion} />
         )}

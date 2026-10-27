@@ -13,7 +13,8 @@ import (
 )
 
 type PlaybackGetPlaybackServer_Output struct {
-	LexiconTypeID string `json:"$type,omitempty"`
+	LexiconTypeID string                         `json:"$type,omitempty"`
+	Moq           *PlaybackGetPlaybackServer_Moq `json:"moq,omitempty"`
 	// servers: List of available playback server addresses
 	Servers []string `json:"servers"`
 }
@@ -53,4 +54,35 @@ func PlaybackGetPlaybackServer(ctx context.Context, c glex.LexClient, stream str
 		return nil, err
 	}
 	return &out, nil
+}
+
+// PlaybackGetPlaybackServer_Moq is a "moq" in the place.stream.playback.getPlaybackServer schema.
+//
+// Media over QUIC playback advertised by the active origin
+type PlaybackGetPlaybackServer_Moq struct {
+	LexiconTypeID string `json:"$type,omitempty"`
+	// name: Broadcast path to subscribe to at the origin
+	Name string `json:"name"`
+	// url: Origin endpoint, including its certificate hash when self-signed
+	Url string `json:"url"`
+}
+
+// RecordTypeID implements glex.Record.
+func (t *PlaybackGetPlaybackServer_Moq) RecordTypeID() string {
+	return "place.stream.playback.getPlaybackServer#moq"
+}
+
+func (t *PlaybackGetPlaybackServer_Moq) MarshalCBOR(w io.Writer) error {
+	if t == nil {
+		_, err := w.Write(cbg.CborNull)
+		return err
+	}
+	// stamp $type on a copy so marshal never mutates the record
+	cp := *t
+	cp.LexiconTypeID = "place.stream.playback.getPlaybackServer#moq"
+	return glex.MarshalCBOR(w, &cp)
+}
+
+func (t *PlaybackGetPlaybackServer_Moq) UnmarshalCBOR(r io.Reader) error {
+	return glex.UnmarshalCBOR(r, t)
 }

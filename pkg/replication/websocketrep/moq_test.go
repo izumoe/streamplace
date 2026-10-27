@@ -3,6 +3,7 @@ package websocketrep
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -16,6 +17,7 @@ import (
 	official "moq.dev/moq"
 	"stream.place/streamplace/pkg/bus"
 	"stream.place/streamplace/pkg/config"
+	"stream.place/streamplace/pkg/gstinit"
 	"stream.place/streamplace/pkg/media"
 	"stream.place/streamplace/pkg/moq"
 	"stream.place/streamplace/pkg/muxl"
@@ -81,6 +83,7 @@ func renditionOf(t *testing.T, ctx context.Context, segment []byte) []byte {
 // session ends; a stream that is not live here is refused rather than
 // waited on.
 func TestMoqServesTheBus(t *testing.T) {
+	gstinit.InitGST()
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	interval := moqLivenessInterval
@@ -167,6 +170,82 @@ func TestMoqServesTheBus(t *testing.T) {
 
 	b.PublishSegment(ctx, streamer, media.RenditionsChannel, &bus.Seg{Muxl: rendition, Published: true})
 	require.Equal(t, rendition, next(renditions), "a rendition travels on its own track")
+
+	// Browser playback can start from the verified source while canonical
+	// codec completion is still pending on the peer replication channel.
+	const earlyStreamer = "did:plc:early"
+	packets := make([]*bus.PacketizedSegment, len(segments))
+	shortest, longest := 0, 0
+	for i, segment := range segments {
+		packets[i], err = media.Packetize(ctx, &config.CLI{}, &bus.Seg{Muxl: segment})
+		require.NoError(t, err)
+		if packets[i].BatchDuration < packets[shortest].BatchDuration {
+			shortest = i
+		}
+		if packets[i].BatchDuration > packets[longest].BatchDuration {
+			longest = i
+		}
+	}
+	require.Less(t, packets[shortest].BatchDuration, packets[longest].BatchDuration, "fixture includes a shorter final batch")
+	publishEarly := func(i int) {
+		b.PublishSegment(ctx, earlyStreamer, media.PlaybackSourceRendition, &bus.Seg{Muxl: segments[i], PacketizedData: packets[i], Published: true})
+	}
+	b.PublishSegment(ctx, earlyStreamer, "playback-source", &bus.Seg{Muxl: segments[0], Published: false})
+	publishEarly(shortest)
+	early, err := requestMoqBroadcast(ctx, client, "playback/"+earlyStreamer)
+	require.NoError(t, err)
+	requireBatch := func(broadcast *official.BroadcastConsumer, duration time.Duration) {
+		catalog, err := broadcast.Catalog(ctx)
+		require.NoError(t, err)
+		require.Contains(t, catalog.Sections, "streamplace", "browser catalog carries actual publication buffering before playback begins")
+		var timing struct {
+			BatchDurationMs int64 `json:"batchDurationMs"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(catalog.Sections["streamplace"]), &timing))
+		require.Positive(t, timing.BatchDurationMs)
+		require.Equal(t, int64((duration+time.Millisecond-1)/time.Millisecond), timing.BatchDurationMs)
+	}
+	requireBatch(early, packets[shortest].BatchDuration)
+	earlyGot := make(chan []byte, 2)
+	earlyDone := make(chan error, 1)
+	go func() {
+		earlyDone <- consumeBroadcast(ctx, early,
+			func(segment []byte) error { earlyGot <- segment; return nil },
+			func(context.Context, []byte) error { return nil })
+	}()
+	readEarly := func(i int) {
+		select {
+		case payload := <-earlyGot:
+			require.Equal(t, segments[i], payload, "browser playback serves only published source media before codec completion")
+		case err := <-earlyDone:
+			t.Fatalf("browser playback ended before the source arrived: %v", err)
+		case <-ctx.Done():
+			t.Fatal("browser playback waited for canonical codec completion")
+		}
+	}
+	readEarly(shortest)
+	publishEarly(longest)
+	readEarly(longest)
+	requireBatch(early, packets[longest].BatchDuration)
+	publishEarly(shortest)
+	readEarly(shortest)
+	requireBatch(early, packets[longest].BatchDuration)
+	b.EndSession(ctx, earlyStreamer, media.PlaybackSourceRendition)
+	select {
+	case err := <-earlyDone:
+		require.Error(t, err)
+		require.False(t, errors.Is(err, context.DeadlineExceeded), "browser playback ends with the playback session")
+	case <-ctx.Done():
+		t.Fatal("browser playback outlived its session")
+	}
+	publishEarly(shortest)
+	restartedClient, err := r.dialMoq(ctx, moqURL)
+	require.NoError(t, err)
+	defer restartedClient.Close()
+	restarted, err := requestMoqBroadcast(ctx, restartedClient, "playback/"+earlyStreamer)
+	require.NoError(t, err)
+	requireBatch(restarted, packets[shortest].BatchDuration)
+	b.EndSession(ctx, earlyStreamer, media.PlaybackSourceRendition)
 
 	b.EndSession(ctx, streamer, moqSourceChannel)
 	select {

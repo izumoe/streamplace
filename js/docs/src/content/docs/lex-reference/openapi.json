@@ -1386,6 +1386,9 @@
                       "items": {
                         "type": "string"
                       }
+                    },
+                    "moq": {
+                      "$ref": "#/components/schemas/place.stream.playback.getPlaybackServer_moq"
                     }
                   },
                   "required": ["servers"]
@@ -7397,6 +7400,22 @@
           }
         },
         "required": ["url", "isActive"]
+      },
+      "place.stream.playback.getPlaybackServer_moq": {
+        "type": "object",
+        "description": "Media over QUIC playback advertised by the active origin",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "Origin endpoint, including its certificate hash when self-signed",
+            "format": "uri"
+          },
+          "name": {
+            "type": "string",
+            "description": "Broadcast path to subscribe to at the origin"
+          }
+        },
+        "required": ["url", "name"]
       },
       "place.stream.multistream.target": {
         "description": "Unknown type"
