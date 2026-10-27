@@ -50,7 +50,7 @@ func HandleBusMessagesCustom(ctx context.Context, pipeline gst.Pipeline, handler
 		case gst.MessageElement:
 			// this one is noisy and not useful
 		default:
-			log.Debug(ctx, msg.String())
+			log.Debug(ctx, "gstreamer bus message", "type", msg.Type())
 		}
 	}
 }
