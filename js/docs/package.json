@@ -5,14 +5,14 @@
   "scripts": {
     "dev": "astro dev --host 0.0.0.0 --port 38082",
     "start": "astro dev --host 0.0.0.0 --port 38082",
-    "build": "pnpm --filter @streamplace/brand generate && astro build && rm -rf ../app/dist/docs && mkdir -p ../app/dist && cp -r dist ../app/dist/docs",
+    "build": "pnpm --filter @streamplace/brand generate && astro build && rm -rf ../web/dist/docs && mkdir -p ../web/dist && cp -r dist ../web/dist/docs",
     "preview": "astro preview",
     "astro": "astro"
   },
   "dependencies": {
     "@astrojs/starlight": "^0.40.0",
     "@fontsource/atkinson-hyperlegible-next": "^5.3.0",
-    "@streamplace/app": "workspace:*",
+    "@streamplace/web": "workspace:*",
     "astro": "^6.4.8",
     "sharp": "^0.34.5",
     "starlight-links-validator": "^0.24.1",

@@ -15,7 +15,7 @@ and every run is capturable as screenshots + video for visual review.
 Two terminals, plus one capture command whenever you want visual proof:
 
 ```
-make dev            # Rust backend (libstreamplace) on :38080, proxies frontend from :38081
+make dev            # build the backend and native media libraries
 pnpm app start:fast # metro on :38081, no cache clear (use plain `start` only when the cache is stale)
 pnpm app dev:ios    # boot sim if needed + launch the dev client into metro (no native build)
 ```
@@ -75,7 +75,8 @@ installed dev client and print the exact fix when something's missing.
   must be dead — a stuck one fails with "Host recording is already in progress"
   (kill it with `pkill -INT -f "simctl io booted recordVideo"`).
 - The backend (`:38080`) being down doesn't block UI flows — the shell renders,
-  screens may show connection errors. Start `make dev` for full data.
+  screens may show connection errors. Build with `make dev`, then start the
+  generated `streamplace` launcher for full data.
 - i18n: FTL edits in `js/i18n/locales` need `pnpm -F @streamplace/i18n compile:watch`
   running, or they won't appear.
 - Native rebuild is needed only when native deps/config change; bump

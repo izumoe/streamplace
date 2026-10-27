@@ -15,7 +15,7 @@ var AssetFiles embed.FS
 //go:embed package.json
 var pkg []byte
 
-// fetch a static snapshot of the current Streamplace web app
+// Files returns the native update bundles and shared static assets.
 func Files() (fs.FS, error) {
 	rootFiles, err := fs.Sub(AllFiles, "dist")
 	if err != nil {

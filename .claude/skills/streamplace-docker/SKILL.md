@@ -49,8 +49,10 @@ Meson native dependencies; it is not a safe unconditional reconfiguration comman
 Inside a container, `make dev-container` invokes `make dev-setup` directly without
 the host-side existence guard. Prefer `make dev` for subsequent builds.
 
-Go compilation needs both real frontend bundles (`js/app/dist`, `js/web/dist`)
-and the native build. Empty `dist` directories cannot satisfy the Go embed
+Go compilation needs the native OTA export (`js/app/dist/metadata.json` and
+`expoConfig.json`), the web frontend (`js/web/dist/index.html`), and the native
+build. `make app` produces the exports; native project generation is separate
+(`make mobile-prebuild`). Empty `dist` directories cannot satisfy the Go embed
 patterns. Do not install arbitrary host libraries to work around a missing
 container build.
 
@@ -134,10 +136,11 @@ docker exec -w "$REPO" "$CONTAINER" make lexicons
 
 ### Branch changes and stale artifacts
 
-- `make dev` and `make app-cached` skip frontend builds when both bundle entrypoints
-  exist. Run `make app` explicitly after frontend changes, then `make dev` before
-  testing embedded UI. Provisioning's tracked-file timestamp heuristic does not
-  replace this rule, especially for new untracked source files.
+- `make dev` and `make app-cached` skip frontend builds when the native metadata,
+  client configuration, and web entrypoint exist. Run `make app` explicitly after
+  frontend changes, then `make dev` before testing embedded UI. Provisioning's
+  tracked-file timestamp heuristic does not replace this rule, especially for
+  new untracked source files.
 - After changing branches or dependency manifests, run `pnpm install` inside the
   container. Regenerate lexicons when their source or generator changes; generated
   JS types on disk can otherwise describe a different branch.
@@ -157,9 +160,9 @@ specific command. Do not assume a sibling exists or modify its artifacts.
 ## Isolated scratch node
 
 `make dev` builds binaries; it does **not** start a server. The generated
-`build-linux-amd64/streamplace` launcher assigns a frontend proxy to port 38081,
-so an environment override cannot disable it. For a scratch node serving the
-embedded bundle, invoke `libstreamplace` directly.
+`build-linux-amd64/streamplace` launcher defaults to the Vite frontend proxy on
+port 5173. Set `SP_DEV_FRONTEND_PROXY=false` to serve the embedded bundle, or
+invoke `libstreamplace` directly.
 
 Enter the container from the host:
 
@@ -196,10 +199,10 @@ proxy. `SP_DEV_PUBLIC_OAUTH=true` permits local HTTP OAuth development; never us
 it in production. Loading client metadata is not proof of a completed login.
 
 For live frontend development instead, set the scratch node's proxy to
-`http://127.0.0.1:38091` and run this in a second container shell at `js/app`:
+`http://127.0.0.1:38091` and run this in a second container shell at the repo root:
 
 ```sh
-EXPO_PUBLIC_STREAMPLACE_URL=http://127.0.0.1:38090 pnpm exec expo start --port 38091
+VITE_STREAMPLACE_URL=http://127.0.0.1:38090 pnpm --filter @streamplace/web dev --host 127.0.0.1 --port 38091
 ```
 
 Keep backend URL and selected ports consistent. The explicit URL overrides the

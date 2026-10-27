@@ -43,10 +43,10 @@ export default defineConfig(async () => {
       alias: {
         // Workspace packages — Vite reads each package's package.json `main`/`types`
         // fields directly, so these aliases just make resolution explicit.
-        "@streamplace/core": resolve(__dirname, "../core/src"),
-        streamplace: resolve(__dirname, "../streamplace/src"),
+        "@streamplace/core": resolve(import.meta.dirname, "../core/src"),
+        streamplace: resolve(import.meta.dirname, "../streamplace/src"),
         // @-prefix for src/ — makes imports a bit cleaner and avoids relative path hell.
-        "@": resolve(__dirname, "./src"),
+        "@": resolve(import.meta.dirname, "./src"),
       },
     },
     server: {

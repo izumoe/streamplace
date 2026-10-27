@@ -3,7 +3,7 @@ package linking
 import (
 	"context"
 	"golang.org/x/net/html"
-	"io"
+	"io/fs"
 	"net/url"
 	"strings"
 	"testing"
@@ -11,7 +11,7 @@ import (
 	"github.com/ipfs/go-cid"
 	glex "github.com/streamplace/glex/runtime"
 	"github.com/stretchr/testify/require"
-	"stream.place/streamplace/js/app"
+	"stream.place/streamplace/js/web"
 	"stream.place/streamplace/pkg/appbsky"
 	"stream.place/streamplace/pkg/comatproto"
 	"stream.place/streamplace/pkg/config"
@@ -20,15 +20,12 @@ import (
 )
 
 func IndexHTML(t *testing.T) []byte {
-	allFiles, err := app.Files()
+	t.Helper()
+	allFiles, err := web.Files()
 	require.NoError(t, err)
-	require.NotNil(t, allFiles)
-	index, err := allFiles.Open("index.html")
+	index, err := fs.ReadFile(allFiles, "index.html")
 	require.NoError(t, err)
-	indexBs, err := io.ReadAll(index)
-	require.NoError(t, err)
-	require.NotNil(t, indexBs)
-	return indexBs
+	return index
 }
 
 func TestNewLinker(t *testing.T) {
@@ -307,20 +304,41 @@ func TestCardTemplates(t *testing.T) {
 	require.Contains(t, page, `<meta property="og:description" content="Trust your feed"/>`)
 }
 
-func TestBootstrapBrandingRejectsCSSInjection(t *testing.T) {
+func TestInitialBackgroundBranding(t *testing.T) {
 	ctx := context.Background()
-	sdb, err := statedb.MakeDB(ctx, &config.CLI{DBURL: ":memory:"}, nil, nil)
-	require.NoError(t, err)
-	linker, err := NewLinker(ctx, IndexHTML(t), sdb, &config.CLI{BroadcasterHost: "example.com"})
-	require.NoError(t, err)
-	require.NoError(t, sdb.PutBrandingBlob("did:web:example.com", "backgroundColor", "text/plain", []byte(" #123456 "), nil, nil))
-	require.NoError(t, sdb.PutBrandingBlob("did:web:example.com", "primaryColor", "text/plain", []byte(`</style><script>alert(1)</script>`), nil, nil))
+	for _, tc := range []struct {
+		name       string
+		background string
+		color      string
+	}{
+		{"short hex", "#abc", "#abc"},
+		{"trimmed hex", " #123456 ", "#123456"},
+		{"alpha hex", "#12345678", "#12345678"},
+		{"CSS injection", `</style><script>alert(1)</script>`, ""},
+		{"unsupported color", "var(--primary)", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sdb, err := statedb.MakeDB(ctx, &config.CLI{DBURL: ":memory:"}, nil, nil)
+			require.NoError(t, err)
+			linker, err := NewLinker(ctx, IndexHTML(t), sdb, &config.CLI{BroadcasterHost: "example.com"})
+			require.NoError(t, err)
+			require.NoError(t, sdb.PutBrandingBlob("did:web:example.com", "backgroundColor", "text/plain", []byte(tc.background), nil, nil))
+			require.NoError(t, sdb.PutBrandingBlob("did:web:example.com", "primaryColor", "text/plain", []byte("#654321"), nil, nil))
 
-	out, err := linker.GenerateHTML(ctx, &PageConfig{})
-	require.NoError(t, err)
-	require.Contains(t, string(out), "--bootstrap-background:#123456")
-	require.NotContains(t, string(out), "--bootstrap-primary:")
-	require.NotContains(t, string(out), "alert(1)")
+			out, err := linker.GenerateHTML(ctx, &PageConfig{})
+			require.NoError(t, err)
+			page := string(out)
+			if tc.color != "" {
+				require.Contains(t, page, "html,body{background-color:"+tc.color+"}")
+				require.Contains(t, page, `<meta name="theme-color" content="`+tc.color+`"/>`)
+			} else {
+				require.NotContains(t, page, "background-color:")
+				require.NotContains(t, page, `name="theme-color"`)
+			}
+			require.NotContains(t, page, "--bootstrap-")
+			require.NotContains(t, page, "alert(1)")
+		})
+	}
 }
 
 // Without the home templates the front page keeps the site's own card.

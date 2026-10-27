@@ -56,7 +56,7 @@ step "dependencies (pnpm install)"
 run pnpm install
 
 # --- frontends --------------------------------------------------------------
-# `make dev` skips the JS build whenever js/app/dist/index.html exists, which
+# `make dev` skips the JS build whenever the native and web exports exist, which
 # is how a branch switch leaves you with the previous branch's bundle. Rebuild
 # when a bundle is missing, or when a source it is built from is newer.
 #
@@ -66,14 +66,14 @@ run pnpm install
 # from js/i18n/locales/*.ftl), plus js/brand's output. Counting those would
 # report the frontends stale immediately after building them.
 frontends_stale() {
-  [[ -f js/app/dist/index.html && -f js/web/dist/index.html ]] || return 0
+  [[ -f js/app/dist/metadata.json && -f js/app/dist/expoConfig.json && -f js/web/dist/index.html ]] || return 0
   local f
   while IFS= read -r -d '' f; do
     case "$f" in
       */public/locales/*) continue ;;
     esac
-    if [[ "$f" -nt js/app/dist/index.html ]]; then
-      echo "  $f is newer than js/app/dist/index.html"
+    if [[ "$f" -nt js/app/dist/metadata.json || "$f" -nt js/web/dist/index.html ]]; then
+      echo "  $f is newer than the native or web export"
       return 0
     fi
   done < <(git ls-files -z -- \

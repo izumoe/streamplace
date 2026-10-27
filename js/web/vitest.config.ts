@@ -6,9 +6,9 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: {
-      "@streamplace/core": resolve(__dirname, "../core/src"),
-      streamplace: resolve(__dirname, "../streamplace/src"),
-      "@": resolve(__dirname, "./src"),
+      "@streamplace/core": resolve(import.meta.dirname, "../core/src"),
+      streamplace: resolve(import.meta.dirname, "../streamplace/src"),
+      "@": resolve(import.meta.dirname, "./src"),
     },
   },
   test: {

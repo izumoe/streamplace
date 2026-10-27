@@ -6,9 +6,9 @@
       "runtimeExecutable": "bash",
       "runtimeArgs": [
         "-c",
-        "cd js/app && npx expo start --web --port 38081 -c"
+        "pnpm --filter @streamplace/web dev --host 0.0.0.0"
       ],
-      "port": 38081
+      "port": 5173
     }
   ]
 }

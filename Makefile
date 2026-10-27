@@ -77,7 +77,11 @@ app: install
 
 .PHONY: app-cached
 app-cached:
-	if [ ! -f js/app/dist/index.html ] || [ ! -f js/web/dist/index.html ]; then $(MAKE) app; else echo "frontends already built, run make app to rebuild"; fi
+	if [ ! -f js/app/dist/metadata.json ] || [ ! -f js/app/dist/expoConfig.json ] || [ ! -f js/web/dist/index.html ]; then $(MAKE) app; else echo "frontends already built, run make app to rebuild"; fi
+
+.PHONY: mobile-prebuild
+mobile-prebuild: install
+	pnpm --filter @streamplace/app native:prebuild
 
 .PHONY: ci-ios
 ci-ios: version install app
@@ -89,13 +93,13 @@ ci-android: version install android ci-upload-android
 
 .PHONY: ci-android-debug
 ci-android-debug: version install
-	pnpm run app prebuild
+	pnpm run app native:prebuild
 	$(MAKE) android-debug
 	$(MAKE) ci-upload-android-debug
 
 .PHONY: ci-android-release
 ci-android-release: version install
-	pnpm run app prebuild
+	pnpm run app native:prebuild
 	$(MAKE) android-release
 	$(MAKE) ci-upload-android-release
 
@@ -114,14 +118,14 @@ android-keystore:
 	fi
 
 .PHONY: android
-android: app .build/bundletool.jar
+android: app mobile-prebuild .build/bundletool.jar
 	$(MAKE) android-release
 	$(MAKE) android-debug
 
 .PHONY: android-release
 android-release: .build/bundletool.jar android-keystore
 	@if grep -q e2e_network_security_config js/app/android/app/src/main/AndroidManifest.xml; then \
-		echo "js/app/android was prebuilt for e2e (make android-e2e); run 'cd js/app && pnpm run prebuild' before a release build"; \
+		echo "js/app/android was prebuilt for e2e (make android-e2e); run 'make mobile-prebuild' before a release build"; \
 		exit 1; \
 	fi
 	export NODE_ENV=production \
@@ -138,7 +142,7 @@ android-release: .build/bundletool.jar android-keystore
 # js/app/app.config.ts). For testing only; never ship it.
 .PHONY: android-e2e
 android-e2e: .build/bundletool.jar android-keystore
-	cd js/app && SP_E2E_BUILD=true pnpm run prebuild
+	cd js/app && SP_E2E_BUILD=true pnpm run native:prebuild
 	export NODE_ENV=production \
 	&& cd ./js/app/android \
 	&& ./gradlew :app:bundleRelease \
@@ -160,7 +164,7 @@ android-debug: .build/bundletool.jar android-keystore
 	&& unzip streamplace-$(VERSION)-android-debug.apks && mv universal.apk streamplace-$(VERSION)-android-debug.apk && rm toc.pb
 
 .PHONY: ios
-ios: app
+ios: app mobile-prebuild
 	bash -eu -c ' \
 		set -- ./js/app/ios/*.xcworkspace; \
 		workspace="$$1"; \
@@ -373,15 +377,6 @@ dev-setup:
 dev: app-cached $(LEXICON_STAMP)
 	if [ ! -d $(BUILDDIR) ]; then $(MAKE) dev-setup; fi
 	cp ./util/streamplace-dev.sh $(BUILDDIR)/streamplace
-	$(MAKE) dev-rust
-	PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) \
-	CGO_LDFLAGS="$(NATIVE_CGO_LDFLAGS)" \
-	LD_LIBRARY_PATH=$(BUILDDIR)/lib $(NATIVE_ENV) go build -tags mainnet -o $(BUILDDIR)/libstreamplace ./cmd/libstreamplace/...
-
-.PHONY: dev-web
-dev-web: app-cached $(LEXICON_STAMP)
-	if [ ! -d $(BUILDDIR) ]; then $(MAKE) dev-setup; fi
-	cp ./util/streamplace-dev-web.sh $(BUILDDIR)/streamplace
 	$(MAKE) dev-rust
 	PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) \
 	CGO_LDFLAGS="$(NATIVE_CGO_LDFLAGS)" \
@@ -863,10 +858,6 @@ golangci-lint-container: docker-build-builder
 		--name golangci-lint \
 		dist.stream.place/streamplace/streamplace:$(BUILDER_TARGET) \
 		tail -f /dev/null
-	podman exec golangci-lint mkdir -p js/app/dist
-	podman exec golangci-lint touch js/app/dist/index.html
-	podman exec golangci-lint mkdir -p js/web/dist
-	podman exec golangci-lint touch js/web/dist/index.html
 	podman exec golangci-lint mkdir -p .build
 	podman exec golangci-lint touch .build/lexicon-stamp
 	podman exec golangci-lint make dev

@@ -67,15 +67,6 @@ const inlineBrandingImageLimit = 96 * 1024
 // theme accepts, so a stored value can be dropped straight into a style.
 var hexColor = regexp.MustCompile(`^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$`)
 
-// brandingColor returns a validated node color safe to embed in CSS.
-func (l *Linker) brandingColor(key string) string {
-	v := l.brandingText(key)
-	if !hexColor.MatchString(v) {
-		return ""
-	}
-	return v
-}
-
 // brandingText reads a text branding key for this node, "" when unset.
 func (l *Linker) brandingText(key string) string {
 	if l.sdb == nil || l.cli == nil {
@@ -572,15 +563,8 @@ func (l *Linker) GenerateHTML(ctx context.Context, pc *PageConfig) ([]byte, erro
 	// element too, since that is what mobile browsers show behind their
 	// translucent bars and in overscroll, and as theme-color for the bars
 	// themselves.
-	background := l.brandingColor("backgroundColor")
-	primary := l.brandingColor("primaryColor")
-	var css strings.Builder
-	if background != "" {
-		css.WriteString("html{--bootstrap-background:")
-		css.WriteString(background)
-		css.WriteString("}html,body{background-color:")
-		css.WriteString(background)
-		css.WriteString("}")
+	background := l.brandingText("backgroundColor")
+	if hexColor.MatchString(background) {
 		head.AppendChild(&html.Node{
 			Type: html.ElementNode,
 			Data: "meta",
@@ -589,15 +573,8 @@ func (l *Linker) GenerateHTML(ctx context.Context, pc *PageConfig) ([]byte, erro
 				{Key: "content", Val: background},
 			},
 		})
-	}
-	if primary != "" {
-		css.WriteString("html{--bootstrap-primary:")
-		css.WriteString(primary)
-		css.WriteString("}")
-	}
-	if css.Len() > 0 {
 		style := &html.Node{Type: html.ElementNode, Data: "style"}
-		style.AppendChild(&html.Node{Type: html.TextNode, Data: css.String()})
+		style.AppendChild(&html.Node{Type: html.TextNode, Data: "html,body{background-color:" + background + "}"})
 		head.AppendChild(style)
 	}
 

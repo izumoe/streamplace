@@ -9,7 +9,6 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { useStore } from "../../lib/store";
 import { useStreamplaceUrl } from "../../lib/store/hooks";
-import { isWebBetaEnabled, setWebBetaEnabled } from "../../lib/web-beta";
 
 export const Route = createFileRoute("/settings/advanced")({
   component: AdvancedSettings,
@@ -29,17 +28,12 @@ function AdvancedSettings() {
 
   const [overrideEnabled, setOverrideEnabled] = useState(false);
   const [newUrl, setNewUrl] = useState("");
-  const [webBeta, setWebBeta] = useState(false);
   const [refreshBranding, setRefreshBranding] =
     useState<RefreshStatus>("ready");
 
   useEffect(() => {
     setOverrideEnabled(url !== defaultUrl);
   }, [url, defaultUrl]);
-
-  useEffect(() => {
-    setWebBeta(isWebBetaEnabled());
-  }, []);
 
   const onSubmitUrl = () => {
     if (newUrl) {
@@ -51,16 +45,6 @@ function AdvancedSettings() {
   const handleToggle = (enabled: boolean) => {
     setOverrideEnabled(enabled);
     if (!enabled) setURL(defaultUrl);
-  };
-
-  // Toggling web-beta writes a cookie and reloads. The reload is what
-  // actually flips the user over to the other frontend; the server
-  // reads the cookie on the next request and picks the matching bundle.
-  const handleWebBetaToggle = (enabled: boolean) => {
-    setWebBetaEnabled(enabled);
-    if (typeof window !== "undefined") {
-      window.location.reload();
-    }
   };
 
   const handleRefreshBranding = () => {
@@ -132,20 +116,6 @@ function AdvancedSettings() {
             </div>
           </CardRow>
         )}
-      </Card>
-
-      <Card>
-        <CardRow>
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <div className="text-sm font-medium">{t("try-new-web")}</div>
-              <div className="mt-0.5 text-xs text-(--color-fg-muted)">
-                {t("try-new-web-description")}
-              </div>
-            </div>
-            <Switch checked={webBeta} onCheckedChange={handleWebBetaToggle} />
-          </div>
-        </CardRow>
       </Card>
 
       <Card>

@@ -109,7 +109,6 @@ type CLI struct {
 	Redirects                   map[string]string
 	TestStream                  bool
 	FrontendProxy               string
-	Frontend                    string
 	PublicOAuth                 bool
 	AppBundleID                 string
 	NoFirehose                  bool
@@ -542,13 +541,6 @@ func (cli *CLI) NewCommand(name string) *urfavecli.Command {
 					cli.FrontendProxy = s
 					return nil
 				},
-			},
-			&urfavecli.StringFlag{
-				Name:        "frontend",
-				Usage:       "which bundled frontend to serve: 'app' (legacy Expo) or 'web' (Vite)",
-				Value:       "app",
-				Destination: &cli.Frontend,
-				Sources:     urfavecli.EnvVars("SP_FRONTEND"),
 			},
 			&urfavecli.BoolFlag{
 				Name:        "dev-public-oauth",

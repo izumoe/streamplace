@@ -745,9 +745,9 @@ importers:
       '@fontsource/atkinson-hyperlegible-next':
         specifier: ^5.3.0
         version: 5.3.0
-      '@streamplace/app':
+      '@streamplace/web':
         specifier: workspace:*
-        version: link:../app
+        version: link:../web
       astro:
         specifier: ^6.4.8
         version: 6.4.8(@types/node@25.5.0)(idb-keyval@6.2.1)(ioredis@5.10.0)(jiti@2.7.0)(lightningcss@1.33.0)(rollup@4.64.12)(terser@5.46.0)(yaml@2.9.1)

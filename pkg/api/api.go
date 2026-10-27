@@ -285,6 +285,15 @@ func (a *StreamplaceAPI) Handler(ctx context.Context) (http.Handler, error) {
 	router.GET("/.well-known/atproto-did", a.HandleAtprotoDID(ctx))
 	router.GET("/dl/*params", a.HandleAppDownload(ctx))
 	router.POST("/", a.HandleWebRTCIngest(ctx))
+	nativeFiles, err := app.Files()
+	if err != nil {
+		return nil, fmt.Errorf("loading native update assets: %w", err)
+	}
+	nativeHandler := a.FileHandler(ctx, http.FileServer(http.FS(nativeFiles)))
+	for path := range a.Mimes {
+		router.Handler(http.MethodGet, "/"+path, nativeHandler)
+		router.Handler(http.MethodHead, "/"+path, nativeHandler)
+	}
 	if a.CLI.FrontendProxy != "" {
 		u, err := url.Parse(a.CLI.FrontendProxy)
 		if err != nil {
@@ -294,24 +303,15 @@ func (a *StreamplaceAPI) Handler(ctx context.Context) (http.Handler, error) {
 		router.GET(devFrontendProxyStatusPath, a.HandleDevFrontendProxyStatus(ctx, u))
 		router.NotFound = &httputil.ReverseProxy{
 			Rewrite: func(r *httputil.ProxyRequest) {
-				// workaround for Expo disliking serving requests from 127.0.0.1 instead of localhost
-				// we need to use 127.0.0.1 because the atproto oauth client requires it
 				r.Out.Header.Set("Origin", u.String())
 				r.SetURL(u)
 			},
-			// while `pnpm app start` is still booting, show a page that polls
+			// while the dev server is still booting, show a page that polls
 			// the status endpoint and reloads once the port is up
 			ErrorHandler: devFrontendProxyErrorHandler(ctx, renderDevFrontendProxyPage(u.String())),
 		}
 	} else {
-		// Always load both frontends. The NotFound dispatcher picks one per
-		// request based on the sp_web_beta cookie (or the --frontend CLI
-		// flag, which forces web for everyone).
-		frontends, err := a.loadFrontends(ctx)
-		if err != nil {
-			return nil, err
-		}
-		linkingHandler, err := a.NotFoundLinkingHandler(ctx, frontends, a.CLI.Frontend == "web")
+		linkingHandler, err := a.NotFoundLinkingHandler(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -371,38 +371,6 @@ func copyHeader(dst, src http.Header) {
 	}
 }
 
-// frontendSet holds a per-frontend linking handler so the NotFound
-// dispatcher can pick which one to serve per request. The legacy RN app
-// and the new Vite web app each get their own; the sp_web_beta cookie
-// opts a user into the new one unless the operator forced it via
-// --frontend=web (in which case forceWeb is true on pick).
-type frontendSet struct {
-	app http.HandlerFunc
-	web http.HandlerFunc
-}
-
-func (f *frontendSet) pick(r *http.Request, forceWeb bool) http.HandlerFunc {
-	if forceWeb {
-		return f.web
-	}
-	if c, err := r.Cookie("sp_web_beta"); err == nil && c.Value == "1" {
-		return f.web
-	}
-	return f.app
-}
-
-func (a *StreamplaceAPI) loadFrontends(ctx context.Context) (*frontendSet, error) {
-	appHandler, err := a.buildLinkingHandler(ctx, app.Files)
-	if err != nil {
-		return nil, fmt.Errorf("loading app frontend: %w", err)
-	}
-	webHandler, err := a.buildLinkingHandler(ctx, web.Files)
-	if err != nil {
-		return nil, fmt.Errorf("loading web frontend: %w", err)
-	}
-	return &frontendSet{app: appHandler, web: webHandler}, nil
-}
-
 // assetExtensions are the file types a browser or player asks for by name.
 // A path ending in one of them that is not in the frontend bundle is a
 // missing file, not an app route to serve the shell for. Handles are routes
@@ -419,18 +387,13 @@ func looksLikeAsset(path string) bool {
 	return assetExtensions[strings.ToLower(filepath.Ext(path))]
 }
 
-// buildLinkingHandler builds the static-file + link-card handler for a
-// single frontend.
-func (a *StreamplaceAPI) buildLinkingHandler(ctx context.Context, load func() (fs.FS, error)) (http.HandlerFunc, error) {
-	frontendFS, err := load()
+// NotFoundLinkingHandler serves the bundled web app and its link cards.
+func (a *StreamplaceAPI) NotFoundLinkingHandler(ctx context.Context) (http.HandlerFunc, error) {
+	frontendFS, err := web.Files()
 	if err != nil {
 		return nil, err
 	}
-	index, err := frontendFS.Open("index.html")
-	if err != nil {
-		return nil, err
-	}
-	bs, err := io.ReadAll(index)
+	bs, err := fs.ReadFile(frontendFS, "index.html")
 	if err != nil {
 		return nil, err
 	}
@@ -441,21 +404,7 @@ func (a *StreamplaceAPI) buildLinkingHandler(ctx context.Context, load func() (f
 	return a.notFoundLinkingHandler(ctx, linker, frontendFS)
 }
 
-// NotFoundLinkingHandler dispatches to the per-frontend handler that
-// matches the current request. The sp_web_beta cookie opts users into the
-// new web frontend; forceWeb (driven by --frontend=web) makes it stick
-// for everyone. The dev proxy (--dev-frontend-proxy) is handled upstream
-// and never reaches this handler.
-func (a *StreamplaceAPI) NotFoundLinkingHandler(ctx context.Context, frontends *frontendSet, forceWeb bool) (http.HandlerFunc, error) {
-	return func(w http.ResponseWriter, req *http.Request) {
-		frontends.pick(req, forceWeb)(w, req)
-	}, nil
-}
-
-// notFoundLinkingHandler serves static files and link cards for a single
-// frontend. Each frontend gets its own linker (built from that
-// frontend's index.html) so OpenGraph cards match the look of whichever
-// site the user is on.
+// notFoundLinkingHandler serves static files and link cards using the web shell.
 func (a *StreamplaceAPI) notFoundLinkingHandler(ctx context.Context, linker *linking.Linker, frontendFS fs.FS) (http.HandlerFunc, error) {
 	files := frontendFS
 	fsys := AppHostingFS{http.FS(files)}

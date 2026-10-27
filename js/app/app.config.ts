@@ -177,6 +177,7 @@ export default function () {
     expo: {
       name: name,
       slug: name,
+      platforms: ["ios", "android"],
       version: pkg.version,
       // Only rev this to the current version when native dependencies change!
       runtimeVersion: pkg.runtimeVersion,
@@ -267,10 +268,6 @@ export default function () {
               ],
             }
           : {}),
-      },
-      web: {
-        bundler: "metro",
-        output: "single",
       },
       plugins: [
         withAndroidProfileable,
