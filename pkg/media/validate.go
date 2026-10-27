@@ -17,6 +17,7 @@ import (
 	"golang.org/x/sync/errgroup"
 	"stream.place/streamplace/pkg/aqtime"
 	"stream.place/streamplace/pkg/atproto"
+	"stream.place/streamplace/pkg/bus"
 	c2patypes "stream.place/streamplace/pkg/c2patypes"
 	"stream.place/streamplace/pkg/constants"
 	"stream.place/streamplace/pkg/crypto/signers"
@@ -64,7 +65,7 @@ func (mm *MediaManager) validateMP4(ctx context.Context, input io.Reader, local 
 		return fmt.Errorf("failed to read input: %w", err)
 	}
 
-	vs, err := mm.validateSource(ctx, buf, local, streamer)
+	vs, playable, err := mm.validateSource(ctx, buf, local, streamer)
 	if err != nil {
 		return err
 	}
@@ -84,7 +85,7 @@ func (mm *MediaManager) validateMP4(ctx context.Context, input io.Reader, local 
 			log.Warn(ctx, "node transcode signer unavailable, distributing single-codec", "error", serr)
 		}
 	}
-	return mm.distributeSegment(ctx, vs, buf)
+	return mm.distributeSegment(ctx, vs, buf, playable)
 }
 
 // validatedSegment carries the per-segment context derived from validating the
@@ -92,34 +93,67 @@ func (mm *MediaManager) validateMP4(ctx context.Context, input io.Reader, local 
 // later (and over the COMPLETED dual-codec bytes) when codec completion is
 // async — the metadata still comes from the source.
 type validatedSegment struct {
-	meta          *SegmentMetadata
-	mediaData     *localdb.SegmentMediaData
-	label         string
-	repoDID       string
-	signingKeyDID string
-	local         bool
+	meta              *SegmentMetadata
+	mediaData         *localdb.SegmentMediaData
+	label             string
+	repoDID           string
+	signingKeyDID     string
+	local             bool
+	playbackPublished bool
+}
+
+// Source and completed frames each pass the normal validation gates. They do
+// not depend on a matching frame having survived a worker reconnect.
+func (mm *MediaManager) consumeSourcePhase(ctx context.Context, segment []byte, streamer string, source bool) (*bus.Seg, error) {
+	if streamer == "" {
+		return nil, fmt.Errorf("worker source phase has no named streamer")
+	}
+	earlyPlayback := mm.cli.MaximumLiveBitrate == 0
+	if source && !earlyPlayback {
+		return nil, nil // the director must admit the completed segment's bitrate first
+	}
+	vs, playable, err := mm.validateSource(ctx, segment, true, streamer)
+	if err != nil || vs == nil {
+		return nil, err
+	}
+	if !source {
+		// The source phase owns playback, including dropping a rejected GoP.
+		// Completion still reaches every canonical consumer exactly as usual.
+		vs.playbackPublished = earlyPlayback
+		return nil, mm.distributeSegment(ctx, vs, segment, playable)
+	}
+	seg := &bus.Seg{Filepath: vs.label, Data: playable, Published: vs.meta.Published}
+	packet, err := Packetize(ctx, mm.cli, seg)
+	if err != nil {
+		return nil, fmt.Errorf("packetize verified source: %w", err)
+	}
+	seg.Muxl = segment
+	seg.PacketizedData = packet
+	mm.bus.PublishSegment(ctx, vs.repoDID, PlaybackSourceRendition, seg)
+	return seg, nil
 }
 
 // validateSource verifies + media-parses a bare canonical .m4s, resolves the
 // streamer identity, and runs the dedup / distribution-policy / content /
-// allow-list checks. It returns the per-segment context, or (nil, nil) when the
-// segment is already known (dedup skip). A non-empty streamer must be the
-// segment's signed creator.
-func (mm *MediaManager) validateSource(ctx context.Context, buf []byte, local bool, streamer string) (*validatedSegment, error) {
+// allow-list checks. It returns the per-segment context and source
+// presentation, or (nil, nil, nil) when already known. The flat MP4 is separate
+// so asynchronous codec completion retains only source metadata. A non-empty
+// streamer must be the segment's signed creator.
+func (mm *MediaManager) validateSource(ctx context.Context, buf []byte, local bool, streamer string) (*validatedSegment, []byte, error) {
 	tracer := otel.Tracer("signer")
 
 	valid, err := ValidateMP4Media(ctx, buf)
 	if err != nil {
-		return nil, fmt.Errorf("failed to validate MP4 media: %w", err)
+		return nil, nil, fmt.Errorf("failed to validate MP4 media: %w", err)
 	}
 	meta := valid.Meta
 	pub := valid.Pub
 	if streamer != "" && meta.Creator != streamer {
-		return nil, fmt.Errorf("segment signed by %s, not %s", meta.Creator, streamer)
+		return nil, nil, fmt.Errorf("segment signed by %s, not %s", meta.Creator, streamer)
 	}
 
 	if valid.Manifest.Label == nil {
-		return nil, fmt.Errorf("segment manifest has no label")
+		return nil, nil, fmt.Errorf("segment manifest has no label")
 	}
 	label := *valid.Manifest.Label
 	if mm.model != nil {
@@ -127,11 +161,11 @@ func (mm *MediaManager) validateSource(ctx context.Context, buf []byte, local bo
 		oldSeg, err := mm.localDB.GetSegment(label)
 		dbSpan.End()
 		if err != nil {
-			return nil, fmt.Errorf("failed to get old segment: %w", err)
+			return nil, nil, fmt.Errorf("failed to get old segment: %w", err)
 		}
 		if oldSeg != nil {
 			log.Warn(ctx, "segment already exists, skipping", "segmentID", label)
-			return nil, nil
+			return nil, nil, nil
 		}
 	}
 
@@ -139,7 +173,7 @@ func (mm *MediaManager) validateSource(ctx context.Context, buf []byte, local bo
 		allowedBroadcasters := meta.MetadataConfiguration.DistributionPolicy.AllowedBroadcasters
 		if allowedBroadcasters != nil {
 			if !slices.Contains(allowedBroadcasters, "*") && !slices.Contains(allowedBroadcasters, fmt.Sprintf("did:web:%s", mm.cli.BroadcasterHost)) {
-				return nil, fmt.Errorf("broadcaster %s is not allowed to distribute content. Allowed broadcasters: %v", fmt.Sprintf("did:web:%s", mm.cli.BroadcasterHost), allowedBroadcasters)
+				return nil, nil, fmt.Errorf("broadcaster %s is not allowed to distribute content. Allowed broadcasters: %v", fmt.Sprintf("did:web:%s", mm.cli.BroadcasterHost), allowedBroadcasters)
 			}
 		}
 	}
@@ -154,23 +188,23 @@ func (mm *MediaManager) validateSource(ctx context.Context, buf []byte, local bo
 		repo, err := mm.atsync.SyncBlueskyRepoCached(atCtx, meta.Creator)
 		atSpan.End()
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		modelCtx, modelSpan := tracer.Start(ctx, "ValidateMP4.GetSigningKey")
 		signingKey, err := mm.model.GetSigningKey(modelCtx, pub.DIDKey(), repo.DID)
 		modelSpan.End()
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if signingKey == nil {
-			return nil, fmt.Errorf("no signing key found for %s", pub.DIDKey())
+			return nil, nil, fmt.Errorf("no signing key found for %s", pub.DIDKey())
 		}
 		repoDID = repo.DID
 		signingKeyDID = signingKey.DID
 	}
 
 	if err := mm.cli.StreamIsAllowed(repoDID); err != nil {
-		return nil, fmt.Errorf("got valid segment, but user %s is not allowed: %w", repoDID, err)
+		return nil, nil, fmt.Errorf("got valid segment, but user %s is not allowed: %w", repoDID, err)
 	}
 
 	// Defense in depth: a banned streamer's ingest worker is torn down
@@ -182,16 +216,16 @@ func (mm *MediaManager) validateSource(ctx context.Context, buf []byte, local bo
 	banned, err := mm.streamerIsBanned(repoDID)
 	labelSpan.End()
 	if err != nil {
-		return nil, fmt.Errorf("check labels for %s: %w", repoDID, err)
+		return nil, nil, fmt.Errorf("check labels for %s: %w", repoDID, err)
 	}
 	if banned {
-		return nil, fmt.Errorf("got valid segment, but user %s is banned", repoDID)
+		return nil, nil, fmt.Errorf("got valid segment, but user %s is banned", repoDID)
 	}
 
 	// Apply content filtering after metadata is parsed
 	if mm.cli.ContentFilters != nil {
 		if err := mm.applyContentFilters(ctx, meta); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
@@ -202,7 +236,7 @@ func (mm *MediaManager) validateSource(ctx context.Context, buf []byte, local bo
 		repoDID:       repoDID,
 		signingKeyDID: signingKeyDID,
 		local:         local,
-	}, nil
+	}, valid.Playable, nil
 }
 
 // streamerIsBanned reports whether repoDID currently carries an active ban
@@ -226,8 +260,9 @@ func (mm *MediaManager) streamerIsBanned(repoDID string) (bool, error) {
 // completed dual-codec segment when completion ran, else the validated source
 // segment; vs carries the metadata derived from the source. May be invoked
 // synchronously from ValidateMP4 or asynchronously from the stream transcoder,
-// so it takes its own (non-request) context in the latter case.
-func (mm *MediaManager) distributeSegment(ctx context.Context, vs *validatedSegment, seg []byte) error {
+// so it takes its own (non-request) context in the latter case. playable is the
+// source presentation, or nil when codec completion changed the segment.
+func (mm *MediaManager) distributeSegment(ctx context.Context, vs *validatedSegment, seg, playable []byte) error {
 	meta := vs.meta
 
 	// Hold the canonical segment in the stream's in-memory buffer, the recent
@@ -288,17 +323,21 @@ func (mm *MediaManager) distributeSegment(ctx context.Context, vs *validatedSegm
 	// pass through verbatim in the mdat envelope. Replication forwarders instead
 	// ship the bare canonical Muxl bytes (see the iroh and websocket senders),
 	// which a receiving node re-validates unchanged.
-	var playable bytes.Buffer
-	if err := muxl.RunMuxlWrap(ctx, bytes.NewReader(seg), "flat", &playable); err != nil {
-		return fmt.Errorf("wrap segment for distribution: %w", err)
+	if playable == nil {
+		var flat bytes.Buffer
+		if err := muxl.RunMuxlWrap(ctx, bytes.NewReader(seg), "flat", &flat); err != nil {
+			return fmt.Errorf("wrap segment for distribution: %w", err)
+		}
+		playable = flat.Bytes()
 	}
 
 	mm.notifySubscribers(ctx, &NewSegmentNotification{
-		Segment:  dbSeg,
-		Data:     playable.Bytes(),
-		Muxl:     seg,
-		Metadata: meta,
-		Local:    vs.local,
+		Segment:           dbSeg,
+		Data:              playable,
+		Muxl:              seg,
+		Metadata:          meta,
+		Local:             vs.local,
+		PlaybackPublished: vs.playbackPublished,
 	})
 	aqt := aqtime.FromTime(meta.StartTime.Time())
 	log.Log(ctx, "successfully ingested segment", "user", vs.repoDID, "signingKey", vs.signingKeyDID, "timestamp", aqt.FileSafeString(), "segmentID", vs.label)
@@ -353,6 +392,8 @@ func (mm *MediaManager) isWarningBlocked(warning string) bool {
 }
 
 type ValidationResult struct {
+	// Playable is the flat MP4 used to validate the source media.
+	Playable  []byte
 	Pub       *atcrypto.PublicKeyK256
 	Meta      *SegmentMetadata
 	MediaData *localdb.SegmentMediaData
@@ -363,6 +404,7 @@ type ValidationResult struct {
 func ValidateMP4Media(ctx context.Context, buf []byte) (*ValidationResult, error) {
 	g, ctx := errgroup.WithContext(ctx)
 	var mediaData *localdb.SegmentMediaData
+	var playable []byte
 	var validationResult *ValidationResult
 	g.Go(func() error {
 		// gstreamer needs a parseable MP4, but the bytes on the wire/disk are
@@ -374,7 +416,8 @@ func ValidateMP4Media(ctx context.Context, buf []byte) (*ValidationResult, error
 			return fmt.Errorf("wrap segment for media parse: %w", err)
 		}
 		var err error
-		mediaData, err = ValidateMP4MediaData(ctx, flat.Bytes())
+		playable = flat.Bytes()
+		mediaData, err = ValidateMP4MediaData(ctx, playable)
 		return err
 	})
 	g.Go(func() error {
@@ -387,6 +430,7 @@ func ValidateMP4Media(ctx context.Context, buf []byte) (*ValidationResult, error
 		return nil, err
 	}
 	validationResult.MediaData = mediaData
+	validationResult.Playable = playable
 	return validationResult, nil
 }
 

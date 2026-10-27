@@ -113,6 +113,60 @@ func TestFrameServerDropsOldestBeyondBound(t *testing.T) {
 	}
 }
 
+func TestFrameServerBoundsMixedSourcePhases(t *testing.T) {
+	srv := newFrameServer(3)
+	require.NoError(t, srv.SourceSegment(seg(0)))
+	require.NoError(t, srv.CompletedSourceSegment(seg(0)))
+	require.NoError(t, srv.SourceSegment(seg(1)))
+	require.NoError(t, srv.CompletedSourceSegment(seg(1)))
+	require.Equal(t, 1, srv.droppedCount(), "the bound counts frames, not GoPs")
+	client, server := unixPair(t)
+	srv.attach(server)
+	r := ingestframe.NewReader(client)
+	for _, want := range []struct {
+		typ     ingestframe.Type
+		payload []byte
+	}{
+		{ingestframe.CompletedSourceSegment, seg(0)},
+		{ingestframe.SourceSegment, seg(1)},
+		{ingestframe.CompletedSourceSegment, seg(1)},
+	} {
+		typ, payload, err := r.ReadFrame()
+		require.NoError(t, err)
+		require.Equal(t, want.typ, typ)
+		require.Equal(t, want.payload, payload)
+	}
+}
+
+// A successful frame write is already consumed by the client. If the next
+// write fails, reconnect must start with that unwritten frame.
+func TestFrameServerReconnectAfterPartialDrain(t *testing.T) {
+	srv := newFrameServer(3)
+	require.NoError(t, srv.SourceSegment(seg(0)))
+	require.NoError(t, srv.CompletedSourceSegment(seg(0)))
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+	done := make(chan struct{})
+	go func() {
+		srv.attach(server)
+		close(done)
+	}()
+	typ, payload, err := ingestframe.NewReader(client).ReadFrame()
+	require.NoError(t, err)
+	require.Equal(t, ingestframe.SourceSegment, typ)
+	require.Equal(t, seg(0), payload)
+	require.NoError(t, client.Close())
+	<-done
+	require.NoError(t, server.Close())
+	client, server = unixPair(t)
+	srv.attach(server)
+	typ, payload, err = ingestframe.NewReader(client).ReadFrame()
+	require.NoError(t, err)
+	require.Equal(t, ingestframe.CompletedSourceSegment, typ)
+	require.Equal(t, seg(0), payload)
+}
+
 // TestServeFrameSocketAttachAndFlush exercises the real accept loop: frames
 // buffered before any client are flushed on connect, then live frames stream.
 func TestServeFrameSocketAttachAndFlush(t *testing.T) {

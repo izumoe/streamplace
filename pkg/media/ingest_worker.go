@@ -172,6 +172,7 @@ func workerSignStream(cfg IngestWorkerConfig, getManifest func() []byte) SignSeg
 // transcoder-reuse hazard can't arise. Shared by the MP4 and WHIP workers.
 func (mm *MediaManager) workerSegmentSink(ctx context.Context, cfg IngestWorkerConfig, frames FrameWriter) (onSegment func(context.Context, []byte) error, flush func()) {
 	var transcoder *streamTranscoder
+	var earlySource bool
 	onSegment = func(_ context.Context, segment []byte) error {
 		if len(cfg.NodeKeyPEM) == 0 {
 			return frames.Segment(segment) // no node signer → single-codec
@@ -185,12 +186,24 @@ func (mm *MediaManager) workerSegmentSink(ctx context.Context, cfg IngestWorkerC
 			if !need {
 				return frames.Segment(segment) // already dual-codec / no audio track
 			}
+			earlySource = target == "aac"
 			transcoder = mm.newStreamTranscoder(context.WithoutCancel(ctx), target, cfg.NodeCertPEM, cfg.NodeKeyPEM,
 				func(_ any, completed []byte) {
-					if ferr := frames.Segment(completed); ferr != nil {
+					var ferr error
+					if earlySource {
+						ferr = frames.CompletedSourceSegment(completed)
+					} else {
+						ferr = frames.Segment(completed)
+					}
+					if ferr != nil {
 						log.Error(ctx, "ingest worker: frame completed segment", "error", ferr)
 					}
 				})
+		}
+		if earlySource {
+			if err := frames.SourceSegment(segment); err != nil {
+				return err
+			}
 		}
 		return transcoder.Feed(segment, nil)
 	}

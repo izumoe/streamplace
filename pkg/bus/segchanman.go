@@ -13,11 +13,12 @@ import (
 // it's a segment channel manager, you see
 
 type Seg struct {
-	Filepath       string
-	Data           []byte // presentation flat MP4
-	Muxl           []byte // bare canonical .m4s (blindly concatenatable)
-	PacketizedData *PacketizedSegment
-	Published      bool
+	Filepath          string
+	Data              []byte // presentation flat MP4
+	Muxl              []byte // bare canonical .m4s (blindly concatenatable)
+	PacketizedData    *PacketizedSegment
+	Published         bool
+	PlaybackPublished bool
 }
 
 // PacketizedSample is one WebRTC-writable sample — a video access unit or an
@@ -35,6 +36,9 @@ type PacketizedSegment struct {
 	Video    []PacketizedSample
 	Audio    []PacketizedSample
 	Duration time.Duration
+	// BatchDuration spans all sample PTS through the last sample's end across
+	// both tracks. A publisher releasing a complete segment needs this buffer.
+	BatchDuration time.Duration
 }
 
 var chanSize = 1024
@@ -101,12 +105,19 @@ func (b *Bus) UnsubscribeSegment(ctx context.Context, user string, rendition str
 	}
 	for i, c := range chs {
 		if c == ch {
-			chs = append(chs[:i], chs[i+1:]...)
+			last := len(chs) - 1
+			chs[i] = chs[last]
+			chs[last] = nil
+			chs = chs[:last]
 			break
 		}
 	}
 	spmetrics.SegmentSubscriptionsOpen.WithLabelValues(user, rendition).Set(float64(len(chs)))
-	b.segChans[key] = chs
+	if len(chs) == 0 {
+		delete(b.segChans, key)
+	} else {
+		b.segChans[key] = chs
+	}
 }
 
 // HasSegments reports whether user's rendition has published a segment in
@@ -158,4 +169,18 @@ func (b *Bus) EndSession(ctx context.Context, user string, rendition string) {
 
 	key := segChanKey(user, rendition)
 	delete(b.segBuf, key)
+}
+
+// EndSessionIfCurrent clears a producer's cache only while its last segment is
+// still current. An older producer's teardown cannot erase a newer session.
+func (b *Bus) EndSessionIfCurrent(ctx context.Context, user, rendition string, last *Seg) {
+	b.segChansMutex.Lock()
+	defer b.segChansMutex.Unlock()
+	b.segBufMutex.Lock()
+	defer b.segBufMutex.Unlock()
+	key := segChanKey(user, rendition)
+	segments := b.segBuf[key]
+	if len(segments) > 0 && segments[len(segments)-1] == last {
+		delete(b.segBuf, key)
+	}
 }

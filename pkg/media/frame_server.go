@@ -14,9 +14,9 @@ import (
 	"stream.place/streamplace/pkg/log"
 )
 
-// workerFrameBuffer bounds how many signed segments a worker holds while main is
-// disconnected — ~10 min at one segment per ~1s GoP. Beyond this the oldest are
-// dropped (a main outage longer than this loses the oldest tail, loudly).
+// workerFrameBuffer bounds buffered frames while main is disconnected. A GoP
+// with early source playback uses two frames, covering ~5 min at one GoP/sec.
+// Beyond this the oldest frames are dropped and counted.
 const workerFrameBuffer = 600
 
 // workerDrainGrace bounds how long a worker lingers after its stream ends waiting
@@ -30,6 +30,8 @@ const workerDrainGrace = 60 * time.Second
 // *ingestframe.Writer, so RunMP4IngestWorker is agnostic to which it gets.
 type FrameWriter interface {
 	Segment(seg []byte) error
+	SourceSegment(seg []byte) error
+	CompletedSourceSegment(seg []byte) error
 	End() error
 	Error(msg string) error
 }
@@ -85,9 +87,17 @@ func (s *frameServer) push(typ ingestframe.Type, payload []byte) {
 }
 
 func (s *frameServer) Segment(seg []byte) error { s.push(ingestframe.Segment, seg); return nil }
-func (s *frameServer) End() error               { s.push(ingestframe.End, nil); return nil }
-func (s *frameServer) Error(msg string) error   { s.push(ingestframe.Error, []byte(msg)); return nil }
-func (s *frameServer) Answer(sdp string) error  { s.push(ingestframe.Answer, []byte(sdp)); return nil }
+func (s *frameServer) SourceSegment(seg []byte) error {
+	s.push(ingestframe.SourceSegment, seg)
+	return nil
+}
+func (s *frameServer) CompletedSourceSegment(seg []byte) error {
+	s.push(ingestframe.CompletedSourceSegment, seg)
+	return nil
+}
+func (s *frameServer) End() error              { s.push(ingestframe.End, nil); return nil }
+func (s *frameServer) Error(msg string) error  { s.push(ingestframe.Error, []byte(msg)); return nil }
+func (s *frameServer) Answer(sdp string) error { s.push(ingestframe.Answer, []byte(sdp)); return nil }
 
 // dropped reports how many buffered frames were discarded because the buffer
 // overflowed (main was disconnected longer than the buffer window).
@@ -98,16 +108,18 @@ func (s *frameServer) droppedCount() int {
 }
 
 // attach binds a freshly-connected client, replaying buffered frames in order
-// before going live. On a replay error the client is dropped and the buffer kept
-// intact for the next reconnect.
+// before going live. On a replay error only unwritten frames remain buffered.
 func (s *frameServer) attach(conn net.Conn) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	w := ingestframe.NewWriter(conn)
-	for _, f := range s.pending {
+	for len(s.pending) > 0 {
+		f := s.pending[0]
 		if err := w.WriteFrame(f.typ, f.payload); err != nil {
 			return
 		}
+		s.pending[0] = bufferedFrame{}
+		s.pending = s.pending[1:]
 	}
 	s.pending = nil
 	s.conn, s.w = conn, w

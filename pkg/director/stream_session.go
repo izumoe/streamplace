@@ -162,10 +162,12 @@ func (ss *StreamSession) Start(ctx context.Context, notif *media.NewSegmentNotif
 		return ss.viewCountUpdateLoop(ctx, spseg.Creator)
 	})
 
+	timer := time.NewTimer(ss.cli.StreamSessionTimeout)
+	defer timer.Stop()
 	for {
 		select {
 		case <-ss.segmentChan:
-			// reset timer
+			timer.Reset(ss.cli.StreamSessionTimeout)
 		case <-ctx.Done():
 			// Drain all in-flight session goroutines (including the per-segment
 			// AddSegment senders) BEFORE closing the uploader, so no segment
@@ -174,13 +176,13 @@ func (ss *StreamSession) Start(ctx context.Context, notif *media.NewSegmentNotif
 			err := ss.g.Wait()
 			ss.s3Close(ctx)
 			return err
-		// case <-time.After(time.Minute * 1):
-		case <-time.After(ss.cli.StreamSessionTimeout):
+		case <-timer.C:
 			log.Log(ctx, "stream session timeout, shutting down", "timeout", ss.cli.StreamSessionTimeout)
 			spmetrics.StreamSessions.WithLabelValues(notif.Segment.RepoDID).Dec()
 			for _, r := range allRenditions {
 				ss.bus.EndSession(ctx, spseg.Creator, r.Name)
 			}
+			ss.bus.EndSession(ctx, spseg.Creator, media.PlaybackSourceRendition)
 			// Signal background workers to stop
 			if notif.Local {
 				ss.Go(ctx, func() error {
@@ -312,10 +314,11 @@ func (ss *StreamSession) NewSegment(ctx context.Context, notif *media.NewSegment
 	sourceTurn := ss.sourceLane.turn()
 	ss.Go(ctx, func() error {
 		return ss.AddPlaybackSegment(ctx, spseg, "source", &bus.Seg{
-			Filepath:  notif.Segment.ID,
-			Data:      notif.Data,
-			Muxl:      notif.Muxl,
-			Published: notif.Metadata.Published,
+			Filepath:          notif.Segment.ID,
+			Data:              notif.Data,
+			Muxl:              notif.Muxl,
+			Published:         notif.Metadata.Published,
+			PlaybackPublished: notif.PlaybackPublished,
 		}, sourceTurn)
 	})
 
@@ -1031,16 +1034,21 @@ func (ss *StreamSession) AddPlaybackSegment(ctx context.Context, spseg *placestr
 
 func (ss *StreamSession) AddToWebRTC(ctx context.Context, spseg *placestream.Segment, rendition string, seg *bus.Seg, tn *turn) error {
 	defer tn.release()
-	packet, err := media.Packetize(ctx, ss.cli, seg)
-	if err != nil {
-		return fmt.Errorf("failed to packetize segment: %w", err)
+	if !seg.PlaybackPublished {
+		packet, err := media.Packetize(ctx, ss.cli, seg)
+		if err != nil {
+			return fmt.Errorf("failed to packetize segment: %w", err)
+		}
+		seg.PacketizedData = packet
 	}
-	seg.PacketizedData = packet
 	if !tn.wait(ctx) {
 		log.Warn(ctx, "segment abandoned by later segments, not published", "rendition", rendition)
 		return nil
 	}
 	ss.bus.PublishSegment(ctx, spseg.Creator, rendition, seg)
+	if rendition == "source" && !seg.PlaybackPublished {
+		ss.bus.PublishSegment(ctx, spseg.Creator, media.PlaybackSourceRendition, seg)
+	}
 	return nil
 }
 

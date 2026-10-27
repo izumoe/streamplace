@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"stream.place/streamplace/pkg/bus"
 	"stream.place/streamplace/pkg/crypto/signers"
 	"stream.place/streamplace/pkg/ingestframe"
 	"stream.place/streamplace/pkg/log"
@@ -195,6 +196,15 @@ func recordWorkerExit(transport string, exitErr, ctxErr error) {
 // error: nil on a clean close (End then EOF), or io.ErrUnexpectedEOF / a desync
 // error when the worker died mid-frame.
 func (mm *MediaManager) consumeWorkerFrames(ctx context.Context, fr *ingestframe.Reader, streamer string, onSegment func([]byte) error, onProgress func()) (sawEnd bool, _ error) {
+	var lastSource *bus.Seg
+	var canonical bool
+	defer func() {
+		// Before canonical completion there is no director session to expire
+		// playback. Release only this producer's own source-only cache.
+		if !canonical && lastSource != nil {
+			mm.bus.EndSessionIfCurrent(ctx, streamer, PlaybackSourceRendition, lastSource)
+		}
+	}()
 	for {
 		typ, payload, err := fr.ReadFrame()
 		if err != nil {
@@ -203,7 +213,7 @@ func (mm *MediaManager) consumeWorkerFrames(ctx context.Context, fr *ingestframe
 			}
 			return sawEnd, err
 		}
-		if onProgress != nil {
+		if onProgress != nil && typ != ingestframe.SourceSegment {
 			onProgress()
 		}
 		switch typ {
@@ -213,7 +223,19 @@ func (mm *MediaManager) consumeWorkerFrames(ctx context.Context, fr *ingestframe
 					// Per-segment failures are logged, not fatal to the stream — a
 					// bad GoP shouldn't tear down an otherwise-healthy ingest.
 					log.Error(ctx, "ingest worker: segment handler failed", "streamer", streamer, "error", serr)
+				} else {
+					canonical = true
 				}
+			}
+		case ingestframe.SourceSegment, ingestframe.CompletedSourceSegment:
+			published, serr := mm.consumeSourcePhase(ctx, payload, streamer, typ == ingestframe.SourceSegment)
+			if serr != nil {
+				log.Error(ctx, "ingest worker: source phase failed", "streamer", streamer, "phase", typ, "error", serr)
+			} else if typ == ingestframe.CompletedSourceSegment {
+				canonical = true
+			}
+			if published != nil {
+				lastSource = published
 			}
 		case ingestframe.End:
 			sawEnd = true

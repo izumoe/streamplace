@@ -2,8 +2,11 @@ package media
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -116,13 +119,13 @@ func (mm *MediaManager) WebRTCPlayback2(ctx context.Context, user string, rendit
 		defer cancel()
 		defer markDone()
 
-		latency := time.Duration(0)
+		var backlog atomic.Int64
 
 		packetQueue := make(chan *bus.PacketizedSegment, 1024)
 		go func() {
 			busRendition := rendition
-			if audioOnly {
-				busRendition = "source"
+			if audioOnly || rendition == "source" {
+				busRendition = PlaybackSourceRendition
 			}
 			segChan := mm.bus.SubscribeSegmentBuf(ctx, user, busRendition, 2)
 			defer mm.bus.UnsubscribeSegment(ctx, user, busRendition, segChan)
@@ -137,8 +140,13 @@ func (mm *MediaManager) WebRTCPlayback2(ctx context.Context, user string, rendit
 						log.Warn(ctx, "segment is not published and viewer is not the user", "viewer", viewer, "user", user)
 						continue
 					}
-					latency += file.PacketizedData.Duration
-					packetQueue <- file.PacketizedData
+					backlog.Add(int64(file.PacketizedData.Duration))
+					select {
+					case packetQueue <- file.PacketizedData:
+					case <-ctx.Done():
+						backlog.Add(-int64(file.PacketizedData.Duration))
+						return
+					}
 				}
 			}
 		}()
@@ -158,9 +166,9 @@ func (mm *MediaManager) WebRTCPlayback2(ctx context.Context, user string, rendit
 				case <-ctx.Done():
 					return
 				case packet := <-packetQueue:
-					latency -= packet.Duration
-					scalar = getPlaybackRate(latency)
-					log.Debug(ctx, "playback latency", "latency", latency, "scalar", scalar)
+					queuedDuration := time.Duration(backlog.Add(-int64(packet.Duration)))
+					scalar = getPlaybackRate(queuedDuration)
+					log.Debug(ctx, "playback backlog", "backlog", queuedDuration, "scalar", scalar)
 					g, _ := errgroup.WithContext(ctx)
 					wroteAny := false
 
@@ -207,7 +215,9 @@ func (mm *MediaManager) WebRTCPlayback2(ctx context.Context, user string, rendit
 					}
 					if wroteAny {
 						if err := g.Wait(); err != nil {
-							log.Error(ctx, "failed to write samples", "error", err)
+							if ctx.Err() == nil || !errors.Is(err, io.ErrClosedPipe) {
+								log.Error(ctx, "failed to write samples", "error", err)
+							}
 							cancel()
 						}
 					}
@@ -288,6 +298,7 @@ func (mm *MediaManager) WebRTCPlayback2(ctx context.Context, user string, rendit
 func writeSamples(ctx context.Context, track *webrtc.TrackLocalStaticSample, samples []bus.PacketizedSample, scalar float64) error {
 	start := time.Now()
 	var scheduled time.Duration
+	var timer *time.Timer
 	for _, s := range samples {
 		if err := track.WriteSample(media.Sample{Data: s.Data, Duration: s.Duration}); err != nil {
 			return fmt.Errorf("failed to write sample: %w", err)
@@ -297,7 +308,11 @@ func writeSamples(ctx context.Context, track *webrtc.TrackLocalStaticSample, sam
 		if wait <= 0 {
 			continue
 		}
-		timer := time.NewTimer(wait)
+		if timer == nil {
+			timer = time.NewTimer(wait)
+		} else {
+			timer.Reset(wait)
+		}
 		select {
 		case <-ctx.Done():
 			timer.Stop()

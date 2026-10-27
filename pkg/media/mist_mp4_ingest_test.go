@@ -75,7 +75,7 @@ func runMP4ThroughIngestWorkerSegments(t *testing.T, mp4 []byte, transcode bool)
 			break
 		}
 		require.NoError(t, rerr)
-		if typ == ingestframe.Segment {
+		if typ == ingestframe.Segment || typ == ingestframe.CompletedSourceSegment {
 			segs = append(segs, payload)
 		}
 	}

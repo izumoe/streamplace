@@ -20,6 +20,7 @@ import (
 	"stream.place/streamplace/pkg/bus"
 	"stream.place/streamplace/pkg/config"
 	"stream.place/streamplace/pkg/gstinit"
+	"stream.place/streamplace/pkg/muxl"
 	"stream.place/streamplace/test/remote"
 )
 
@@ -77,6 +78,180 @@ func innerTestPacketize(t *testing.T, filename string, expectedVideo int, expect
 	require.Equal(t, expectedVideo, len(packet.Video))
 	require.Equal(t, expectedAudio, len(packet.Audio))
 	require.Equal(t, expectedDuration, packet.Duration)
+}
+
+// Canonical source segments take the Muxl path even when a presentation is
+// supplied too. Its output must carry the same samples and timing as the
+// single-Opus presentation, including the parameter sets needed to join on an IDR.
+func TestPacketizeCanonicalSegment(t *testing.T) {
+	withNoGSTLeaks(t, func() {
+		flat, canonical := packetizeFixture(t)
+		ctx := context.Background()
+		want, err := Packetize(ctx, &config.CLI{}, &bus.Seg{Data: flat})
+		require.NoError(t, err)
+		got, err := Packetize(ctx, &config.CLI{}, &bus.Seg{
+			Data: []byte("stale presentation"),
+			Muxl: canonical,
+		})
+		require.NoError(t, err)
+		require.Equal(t, want, got, "canonical and presentation samples have the same bytes and durations")
+		require.NotEmpty(t, got.Video)
+		require.NotEmpty(t, got.Audio)
+		require.Positive(t, got.Duration)
+
+		// The captured fixture starts with two pictures at the same timestamp.
+		// Preserve that zero gap rather than inventing uniform frame spacing.
+		require.Zero(t, got.Video[0].Duration)
+		keyframes := 0
+		for i, sample := range got.Video {
+			require.True(t, bytes.HasPrefix(sample.Data, []byte{0, 0, 1}) || bytes.HasPrefix(sample.Data, []byte{0, 0, 0, 1}),
+				"sample %d uses byte-stream framing", i)
+			require.True(t, hasVideoSlice(sample.Data), "sample %d contains a picture", i)
+			if i > 0 {
+				require.Positive(t, sample.Duration, "sample %d retains its source duration", i)
+			}
+			sps, pps := false, false
+			for _, typ := range h264NALTypes(sample.Data) {
+				switch typ {
+				case 7:
+					sps = true
+				case 8:
+					pps = true
+				case 5:
+					keyframes++
+					require.True(t, sps && pps, "sample %d has SPS and PPS before its IDR", i)
+				}
+			}
+		}
+		require.Positive(t, keyframes, "fixture exercises keyframe header insertion")
+	})
+}
+
+func TestPacketizePreservesVideoTimeline(t *testing.T) {
+	for _, fixture := range []string{"h264-opus-frag.mp4", "few-video-frames.mp4", "short-video.mp4"} {
+		t.Run(fixture, func(t *testing.T) {
+			withNoGSTLeaks(t, func() {
+				ctx := context.Background()
+				var segments [][]byte
+				if fixture == "h264-opus-frag.mp4" {
+					segments = allSignedBareSegments(t, ctx, newBareSegmentSigner(t), getFixture(fixture))
+				} else {
+					input, err := os.ReadFile(getFixture(fixture))
+					require.NoError(t, err)
+					canonical, err := muxl.RunMuxlCanonicalize(ctx, input, nil)
+					require.NoError(t, err)
+					events, err := unwrapMuxlEvents(ctx, canonical)
+					require.NoError(t, err)
+					_, tracks := catalogAndTracks(events)
+					require.NotEmpty(t, tracks)
+					segments = [][]byte{concatTracksByID(tracks)}
+				}
+				require.NotEmpty(t, segments)
+				for _, segment := range segments {
+					events, err := unwrapMuxlEvents(ctx, segment)
+					require.NoError(t, err)
+					catalog, _ := catalogAndTracks(events)
+					require.NotNil(t, catalog)
+					require.NotNil(t, catalog.Video)
+					require.Len(t, catalog.Video.Renditions, 1)
+					for _, track := range catalog.Video.Renditions {
+						trackID := fmt.Sprint(track.TrackID())
+						var source time.Duration
+						for _, event := range events {
+							source += time.Duration(float64(event.Durations[trackID]) / float64(track.Timescale()) * float64(time.Second))
+						}
+						require.Positive(t, source)
+						packet, err := Packetize(ctx, &config.CLI{}, &bus.Seg{Muxl: segment})
+						require.NoError(t, err)
+						require.NotEmpty(t, packet.Video)
+						require.NotEmpty(t, packet.Audio)
+						var received time.Duration
+						for _, sample := range packet.Video {
+							received += sample.Duration
+						}
+						require.InDelta(t, source, received, float64(time.Microsecond),
+							"video RTP timing must retain its signed span, independent of audio packet rounding")
+					}
+				}
+			})
+		})
+	}
+}
+
+func TestPacketizeMeasuresPublicationBatch(t *testing.T) {
+	withNoGSTLeaks(t, func() {
+		flat, _ := packetizeFixture(t)
+		packet, err := Packetize(context.Background(), &config.CLI{}, &bus.Seg{Data: flat})
+		require.NoError(t, err)
+		require.GreaterOrEqual(t, packet.BatchDuration, packet.Duration,
+			"a complete publication batch includes the full audio timeline")
+		var video time.Duration
+		for _, sample := range packet.Video {
+			video += sample.Duration
+		}
+		require.GreaterOrEqual(t, packet.BatchDuration, video)
+	})
+	for _, offset := range []time.Duration{0, 250 * time.Millisecond} {
+		t.Run(offset.String(), func(t *testing.T) {
+			withNoGSTLeaks(t, func() {
+				flat := runSynthPipeline(t, context.Background(), fmt.Sprintf(
+					"videotestsrc num-buffers=30 ! video/x-raw,width=160,height=120,framerate=30/1 ! x264enc tune=zerolatency speed-preset=ultrafast ! h264parse ! mp4mux name=mux ! appsink name=sink audiotestsrc num-buffers=50 samplesperbuffer=960 timestamp-offset=%d ! audio/x-raw,rate=48000,channels=1 ! audioconvert ! opusenc ! mux.", offset))
+				packet, err := Packetize(context.Background(), &config.CLI{}, &bus.Seg{Data: flat})
+				require.NoError(t, err)
+				require.InDelta(t, packet.Duration+offset, packet.BatchDuration, float64(40*time.Millisecond),
+					"batch span includes the gap before a later audio track; audio pacing duration stays separate")
+			})
+		})
+	}
+}
+
+// Both benchmark inputs contain the same real GoP. Fixture parsing and
+// presentation synthesis happen before the timed packetization loop.
+func packetizeFixture(tb testing.TB) (flat, canonical []byte) {
+	tb.Helper()
+	fixture, err := os.ReadFile(getFixture("sample-segment.mp4"))
+	require.NoError(tb, err)
+	ctx := context.Background()
+	canonicalMP4, err := muxl.RunMuxlCanonicalize(ctx, fixture, nil)
+	require.NoError(tb, err)
+	events, err := unwrapMuxlEvents(ctx, canonicalMP4)
+	require.NoError(tb, err)
+	_, tracks := catalogAndTracks(events)
+	require.NotEmpty(tb, tracks)
+	canonical = concatTracksByID(tracks)
+	var presentation bytes.Buffer
+	require.NoError(tb, muxl.RunMuxlWrap(ctx, bytes.NewReader(canonical), "flat", &presentation))
+	return presentation.Bytes(), canonical
+}
+
+func BenchmarkPacketize(b *testing.B) {
+	gstinit.InitGST()
+	flat, canonical := packetizeFixture(b)
+	for _, tc := range []struct {
+		name string
+		seg  *bus.Seg
+	}{
+		{name: "flat", seg: &bus.Seg{Data: flat}},
+		{name: "canonical", seg: &bus.Seg{Muxl: canonical}},
+	} {
+		b.Run(tc.name, func(b *testing.B) {
+			ctx := context.Background()
+			cli := &config.CLI{}
+			_, err := Packetize(ctx, cli, tc.seg)
+			require.NoError(b, err)
+			b.ReportAllocs()
+			b.SetBytes(int64(len(tc.seg.Data) + len(tc.seg.Muxl)))
+			for b.Loop() {
+				packet, err := Packetize(ctx, cli, tc.seg)
+				if err != nil {
+					b.Fatal(err)
+				}
+				if len(packet.Video) == 0 || len(packet.Audio) == 0 {
+					b.Fatal("packetization lost a track")
+				}
+			}
+		})
+	}
 }
 
 // captionSEINAL builds a minimal valid closed-caption SEI NAL (payload_type 4,
@@ -276,8 +451,8 @@ func TestPacketizeTrailingCaptionSEI(t *testing.T) {
 			require.True(t, hasVideoSlice(v.Data), "video sample %d has no picture", i)
 			totalSEIs += countCaptionSEIs(v.Data)
 			// Real per-sample timing: ~33ms at 30fps, no sample burned by a
-			// zero-length caption "frame". The last sample is exempt — it
-			// stretches to cover the (audio-derived) segment end.
+			// zero-length caption "frame". The final sample uses its native
+			// buffer duration rather than a following timestamp.
 			if i < len(packet.Video)-1 {
 				require.InDelta(t, 33*time.Millisecond, v.Duration, float64(10*time.Millisecond),
 					"video sample %d duration", i)
@@ -322,8 +497,8 @@ func TestFinalizeSampleDurations(t *testing.T) {
 	})
 
 	t.Run("LastSampleStretchesToSegmentEnd", func(t *testing.T) {
-		// A single keyframe in a 4s segment must hold the full 4s, or the
-		// video timeline falls behind the audio's segment after segment.
+		// Fill a known track span when the last sample's native duration
+		// alone would leave its timeline short.
 		raw := []rawSample{
 			{ts: ms(0), hasTS: true, bufDur: ms(33), hasDur: true},
 		}

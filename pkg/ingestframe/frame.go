@@ -62,6 +62,12 @@ const (
 	// worker reconnecting — it has no model of its own to notice the change.
 	// Payload: the manifest JSON.
 	Manifest Type = 6
+	// SourceSegment carries signed video+Opus before worker-side AAC completion.
+	// Main validates it for playback without canonical distribution side effects.
+	SourceSegment Type = 7
+	// CompletedSourceSegment carries the canonical completion of a SourceSegment.
+	// It is independently validated and distributed through the ordinary path.
+	CompletedSourceSegment Type = 8
 )
 
 func (t Type) String() string {
@@ -78,6 +84,10 @@ func (t Type) String() string {
 		return "event"
 	case Manifest:
 		return "manifest"
+	case SourceSegment:
+		return "source-segment"
+	case CompletedSourceSegment:
+		return "completed-source-segment"
 	default:
 		return fmt.Sprintf("unknown(%d)", uint8(t))
 	}
@@ -128,6 +138,12 @@ func (fw *Writer) WriteFrame(t Type, payload []byte) error {
 
 // Segment frames a signed canonical .m4s segment.
 func (fw *Writer) Segment(seg []byte) error { return fw.WriteFrame(Segment, seg) }
+
+func (fw *Writer) SourceSegment(seg []byte) error { return fw.WriteFrame(SourceSegment, seg) }
+
+func (fw *Writer) CompletedSourceSegment(seg []byte) error {
+	return fw.WriteFrame(CompletedSourceSegment, seg)
+}
 
 // End frames a clean end-of-stream marker.
 func (fw *Writer) End() error { return fw.WriteFrame(End, nil) }

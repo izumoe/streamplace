@@ -242,15 +242,14 @@ func ParseSegmentMediaData(ctx context.Context, mp4bs []byte) (*localdb.SegmentM
 		return nil, fmt.Errorf("error setting SegmentMetadata pipeline to playing")
 	}
 
-	defer func() {
-		if pipeline.BlockSetState(gst.StateNull, gst.ClockTimeNone) == gst.StateChangeFailure {
-			log.Error(ctx, "error setting pipeline state to null")
-		}
-	}()
-
 	<-ctx.Done()
-
 	err = w.Close()
+	// Validation can cancel while native callbacks are still updating metadata.
+	// Closing the pipe unblocks a callback writing to a failed decoder; then stop
+	// those callbacks before reading their results.
+	if pipeline.BlockSetState(gst.StateNull, gst.ClockTimeNone) == gst.StateChangeFailure {
+		log.Error(ctx, "error setting pipeline state to null")
+	}
 	if err != nil {
 		return nil, fmt.Errorf("error closing writer: %w", err)
 	}

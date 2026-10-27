@@ -133,7 +133,7 @@ func TestIngestWorkerSubprocess(t *testing.T) {
 		}
 		require.NoError(t, rerr)
 		switch typ {
-		case ingestframe.Segment:
+		case ingestframe.Segment, ingestframe.CompletedSourceSegment:
 			require.False(t, sawEnd, "no segments after End")
 			out, verr := muxl.RunMuxlVerify(ctx, bytes.NewReader(payload))
 			require.NoError(t, verr, "segment %d verify", segs)
@@ -256,7 +256,7 @@ func TestWorkerIngestsFromPassedFD(t *testing.T) {
 			break
 		}
 		switch typ {
-		case ingestframe.Segment:
+		case ingestframe.Segment, ingestframe.CompletedSourceSegment:
 			out, verr := muxl.RunMuxlVerify(ctx, bytes.NewReader(payload))
 			require.NoError(t, verr, "segment %d verify", segs)
 			require.NotContains(t, out, `"validation_state":"Invalid"`, "segment %d valid", segs)

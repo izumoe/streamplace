@@ -65,7 +65,7 @@ func TestWorkerServesFramesOverSocket(t *testing.T) {
 			break // EOF after the worker exits
 		}
 		switch typ {
-		case ingestframe.Segment:
+		case ingestframe.Segment, ingestframe.CompletedSourceSegment:
 			require.False(t, sawEnd, "no segments after End")
 			out, verr := muxl.RunMuxlVerify(ctx, bytes.NewReader(payload))
 			require.NoError(t, verr, "segment %d verify", segs)

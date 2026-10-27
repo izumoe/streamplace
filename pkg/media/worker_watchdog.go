@@ -53,8 +53,8 @@ func (w *workerWatchdog) stop() {
 	w.timer.Stop()
 }
 
-// wrap returns a FrameWriter that kicks the watchdog on every frame it writes,
-// so any output the worker produces counts as liveness.
+// wrap counts completed media as liveness. Source playback alone must not hide
+// a stalled worker-side codec completion.
 func (w *workerWatchdog) wrap(inner FrameWriter) FrameWriter {
 	return watchdogFrameWriter{FrameWriter: inner, wd: w}
 }
@@ -67,6 +67,10 @@ type watchdogFrameWriter struct {
 func (w watchdogFrameWriter) Segment(seg []byte) error {
 	w.wd.kick()
 	return w.FrameWriter.Segment(seg)
+}
+func (w watchdogFrameWriter) CompletedSourceSegment(seg []byte) error {
+	w.wd.kick()
+	return w.FrameWriter.CompletedSourceSegment(seg)
 }
 func (w watchdogFrameWriter) End() error             { w.wd.kick(); return w.FrameWriter.End() }
 func (w watchdogFrameWriter) Error(msg string) error { w.wd.kick(); return w.FrameWriter.Error(msg) }

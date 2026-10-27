@@ -21,7 +21,6 @@ import (
 	"stream.place/streamplace/pkg/crypto/signers"
 	"stream.place/streamplace/pkg/gstinit"
 	"stream.place/streamplace/pkg/ingestframe"
-	"stream.place/streamplace/pkg/muxl"
 	"stream.place/streamplace/pkg/s3"
 )
 
@@ -143,18 +142,19 @@ func TestRunMP4IngestWorkerProducesValidSignedFrames(t *testing.T) {
 
 	r := ingestframe.NewReader(&buf)
 	var segs int
+	sources := map[string][]byte{}
 	for {
 		typ, payload, err := r.ReadFrame()
 		if errors.Is(err, io.EOF) {
 			break
 		}
 		require.NoError(t, err)
-		require.Equal(t, ingestframe.Segment, typ, "worker emits only Segment frames; End is the subcommand's job")
 		require.NotEmpty(t, payload)
 
-		out, err := muxl.RunMuxlVerify(ctx, bytes.NewReader(payload))
+		valid, err := ValidateMP4MediaC2PA(ctx, payload)
 		require.NoError(t, err, "segment %d verify", segs)
-		require.NotContains(t, out, `"validation_state":"Invalid"`, "segment %d must validate", segs)
+		require.NotNil(t, valid.Manifest.Label)
+		label := *valid.Manifest.Label
 
 		// With a node key the worker completes to dual-codec: every segment must
 		// carry both the source Opus and a worker-transcoded AAC track.
@@ -169,10 +169,22 @@ func TestRunMP4IngestWorkerProducesValidSignedFrames(t *testing.T) {
 			}
 		}
 		require.True(t, hasOpus, "segment %d keeps source Opus (got %v)", segs, codecs)
+		if typ == ingestframe.SourceSegment {
+			require.False(t, hasAAC, "source is available before AAC completion")
+			require.NotContains(t, sources, label)
+			sources[label] = payload
+			continue
+		}
+		require.Equal(t, ingestframe.CompletedSourceSegment, typ)
+		require.Contains(t, sources, label, "each completion follows its signed source")
+		opus, err := filterSegmentToCodec(ctx, payload, true)
+		require.NoError(t, err)
+		require.Equal(t, sources[label], opus, "completion preserves original signed source tracks")
 		require.True(t, hasAAC, "segment %d gains worker-transcoded AAC (got %v)", segs, codecs)
 		segs++
 	}
 	require.GreaterOrEqual(t, segs, 1, "worker emitted at least one signed dual-codec segment")
+	require.Len(t, sources, segs, "every source receives a canonical completion")
 	t.Logf("worker emitted %d valid dual-codec segments", segs)
 }
 

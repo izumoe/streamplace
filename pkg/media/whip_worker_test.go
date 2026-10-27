@@ -215,12 +215,18 @@ func TestWHIPWorkerLoopback(t *testing.T) {
 	// Read signed segments; require at least one valid dual-codec one.
 	_ = conn.SetReadDeadline(time.Now().Add(45 * time.Second))
 	var segs int
+	var sawSource bool
 	for segs == 0 {
 		typ, payload, ferr := fr.ReadFrame()
 		require.NoError(t, ferr, "reading worker frames")
-		if typ != ingestframe.Segment {
+		if typ == ingestframe.SourceSegment {
+			sawSource = true
 			continue
 		}
+		if typ != ingestframe.CompletedSourceSegment {
+			continue
+		}
+		require.True(t, sawSource, "WHIP playback source precedes codec completion")
 		out, verr := muxl.RunMuxlVerify(ctx, bytes.NewReader(payload))
 		require.NoError(t, verr)
 		require.NotContains(t, out, `"validation_state":"Invalid"`, "segment must validate")

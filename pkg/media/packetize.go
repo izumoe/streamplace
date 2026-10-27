@@ -73,8 +73,8 @@ func Packetize(ctx context.Context, cli *config.CLI, seg *bus.Seg) (*bus.Packeti
 	cli.DumpDebugSegment(ctx, fmt.Sprintf("packetize-input-%s.mp4", uu.String()), bytes.NewReader(seg.Data))
 
 	pipelineSlice := []string{
-		fmt.Sprintf("%s name=videoparse ! h264parse ! video/x-h264,stream-format=byte-stream ! appsink sync=false name=videoappsink", constants.Queue2Big),
-		fmt.Sprintf("%s name=audioparse ! opusparse ! appsink sync=false name=audioappsink", constants.Queue2Big),
+		fmt.Sprintf("%s name=videoparse ! video/x-h264,stream-format=byte-stream ! appsink sync=false name=videoappsink", constants.Queue2Big),
+		fmt.Sprintf("%s name=audioparse ! appsink sync=false name=audioappsink", constants.Queue2Big),
 	}
 
 	pipelineElem, err := gst.ParseLaunch(strings.Join(pipelineSlice, "\n"))
@@ -137,6 +137,7 @@ func Packetize(ctx context.Context, cli *config.CLI, seg *bus.Seg) (*bus.Packeti
 
 	videoOutput := []rawSample{}
 	audioOutput := []rawSample{}
+	var videoBatch, audioBatch sampleSpan
 	// eosCh := make(chan struct{})
 
 	// Slice-less video data (parameter sets / SEI metadata with no picture)
@@ -183,7 +184,10 @@ func Packetize(ctx context.Context, cli *config.CLI, seg *bus.Seg) (*bus.Packeti
 				samples = bytes.Clone(samples)
 			}
 
-			videoOutput = append(videoOutput, newRawSample(samples, buffer))
+			raw := newRawSample(samples, buffer)
+			videoOutput = append(videoOutput, raw)
+			timestamp := sample.GetSegment().ToRunningTime(gst.FormatTime, uint64(buffer.PTS()))
+			videoBatch.include(gst.ClockTime(timestamp), raw.bufDur)
 
 			return gst.FlowOK
 		},
@@ -214,7 +218,10 @@ func Packetize(ctx context.Context, cli *config.CLI, seg *bus.Seg) (*bus.Packeti
 			}
 			// log.Warn(ctx, "audioappsink NewSampleFunc", "sample", len(samples))
 
-			audioOutput = append(audioOutput, newRawSample(samples, buffer))
+			raw := newRawSample(samples, buffer)
+			audioOutput = append(audioOutput, raw)
+			timestamp := sample.GetSegment().ToRunningTime(gst.FormatTime, uint64(buffer.PTS()))
+			audioBatch.include(gst.ClockTime(timestamp), raw.bufDur)
 
 			dur, ok := clockTimeDuration(buffer.Duration())
 			if ok {
@@ -258,7 +265,16 @@ func Packetize(ctx context.Context, cli *config.CLI, seg *bus.Seg) (*bus.Packeti
 		return nil, fmt.Errorf("packetize pipeline error filename=%s, error=%w", seg.Filepath, err)
 	}
 
-	video := finalizeSampleDurations(videoOutput, segDur)
+	// Opus packet rounding does not determine the video timeline. Its own
+	// timestamps and final buffer duration also preserve sparse-frame gaps.
+	var videoDuration time.Duration
+	if len(videoOutput) > 0 {
+		first, last := videoOutput[0], videoOutput[len(videoOutput)-1]
+		if first.hasTS && last.hasTS {
+			videoDuration = last.ts - first.ts + last.bufDur
+		}
+	}
+	video := finalizeSampleDurations(videoOutput, videoDuration)
 	// segDur is audio-derived; a video-only segment would report Duration 0,
 	// throwing off the sender's latency bookkeeping (the segment occupies the
 	// sender for its full video span). Fall back to the video timeline.
@@ -268,11 +284,38 @@ func Packetize(ctx context.Context, cli *config.CLI, seg *bus.Seg) (*bus.Packeti
 			duration += s.Duration
 		}
 	}
+	batch := videoBatch
+	if audioBatch.valid {
+		batch.include(gst.ClockTime(audioBatch.start), audioBatch.end-audioBatch.start)
+	}
 	return &bus.PacketizedSegment{
-		Video:    video,
-		Audio:    finalizeSampleDurations(audioOutput, segDur),
-		Duration: duration,
+		Video:         video,
+		Audio:         finalizeSampleDurations(audioOutput, segDur),
+		Duration:      duration,
+		BatchDuration: batch.end - batch.start,
 	}, nil
+}
+
+// Each appsink records its own running-time span, including edit-list offsets;
+// combining them after EOS avoids sharing state across native threads.
+type sampleSpan struct {
+	start time.Duration
+	end   time.Duration
+	valid bool
+}
+
+func (span *sampleSpan) include(timestamp gst.ClockTime, duration time.Duration) {
+	pts, ok := clockTimeDuration(timestamp)
+	if !ok || duration < 0 || pts+duration < pts {
+		return
+	}
+	end := pts + duration
+	if !span.valid {
+		span.start, span.end, span.valid = pts, end, true
+		return
+	}
+	span.start = min(span.start, pts)
+	span.end = max(span.end, end)
 }
 
 // rawSample is a demuxed sample plus the source timing needed to compute its
