@@ -195,11 +195,11 @@ export function useUpload() {
           if (gen !== pollGenRef.current) return;
           const data = res;
 
-          if (data.status === "done" && data.tracks) {
+          if (data.status === "done") {
             setPhase({
               kind: "ready",
               uploadId,
-              tracks: data.tracks,
+              tracks: data.tracks ?? [],
               durationMs: data.durationMs ?? 0,
             });
             return;
