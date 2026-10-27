@@ -1,6 +1,5 @@
 import { expect, test } from "@playwright/test";
 import { readFileSync } from "node:fs";
-import { pointAppAtNode } from "../server-setup";
 
 // The harness runs a second node that hears the test stream's origin record
 // on the firehose and pulls its segments from the first node over Media over
@@ -22,10 +21,6 @@ test("syndication: stream plays from the node that pulls it over MoQ", async ({
     );
   }
 
-  // The peer serves its own copy of the app at its own origin, so it has to
-  // be pointed at itself like the first node was in global-setup.
-  await pointAppAtNode(page, SERVER2_URL);
-
   // The stream is live on the peer once its first pulled segment validates.
   await expect
     .poll(
@@ -41,17 +36,22 @@ test("syndication: stream plays from the node that pulls it over MoQ", async ({
     )
     .toBeGreaterThan(0);
 
+  await page.addInitScript(() => {
+    localStorage.setItem("player-transport", "hls");
+  });
   await page.goto(`${SERVER2_URL}/${did}`);
-  await expect(
-    page.getByText("Now streaming - e2e test stream").first(),
-  ).toBeVisible({ timeout: 30_000 });
   const video = page.locator("video").first();
   await expect(video).toBeVisible();
   // Frames are actually arriving from the peer, not just a player mounted.
   await expect
-    .poll(() => video.evaluate((v) => (v as HTMLVideoElement).currentTime), {
-      timeout: 30_000,
-    })
+    .poll(
+      () =>
+        video.evaluate(
+          (element: HTMLVideoElement) =>
+            element.getVideoPlaybackQuality().totalVideoFrames,
+        ),
+      { timeout: 30_000 },
+    )
     .toBeGreaterThan(0);
   // The peer would fall back to the origin's websocket if MoQ were broken,
   // so playback alone does not show which transport carried the stream.

@@ -1,7 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
-// Vite web beta only: these DOM controls are not the Expo/native player.
-// Run against the real looping harness stream, opting in through its beta cookie.
+// Run the DOM controls against the real looping harness stream.
 test.setTimeout(180_000);
 
 const viewports = [
@@ -60,33 +59,16 @@ async function revealControls(page: Page) {
 for (const viewport of viewports) {
   test(`player viewport: ${viewport.width}x${viewport.height}, chat open and closed`, async ({
     page,
-    context,
     baseURL,
   }) => {
     if (!baseURL || !process.env.ACCOUNT_DID)
       throw new Error("harness URL and ACCOUNT_DID required");
     await page.setViewportSize(viewport);
-    await context.addCookies([
-      { name: "sp_web_beta", value: "1", url: baseURL },
-    ]);
     // Layout is shared across transports; use standard HLS to avoid WebRTC
     // reconnect transitions while inspecting the paused controls.
     await page.addInitScript(() => {
       localStorage.setItem("player-transport", "hls");
     });
-    // The isolated harness account isn't indexed by the public Bluesky AppView.
-    // Only identity discovery is substituted; stream, chat and media remain real.
-    await page.route(
-      `https://public.api.bsky.app/xrpc/app.bsky.actor.getProfile?actor=${encodeURIComponent(process.env.ACCOUNT_DID)}`,
-      (route) =>
-        route.fulfill({
-          headers: { "Access-Control-Allow-Origin": "*" },
-          json: {
-            did: process.env.ACCOUNT_DID,
-            handle: process.env.ACCOUNT_HANDLE,
-          },
-        }),
-    );
     await page.goto(`/${process.env.ACCOUNT_DID}`);
     const video = page.locator("video").first();
     const player = video.locator("..");
@@ -224,14 +206,10 @@ test.describe("player viewport touch targets", () => {
 
   test("expanded portrait controls remain easy to tap", async ({
     page,
-    context,
     baseURL,
   }) => {
     if (!baseURL || !process.env.ACCOUNT_DID)
       throw new Error("harness URL and ACCOUNT_DID required");
-    await context.addCookies([
-      { name: "sp_web_beta", value: "1", url: baseURL },
-    ]);
     await page.addInitScript(() => {
       localStorage.setItem("player-transport", "hls");
     });

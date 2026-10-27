@@ -41,6 +41,9 @@ test("stream: recovers when the first livestream socket fails", async ({
     )
     .toBe(true);
   await expect(
-    page.getByText("Now streaming - e2e test stream").first(),
+    page
+      .getByText("Now streaming - e2e test stream")
+      .filter({ visible: true })
+      .first(),
   ).toBeVisible({ timeout: 30_000 });
 });

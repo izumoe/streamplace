@@ -13,9 +13,6 @@ test("live-clip: a service-auth caller clips the live stream to a playable MP4",
   const did = process.env.ACCOUNT_DID!;
 
   await page.goto("/");
-  await expect(page.getByTestId("home-stream-card").first()).toBeVisible({
-    timeout: 30_000,
-  });
 
   // Everything runs in the page: the browser is what trusts the harness's
   // certificates, and a browser is where a third-party web app would call from.
@@ -49,17 +46,29 @@ test("live-clip: a service-auth caller clips the live stream to a playable MP4",
 
       // A plain <video> plays it from memory.
       let duration = 0;
+      let decodedFrames = 0;
       if (res.ok) {
         const video = document.createElement("video");
         video.muted = true;
-        video.src = URL.createObjectURL(
+        const objectURL = URL.createObjectURL(
           new Blob([bytes], { type: "video/mp4" }),
         );
-        duration = await new Promise<number>((resolve, reject) => {
-          video.onloadedmetadata = () => resolve(video.duration);
+        const frame = new Promise<void>((resolve, reject) => {
+          video.requestVideoFrameCallback(() => resolve());
           video.onerror = () =>
             reject(new Error(`video error ${video.error?.code}`));
         });
+        video.src = objectURL;
+        document.body.append(video);
+        try {
+          await Promise.all([video.play(), frame]);
+          duration = video.duration;
+          decodedFrames = video.getVideoPlaybackQuality().totalVideoFrames;
+        } finally {
+          video.pause();
+          video.remove();
+          URL.revokeObjectURL(objectURL);
+        }
       }
       return {
         anonymous,
@@ -69,6 +78,7 @@ test("live-clip: a service-auth caller clips the live stream to a playable MP4",
         size: bytes.length,
         firstBox: new TextDecoder().decode(bytes.slice(4, 8)),
         duration,
+        decodedFrames,
       };
     },
     {
@@ -85,4 +95,5 @@ test("live-clip: a service-auth caller clips the live stream to a playable MP4",
   expect(result.contentLength).toBe(`${result.size}`);
   expect(result.firstBox).toBe("ftyp");
   expect(result.duration).toBeGreaterThan(0);
+  expect(result.decodedFrames).toBeGreaterThan(0);
 });

@@ -6,8 +6,8 @@ import { loginThroughPds } from "./login";
 // the player must open there instead of at 0:00.
 //
 // The harness's own test VOD has no source tracks, so this uploads the file
-// the harness is streaming (E2E_FIXTURE_MP4) through the app's own /upload
-// workflow first — that is what gives the player something seekable. The
+// the harness is streaming (E2E_FIXTURE_MP4) through /dashboard/upload
+// workflow first, giving the player something seekable. The
 // upload needs a signed-in user, so this needs the harness's HTTPS mode, like
 // the other OAuth flows.
 const HTTPS_URL = process.env.SERVER_HTTPS_URL;
@@ -18,64 +18,69 @@ const START_SECONDS = 151;
 test.skip(!HTTPS_URL, "harness started without its HTTPS hostnames");
 test.skip(!FIXTURE, "harness did not export E2E_FIXTURE_MP4");
 
-// Upload the harness fixture through /upload and return the published video's
-// watch path. The app creates the draft up front and puts the bytes up in the
-// background, so the draft editor opens (with the tid in the URL) well before
-// processing finishes.
+// Upload and publish through the real dashboard, then open the resulting VOD.
 async function uploadFixture(page: Page): Promise<string> {
   await loginThroughPds(page);
-  await page.goto(`${HTTPS_URL}/upload`);
+  await page.goto(`${HTTPS_URL}/dashboard/upload`);
+  await page
+    .getByPlaceholder("Give your video a title")
+    .fill(`t-param test video ${Date.now()}`);
   await page.setInputFiles(
     'input[type="file"][accept="video/*"]',
     FIXTURE as string,
   );
 
-  // The app mints the draft up front and sends the bytes in the background, so
-  // the draft editor opens (with the tid in the URL) before processing ends.
-  // Watch for the tus PATCH: reloading below while it is in flight would abort
-  // it (the app guards the page with beforeunload, which cancels the reload).
   const uploaded = page.waitForResponse(
     (response) =>
       response.request().method() === "PATCH" &&
       new URL(response.url()).pathname.startsWith("/api/upload/"),
     { timeout: 2 * 60_000 },
   );
-  await page.getByRole("button", { name: "Upload video", exact: true }).click();
-  await page.waitForURL(/\/upload\/video\//, { timeout: 30_000 });
+  await page.getByRole("button", { name: "Upload", exact: true }).click();
   expect((await uploaded).ok()).toBe(true);
 
-  // Publish only appears once the node has finished transcoding the upload,
-  // and the editor reads the draft once, so reload until it is ready. The
-  // budget is headroom for a slow transcode on a loaded CI runner.
+  // The dashboard polls the node's processing state and enables publication.
   const publish = page.getByRole("button", { name: "Publish", exact: true });
-  await expect(async () => {
-    await page.reload();
-    await expect(publish).toBeVisible({ timeout: 20_000 });
-  }).toPass({ timeout: 10 * 60_000 });
-
-  // Publish copies the draft as it stands, so give it a title first.
-  await page
-    .getByPlaceholder("Give your video a title")
-    .fill(`t-param test video ${Date.now()}`);
-  await page.getByRole("button", { name: "Save Draft", exact: true }).click();
+  await expect(publish).toBeEnabled({ timeout: 8 * 60_000 });
 
   const published = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&
       new URL(response.url()).pathname ===
-        "/xrpc/place.stream.vod.publishDraft",
+        "/xrpc/place.stream.media.publishVideo",
   );
   await publish.click();
-  const { videoUri } = (await (await published).json()) as {
-    videoUri: string;
+  const response = await published;
+  expect(response.ok()).toBe(true);
+  const { uri } = (await response.json()) as {
+    uri: string;
   };
 
-  const match = videoUri.match(
-    /^at:\/\/([^/]+)\/place\.stream\.video\/([^/]+)$/,
-  );
+  const match = uri.match(/^at:\/\/([^/]+)\/place\.stream\.video\/([^/]+)$/);
   if (!match) {
-    throw new Error(`publishDraft returned an unexpected uri: ${videoUri}`);
+    throw new Error(`publishVideo returned an unexpected uri: ${uri}`);
   }
+  const indexedVideo = new URL(
+    "/xrpc/place.stream.media.getVideo",
+    process.env.SERVER_URL,
+  );
+  indexedVideo.searchParams.set("uri", uri);
+  // Publication fills the source with canonical track records, even though
+  // the processing status returned no published references yet.
+  await expect(async () => {
+    const response = await page.request.get(indexedVideo.href);
+    expect(response.ok()).toBe(true);
+    const { record } = await response.json();
+    expect(record.source.$type).toBe("place.stream.media.defs#sourceTracks");
+    expect(record.source.tracks.length).toBeGreaterThan(0);
+    for (const track of record.source.tracks) {
+      expect(
+        track.uri.startsWith(`at://${ACCOUNT_DID}/place.stream.media.track/`),
+      ).toBe(true);
+      expect(track.cid).toEqual(expect.any(String));
+      expect(track.cid.length).toBeGreaterThan(0);
+    }
+  }).toPass({ timeout: 30_000 });
   return `/${match[1]}/video/${match[2]}`;
 }
 
@@ -92,6 +97,14 @@ test("vod-start-time: ?t= starts playback partway into a VOD", async ({
   await page.goto(`${HTTPS_URL}${watchPath}?t=${START_SECONDS}`);
   const video = page.locator("video").first();
   await expect(video).toBeVisible({ timeout: 30_000 });
+  await expect
+    .poll(() =>
+      video.evaluate(
+        (element: HTMLVideoElement) =>
+          element.getVideoPlaybackQuality().totalVideoFrames,
+      ),
+    )
+    .toBeGreaterThan(0);
 
   // The player opens at the requested position (the fragment containing it,
   // so the exact frame is a little after it), not at 0:00.
@@ -103,36 +116,43 @@ test("vod-start-time: ?t= starts playback partway into a VOD", async ({
     .toBeGreaterThanOrEqual(START_SECONDS);
 });
 
-test("vod-start-time: playback recovers after the HLS chunk fails", async ({
+test("vod-start-time: playback recovers after a media request fails", async ({
   page,
 }) => {
   test.setTimeout(10 * 60_000);
   const watchPath = await uploadFixture(page);
-  // Chromium may advertise native HLS. Exercise browsers that need hls.js,
-  // while still decoding and playing the real uploaded media.
-  await page.addInitScript(() => {
-    const canPlayType = HTMLMediaElement.prototype.canPlayType;
-    HTMLMediaElement.prototype.canPlayType = function (type: string) {
-      return type === "application/vnd.apple.mpegurl"
-        ? ""
-        : canPlayType.call(this, type);
-    };
-  });
-
   let attempts = 0;
-  await page.route(/\/hls-[^/]+\.js$/, async (route) => {
-    attempts++;
-    if (attempts === 1) {
-      await route.fulfill({ status: 503, body: "Temporarily unavailable" });
-    } else {
+  let failedRequest: { url: string; range: string } | undefined;
+  await page.route(
+    "**/xrpc/place.stream.playback.getVideoBlob?**",
+    async (route) => {
+      const request = route.request();
+      const range = request.headers().range;
+      if (range && !failedRequest)
+        failedRequest = { url: request.url(), range };
+      if (
+        request.url() === failedRequest?.url &&
+        range === failedRequest.range
+      ) {
+        attempts++;
+        if (attempts === 1) return route.abort("connectionreset");
+      }
       await route.continue();
-    }
-  });
+    },
+  );
 
   await page.goto(`${HTTPS_URL}${watchPath}?t=${START_SECONDS}`);
   const video = page.locator("video").first();
   await expect(video).toBeVisible({ timeout: 30_000 });
   await expect.poll(() => attempts, { timeout: 30_000 }).toBeGreaterThan(1);
+  await expect
+    .poll(() =>
+      video.evaluate(
+        (element: HTMLVideoElement) =>
+          element.getVideoPlaybackQuality().totalVideoFrames,
+      ),
+    )
+    .toBeGreaterThan(0);
   await expect
     .poll(
       () =>

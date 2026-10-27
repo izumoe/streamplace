@@ -14,20 +14,27 @@ test("best-effort-recording: a failing recording sink does not block playback", 
     throw new Error("ACCOUNT_DID is not set — start the harness first");
   }
 
+  await page.addInitScript(() => {
+    localStorage.setItem("player-transport", "hls");
+  });
   await page.goto("/");
 
-  const card = page.getByTestId("home-stream-card").first();
+  const card = page
+    .getByRole("link")
+    .filter({ hasText: "e2e test stream" })
+    .first();
   await expect(card).toBeVisible({ timeout: 30_000 });
   await card.click();
 
-  // The stream page only posts this once playback context is up, which requires
-  // the node to have ingested segments — so it is already proof that the failing
-  // recorder didn't block ingest.
-  await expect(
-    page.getByText("Now streaming - e2e test stream").first(),
-  ).toBeVisible({ timeout: 30_000 });
   const video = page.locator("video").first();
   await expect(video).toBeVisible({ timeout: 30_000 });
+  const frames = () =>
+    video.evaluate(
+      (element: HTMLVideoElement) =>
+        element.getVideoPlaybackQuality().totalVideoFrames,
+    );
+  await expect.poll(frames).toBeGreaterThan(0);
+  const initialFrames = await frames();
 
   // And the stream stays up. The harness restarts its WHIP stream every few
   // seconds, so checking well past that window means recording failed again and
@@ -50,5 +57,5 @@ test("best-effort-recording: a failing recording sink does not block playback", 
       },
     )
     .toBe("200");
-  await expect(video).toBeVisible();
+  await expect.poll(frames).toBeGreaterThan(initialFrames);
 });
