@@ -1,35 +1,41 @@
+import { getStreamplaceUrl } from "@/lib/streamplace-url";
 import { useCallback, useEffect, useState } from "react";
 
-const PUBLIC_APPVIEW = "https://public.api.bsky.app";
-
-type PublicActor = {
+type ResolvedActor = {
   did: string;
-  handle: string;
+  handle?: string;
 };
 
 export type ActorLookupResult =
-  { status: "found"; actor: PublicActor } | { status: "not-found" };
+  { status: "found"; actor: ResolvedActor } | { status: "not-found" };
 
 type FetchActor = (
   input: RequestInfo | URL,
   init?: RequestInit,
 ) => Promise<Response>;
 
-export async function resolvePublicActor(
+export async function resolveActor(
   actor: string,
   fetchActor: FetchActor = fetch,
   signal?: AbortSignal,
 ): Promise<ActorLookupResult> {
-  const response = await fetchActor(
-    `${PUBLIC_APPVIEW}/xrpc/app.bsky.actor.getProfile?actor=${encodeURIComponent(actor)}`,
-    { signal },
+  // A known identity can stream without an indexed Bluesky profile.
+  if (actor.startsWith("did:")) {
+    return { status: "found", actor: { did: actor } };
+  }
+
+  const url = new URL(
+    "/xrpc/com.atproto.identity.resolveHandle",
+    getStreamplaceUrl(),
   );
+  url.searchParams.set("handle", actor);
+  const response = await fetchActor(url, { signal });
 
   if (response.ok) {
-    const profile = (await response.json()) as PublicActor;
+    const identity = (await response.json()) as ResolvedActor;
     return {
       status: "found",
-      actor: { did: profile.did, handle: profile.handle },
+      actor: { did: identity.did, handle: actor },
     };
   }
 
@@ -38,12 +44,12 @@ export async function resolvePublicActor(
   } | null;
   if (
     (response.status === 400 || response.status === 404) &&
-    body?.message?.toLowerCase() === "profile not found"
+    body?.message === "HandleNotFound"
   ) {
     return { status: "not-found" };
   }
 
-  throw new Error(`Profile lookup failed (${response.status})`);
+  throw new Error(`Identity lookup failed (${response.status})`);
 }
 
 type ActorLookupState =
@@ -56,7 +62,7 @@ export function useActorLookup(actor: string) {
   useEffect(() => {
     const controller = new AbortController();
     setState({ status: "loading" });
-    resolvePublicActor(actor, fetch, controller.signal)
+    resolveActor(actor, fetch, controller.signal)
       .then((result) => setState(result))
       .catch((error) => {
         if (error instanceof DOMException && error.name === "AbortError") {

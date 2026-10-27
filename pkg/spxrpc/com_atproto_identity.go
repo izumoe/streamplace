@@ -2,21 +2,31 @@ package spxrpc
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
+	"github.com/bluesky-social/indigo/atproto/identity"
+	"github.com/bluesky-social/indigo/atproto/syntax"
 	"github.com/labstack/echo/v4"
 	glex "github.com/streamplace/glex/runtime"
-	"github.com/streamplace/oatproxy/pkg/oatproxy"
-	"stream.place/streamplace/pkg/aqhttp"
 	"stream.place/streamplace/pkg/comatproto"
 )
 
 func (s *Server) handleComAtprotoIdentityResolveHandle(ctx context.Context, handle string) (*comatproto.IdentityResolveHandle_Output, error) {
-	did, err := oatproxy.ResolveHandleWithClient(ctx, handle, &aqhttp.Client)
+	parsed, err := syntax.ParseHandle(handle)
 	if err != nil {
-		return nil, err
+		return nil, echo.NewHTTPError(http.StatusBadRequest, "HandleNotFound")
 	}
-	return &comatproto.IdentityResolveHandle_Output{Did: did}, nil
+	ident, err := s.ATSync.IdentityDirectory().LookupHandle(ctx, parsed)
+	if err != nil {
+		if errors.Is(err, identity.ErrHandleNotFound) || errors.Is(err, identity.ErrHandleMismatch) ||
+			errors.Is(err, identity.ErrHandleNotDeclared) || errors.Is(err, identity.ErrDIDNotFound) ||
+			errors.Is(err, identity.ErrInvalidHandle) || errors.Is(err, identity.ErrHandleReservedTLD) {
+			return nil, echo.NewHTTPError(http.StatusNotFound, "HandleNotFound")
+		}
+		return nil, echo.NewHTTPError(http.StatusServiceUnavailable, "IdentityUnavailable").SetInternal(err)
+	}
+	return &comatproto.IdentityResolveHandle_Output{Did: ident.DID.String()}, nil
 }
 
 func (s *Server) handleComAtprotoIdentityRefreshIdentity(ctx context.Context, body *comatproto.IdentityRefreshIdentity_Input) (*comatproto.IdentityDefs_IdentityInfo, error) {
