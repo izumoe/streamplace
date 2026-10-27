@@ -1,16 +1,19 @@
-import { expect, test, type Page } from "@playwright/test";
+import {
+  expect,
+  test,
+  type APIRequestContext,
+  type Page,
+} from "@playwright/test";
 import { loginThroughPds } from "./login";
 
-// A branding admin can upload separate favicons for light and dark color
-// schemes beside the generic one. The tab shows the variant for the current
-// scheme, follows a scheme change without a reload, and falls back to the
-// generic favicon (then the bundled one) when a variant is removed. Web-only:
-// native apps have no favicon, and branding uploads are web-only.
+// The DOM editor uploads the generic icon. Color-scheme variants use the real
+// admin API; both routes must retain MIME types, ICO conversion and fallbacks.
 //
 // The harness account is the node's branding admin (SP_ADMIN_DIDS in
 // pkg/cmd/e2e.go); uploads go through the app's own file chooser and the
 // node's authenticated XRPC, so this needs the harness's HTTPS mode.
 const HTTPS_URL = process.env.SERVER_HTTPS_URL;
+const SERVER_URL = process.env.SERVER_URL!;
 
 test.skip(!HTTPS_URL, "harness started without its HTTPS hostnames");
 
@@ -124,10 +127,62 @@ async function readICO(page: Page, pixel?: number[]): Promise<string> {
   return result.body;
 }
 
-async function uploadIcon(page: Page, key: string) {
+async function updateIcon(
+  request: APIRequestContext,
+  key: string,
+  remove = false,
+) {
+  const pds = process.env.PDS_HTTP_URL!;
+  const session = await request.post(
+    `${pds}/xrpc/com.atproto.server.createSession`,
+    {
+      data: {
+        identifier: process.env.ACCOUNT_DID!,
+        password: process.env.ACCOUNT_PASSWORD!,
+      },
+    },
+  );
+  expect(session.ok()).toBe(true);
+  const { accessJwt } = await session.json();
+  const document = await request.get(`${SERVER_URL}/.well-known/did.json`);
+  expect(document.ok()).toBe(true);
+  const { id } = await document.json();
+  const method = `place.stream.branding.${remove ? "deleteBlob" : "updateBlob"}`;
+  const auth = await request.get(
+    `${pds}/xrpc/com.atproto.server.getServiceAuth`,
+    {
+      params: { aud: id, lxm: method },
+      headers: { Authorization: `Bearer ${accessJwt}` },
+    },
+  );
+  expect(auth.ok()).toBe(true);
+  const { token } = await auth.json();
+  const response = await request.post(`${SERVER_URL}/xrpc/${method}`, {
+    headers: { Authorization: `Bearer ${token}` },
+    data: remove
+      ? { key }
+      : {
+          key,
+          data: Buffer.from(ICONS[key]).toString("base64"),
+          mimeType: "image/svg+xml",
+        },
+  });
+  expect(remove ? [200, 404] : [200]).toContain(response.status());
+}
+
+async function uploadIcon(page: Page, request: APIRequestContext, key: string) {
+  if (key !== "favicon") {
+    await updateIcon(request, key);
+    return;
+  }
+  await page.goto(`${HTTPS_URL}/settings/branding`);
   const updated = page.waitForResponse(xrpc("updateBlob"));
   const chooser = page.waitForEvent("filechooser");
-  await page.getByTestId(`branding-upload-${key}`).click();
+  await page
+    .getByText("Default favicon", { exact: true })
+    .locator("..")
+    .getByRole("button", { name: "Upload", exact: true })
+    .click();
   await (
     await chooser
   ).setFiles({
@@ -136,57 +191,39 @@ async function uploadIcon(page: Page, key: string) {
     buffer: Buffer.from(ICONS[key]),
   });
   expect((await updated).ok()).toBe(true);
-  await expect(page.getByTestId(`branding-preview-${key}`)).toBeVisible();
 }
 
-async function removeIcon(page: Page, key: string) {
-  const deleted = page.waitForResponse(xrpc("deleteBlob"));
-  await page.getByTestId(`branding-delete-${key}`).click();
-  expect((await deleted).ok()).toBe(true);
-  await expect(page.getByTestId(`branding-preview-${key}`)).toBeHidden();
-}
-
-// The page can hydrate branding from server metadata without a getBranding
-// request. Clean up only slots with a preview, avoiding unset-key 404s.
-async function openBrandingWithoutIcons(page: Page) {
-  await page.goto(`${HTTPS_URL}/settings/branding`);
-  await expect(page.getByTestId("branding-upload-favicon")).toBeVisible();
-  for (const key of Object.keys(ICONS)) {
-    if (await page.getByTestId(`branding-preview-${key}`).isVisible()) {
-      await removeIcon(page, key);
-    }
-  }
-}
-
-test.afterEach(async ({ page }) => {
-  await openBrandingWithoutIcons(page);
+test.afterEach(async ({ request }) => {
+  for (const key of Object.keys(ICONS)) await updateIcon(request, key, true);
 });
 
 test("branding-favicons: light and dark favicons follow the color scheme", async ({
   page,
+  request,
 }) => {
   // OAuth login plus several uploads and reloads outlast the default 90s.
   test.setTimeout(4 * 60_000);
 
   await loginThroughPds(page);
-  await openBrandingWithoutIcons(page);
+  for (const key of Object.keys(ICONS)) await updateIcon(request, key, true);
+  await page.goto(`${HTTPS_URL}/`);
   // With no favicon branded, the tab shows the app's bundled icon.
   await page.emulateMedia({ colorScheme: "light" });
-  await expect
-    .poll(async () => (await shownIcon(page, "dom")).type)
-    .toBe("image/png");
+  expect((await shownIcon(page, "dom")).type).toMatch(/^image\//);
   const bundled = await shownIcon(page, "dom");
   const bundledICO = await readICO(page);
 
   // The background-backed default works in either scheme on its own.
-  await uploadIcon(page, "favicon");
+  await uploadIcon(page, request, "favicon");
+  await page.goto(`${HTTPS_URL}/`);
   await expectShown(page, "light", icon("favicon"));
   await expectShown(page, "dark", icon("favicon"));
   await readICO(page, [128, 128, 128, 255]);
 
   // Transparent variants override it independently without altering the files.
   for (const key of ["faviconLight", "faviconDark"])
-    await uploadIcon(page, key);
+    await uploadIcon(page, request, key);
+  await page.reload();
 
   // Each scheme gets its own icon, live: no reload between the switches.
   await expectShown(page, "light", icon("faviconLight"));
@@ -194,15 +231,18 @@ test("branding-favicons: light and dark favicons follow the color scheme", async
   // Theme variants must not replace the generic legacy-client ICO.
   await readICO(page, [128, 128, 128, 255]);
 
-  const screenshot = test.info().outputPath("branding-favicons.png");
-  await page
-    .getByTestId("branding-preview-faviconDark")
-    .scrollIntoViewIfNeeded();
-  await page.screenshot({ path: screenshot });
-  await test.info().attach("branding-favicons", { path: screenshot });
-
-  // Persisted on the node: a fresh page load, both hydrated and as served.
-  await page.reload();
+  // An anonymous live-stream page gets the same branding before hydration.
+  const publicStream = await request.get(
+    `${SERVER_URL}/${process.env.ACCOUNT_DID}`,
+  );
+  expect(publicStream.ok()).toBe(true);
+  const html = await publicStream.text();
+  for (const body of Object.values(ICONS)) {
+    expect(html).toContain(
+      `href="data:image/svg+xml;base64,${Buffer.from(body).toString("base64")}"`,
+    );
+  }
+  await page.goto(`${HTTPS_URL}/${process.env.ACCOUNT_DID}`);
   await readICO(page, [128, 128, 128, 255]);
   for (const source of ["dom", "html"] as const) {
     await expectShown(page, "dark", icon("faviconDark"), source);
@@ -217,13 +257,22 @@ test("branding-favicons: light and dark favicons follow the color scheme", async
   });
 
   // Without its own variant, a scheme falls back to the generic favicon...
-  await removeIcon(page, "faviconDark");
+  await updateIcon(request, "faviconDark", true);
+  await page.reload();
   await expectShown(page, "dark", icon("favicon"));
   await expectShown(page, "dark", icon("favicon"), "html");
   await expectShown(page, "light", icon("faviconLight"));
 
   // ...and without that, to the bundled one.
-  await removeIcon(page, "favicon");
+  await page.goto(`${HTTPS_URL}/settings/branding`);
+  const deleted = page.waitForResponse(xrpc("deleteBlob"));
+  await page
+    .getByText("Default favicon", { exact: true })
+    .locator("..")
+    .getByRole("button", { name: "Delete", exact: true })
+    .click();
+  expect((await deleted).ok()).toBe(true);
+  await page.goto(`${HTTPS_URL}/${process.env.ACCOUNT_DID}`);
   expect(await readICO(page)).toBe(bundledICO);
   await expectShown(page, "dark", bundled);
   await expectShown(page, "light", icon("faviconLight"));

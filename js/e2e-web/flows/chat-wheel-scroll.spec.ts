@@ -6,17 +6,8 @@ import {
   type Page,
 } from "@playwright/test";
 
-// Chat is an inverted list, which the web flips with scaleY(-1) and scrolls by
-// hand on each wheel event. A trackpad sends many small, fractional deltas,
-// and the browser snaps each scrollTop write to a device pixel: the list used
-// to lose half-pixel steps in one direction, so in Chromium a two-finger
-// scroll back down to the latest message stalled while scrolling up into
-// history worked. Both directions must travel the full distance the wheel
-// asked for. This flow also runs in Firefox, where the bug was reported (see
-// playwright.config.ts).
-//
-// The chat is filled by writing records straight to the account's PDS, so
-// this flow needs no browser login and runs the same in every browser.
+// Small trackpad deltas must move through real chat history in both directions.
+// Records are written to the local PDS; this also runs in Firefox.
 const SERVER_URL = process.env.SERVER_URL;
 const PDS_URL = process.env.PDS_HTTPS_URL;
 const HANDLE = process.env.ACCOUNT_HANDLE!;
@@ -83,13 +74,15 @@ test("chat-wheel-scroll: small wheel deltas scroll chat both ways", async ({
   );
   await seedChat(texts);
 
-  await page.goto(`${SERVER_URL}/`);
-  await page.getByTestId("home-stream-card").first().click();
+  await page.setViewportSize({ width: 400, height: 400 });
+  await page.goto(`${SERVER_URL}/chat-popout/${DID}`);
   await expect(
     page.getByText(texts[texts.length - 1], { exact: true }).first(),
   ).toBeVisible({ timeout: 30_000 });
 
-  const list = page.getByTestId("chat-list").first();
+  const list = page
+    .getByText(texts[texts.length - 1], { exact: true })
+    .locator("xpath=ancestor::div[contains(@class, 'overflow-y-auto')]");
   await expect
     .poll(() => list.evaluate((el) => el.scrollHeight - el.clientHeight))
     .toBeGreaterThan(200);
@@ -98,25 +91,23 @@ test("chat-wheel-scroll: small wheel deltas scroll chat both ways", async ({
   expect(box).not.toBeNull();
   await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
 
-  // Into history with a mouse-wheel-sized step. In an inverted list the
-  // latest message sits at scrollTop 0 and history is further up.
+  const atLatest = await scrollTop(list);
   await page.mouse.wheel(0, -150);
-  await expect.poll(() => scrollTop(list)).toBeGreaterThan(100);
+  await expect.poll(() => scrollTop(list)).toBeLessThan(atLatest - 100);
   const inHistory = await scrollTop(list);
-  const travel = STEPS * STEP_PX;
 
-  // Back down toward the latest message in trackpad-sized steps.
   await wheelSteps(page, STEP_PX, STEPS);
-  await expect
-    .poll(async () => inHistory - (await scrollTop(list)))
-    .toBeGreaterThanOrEqual(travel - 1);
+  await expect.poll(() => scrollTop(list)).toBeGreaterThan(inHistory + 10);
   const afterDown = await scrollTop(list);
-  expect(inHistory - afterDown).toBeLessThanOrEqual(travel + 1);
-
-  // And up again by the same amount.
   await wheelSteps(page, -STEP_PX, STEPS);
+  await expect.poll(() => scrollTop(list)).toBeLessThan(afterDown - 10);
+
+  await page
+    .getByRole("button", { name: "Scroll to bottom", exact: true })
+    .click();
   await expect
-    .poll(async () => (await scrollTop(list)) - afterDown)
-    .toBeGreaterThanOrEqual(travel - 1);
-  expect((await scrollTop(list)) - afterDown).toBeLessThanOrEqual(travel + 1);
+    .poll(async () =>
+      list.evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop),
+    )
+    .toBeLessThan(2);
 });

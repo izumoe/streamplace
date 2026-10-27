@@ -1,9 +1,7 @@
 # e2e-web (Playwright)
 
-Headless-web e2e flows for the Streamplace app — the web counterpart to the
-mobile `.maestro/` suite. Shared harness (`streamplace e2e`) and testIDs;
-Playwright headless Chromium drives the web-specific surface because Maestro
-is mobile-only.
+Browser regression flows for the DOM web app. Playwright uses the same isolated
+node/PDS harness as the mobile `.maestro/` suite, with real media and APIs.
 
 ## How it fits together
 
@@ -13,27 +11,23 @@ is mobile-only.
   streams). The node also serves the web app (embedded
   via `//go:embed all:dist/**`), so Playwright just points a browser at
   `SERVER_URL`.
-- **Shared testIDs:** react-native-web maps `testID` -> `data-testid`, so the
-  very same IDs the Maestro flows use (`home-stream-card`,
-  `settings-use-custom-node`, `settings-custom-node-url`, `settings-save-node`)
-  are Playwright selectors here — no separate web instrumentation.
-- **Server setup:** the app ships pointed at production, so `global-setup.ts`
-  opens `/settings/advanced`, enters the test node's URL, and saves the
-  resulting browser state (`storageState`). Every flow reuses it and starts
-  already pointed at the harness — the web analogue of
-  `.maestro/setup/server-setup.yaml`.
+- **Browser app:** the app uses its own origin as the node. Global setup waits
+  for `getLiveUsers` and verifies that the real home stream card appears. No
+  saved node override or shared browser storage is needed.
+- **Projects:** the normal config runs `flows/` plus the browser cutover and
+  MoQ playback checks in `../web/e2e/`. Firefox also runs the browser specific
+  wheel-scroll regression. The other web specs use `js/web/playwright.config.ts`.
 
 ## Adding scenarios
 
 Name specs `flows/<feature-or-behavior-slug>.spec.ts`, without sequence numbers.
 Playwright automatically discovers specs under `flows/`; adding a scenario
-does not require editing the config, a manifest, or this README.
+does not require editing the config or a manifest.
 
 Each test must establish its own prerequisites: navigate to the page it needs,
 log in through `loginThroughPds` when authentication is required, and wait for
-the relevant stream or application state. Tests get isolated browser contexts
-seeded with the harness node configuration, not authentication from another
-test. Never rely on prior test state or filename execution order. The suite runs
+the relevant stream or application state. Tests get isolated browser contexts.
+Never rely on prior test state or filename execution order. The suite runs
 serially to limit contention on its shared harness account and looping stream,
 not to establish dependencies between scenarios.
 
@@ -46,79 +40,55 @@ smoke, navigation, and stream coverage correspond to
 `.maestro/setup/oauth-login.yaml`; authenticated chat/profile behavior is covered
 on mobile by `.maestro/logged-in/{chat-reply,chat-profile}.yaml`.
 
-`invalid-handle` runs against both Expo web and the Vite beta. It moves the
-harness account to a real `.test` handle, which cannot pass public
-bidirectional verification, and calls `com.atproto.identity.refreshIdentity`.
-The home feed must display the DID without `@`, open its DID-addressed stream,
-and play real media. It also exercises an invalid typeahead result. Only public
-AppView discovery (the harness account is not publicly indexed) and that search
-boundary are substituted; the feed, PDS/PLC, refresh endpoint, websocket and
-playback remain real. Cleanup restores the original verified handle and waits
-for the live-feed cache to catch up, including after a failed assertion.
-The corresponding shared native flow is
-`.maestro/logged-out/invalid-handle.yaml`.
-The login typeahead case changes an invalid result back to a verified handle
-without changing its DID or avatar, then accepts the corrected completion. It
-covers the shared login hook; the public AppView boundary is substituted because
-the local PDS account is not publicly searchable.
+`invalid-handle` moves the harness account to a real unverifiable `.test`
+handle and calls `com.atproto.identity.refreshIdentity`. The feed must show its
+DID without `@`, open its DID-addressed stream, play media and copy a usable
+link. The actual node search excludes invalid handles. Cleanup restores the
+verified handle and waits for the live-feed cache, including after failure.
+The corresponding native flow is `.maestro/logged-out/invalid-handle.yaml`.
+The DOM login modal still supports typeahead, covered by the shared core hook
+checks; the full `/login` page uses its own simple handle form.
 
-The web app renders the **desktop layout** (a sidebar of nav links), not the
-mobile tab bar, so `tabs` drives Home ↔ Settings through the sidebar.
-`go-live` checks that the Live Dashboard (`/live`) requires login; this is
-web-only coverage, with no current native Go Live scenario. Chat popout is also
-web-only, as is `chat-wheel-scroll` (trackpad wheel input in the inverted
-chat list), which also runs in a Firefox project because the bug it covers
-was reported there. `vod` opens the VOD the harness publishes and checks both the node's
-page title and the app's tab title; document titles have no native counterpart.
-`branding-favicons` exercises authenticated light/dark favicon uploads, scheme
-switches, persistence and deletion fallbacks, including the HTML before
-hydration. It also decodes `/favicon.ico` as a browser image, verifying the ICO
-signature, MIME type, branded pixels and bundled fallback after deletion.
-It is web-only: native apps have no browser tab favicon, and branding image
-uploads are already limited to the web.
+`tabs` drives Home and Settings through the DOM navigation. `go-live` checks
+that `/dashboard` requires login. Chat popout checks that the native link opens
+one working chat window while preserving its stream tab. `chat-wheel-scroll`
+checks small wheel deltas in both directions in the native scroll container,
+including Firefox. Text selection and long content remain separate chat checks.
+`vod` checks the node's page title and the hydrated app title.
 
-`stream` also covers the narrow portrait web layout at 320 × 568, where the
-live video sits above chat. It reveals the player chrome, exercises mute and
-fullscreen entry/exit, and verifies that faded controls reveal instead of
-accepting an unseen tap. Its readiness check uses the video itself: accumulated
-chat history can virtualize the stream's initial system message, so that row is
-not a reliable player prerequisite.
+`branding-favicons` uploads the generic favicon through the actual editor and
+sets color-scheme variants through the authenticated API. It checks applicable
+HTML icon links, scheme changes, persistence and deletion fallbacks, and decodes
+`/favicon.ico` as a browser image to verify MIME, signature and pixels. The DOM
+editor does not expose the retired browser app's variant controls or previews.
 
-`player-viewport` opts into the Vite web beta and starts the real harness's HLS
-stream at phone, tablet, square, and desktop sizes. After confirming playback,
+`stream` covers opening the live feed and the narrow portrait layout at
+320 × 568. It exercises mute, idle control hiding/revealing and fullscreen.
+Portrait controls wait for decoded frames. Responsive checks preserve the same
+playing video and source both anonymously and after real OAuth login.
+
+`player-viewport` starts the real harness's HLS stream at phone, tablet, square, and desktop sizes. After confirming playback,
 it pauses through the normal shortcut and checks control visibility, viewport
 containment, opacity, and pointer hit targets with chat open and closed. It
 changes volume in both states, opens Settings, and checks fullscreen entry/exit
 and control availability in fullscreen. Cases straddle the square-layout and
 player-width boundaries; compact players retain theatre and danmu in Settings.
 The touch case uses the embed player to verify 44px buttons and a working volume
-hit area at narrow and tablet widths. Public AppView identity discovery is
-substituted in the chat cases because the harness account is not publicly
-indexed. The embed test uses real services throughout. This is web-only: iOS
-and Android use the separate Expo/native player.
+hit area at narrow and tablet widths. Identity and playback use the real local
+services. This is web-only: iOS and Android use the separate Expo/native player.
 
-`player-breakpoints` exercises live playback at 23 widths in portrait and
-landscape, including 1080 × 722 and immediately below, at, and above the theme
-breakpoints (640, 768, 1024, 1280, 1536), sidebar boundary (981), and desktop
-player boundary (1201). It checks that the mute button and whole volume slider
-are fully inside the viewport and change the actual video element's audio state.
-Side-chat layouts repeat those checks with chat open, closed, and reopened. This catches
-controls clipped below the web shell's header: the compact player's height must
-fill its available parent, not the whole browser window. These controls are
-web-only; native live playback uses device volume controls.
+`player-breakpoints` keeps one HLS video playing across nine viewport sizes:
+407/408/409 × 844, 799/800/801 × 800, and 1023/1024/1025 × 720. These cross the
+compact-control, square-layout and desktop boundaries. Every size must retain
+the same video element and source, continue decoding frames, and expose working
+mute controls inside the viewport. Players at least 408px wide also expose a
+working volume slider. Native live playback uses device volume controls.
 
-`auto-publish-vods` saves and reloads the automatic publishing preference,
-checks that the stream form's Create tab and Privacy & Security share it,
-including the popout form, and hides the control without VOD beta access or
-outside the Create tab. The compact checkbox keeps persistent-consent details in
-its tooltip. The native Maestro flow opens the shared form by deep link, enables
-the preference there, and verifies persistence in settings after a relaunch.
-The browser flow also holds a recording opt-out request to verify another privacy toggle cannot
-overwrite it while saving. Deleting the node's settings record also withdraws
-automatic publishing consent; the PDS-backed regression for that index deletion
-lives in `pkg/atproto/auto_publish_vod_test.go`. It also injects a deletion failure
-and checks that later deletions still run while the commit watermark advances
-only after successful reprocessing.
+`auto-publish-vods` saves and reloads the automatic publishing preference in
+Privacy & Security. It delays a real recording opt-out PUT to check that another
+toggle cannot overwrite consent while saving. The retired browser stream form's
+Create tab is not part of the DOM app. PDS index deletion and publication behavior
+remain covered by `pkg/atproto/auto_publish_vod_test.go` and the statedb tests.
 
 `syndication` plays the test stream from the harness's second node, which pulls
 it from the first over Media over QUIC (`SERVER2_URL`; see `docs/moq.md`). It is

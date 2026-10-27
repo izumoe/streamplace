@@ -17,14 +17,17 @@ test("oauth-login: log in, chat, and reopen a profile", async ({ page }) => {
   // user's PDS through oatproxy's upstream (DPoP-bound) session. Loading the
   // app afresh also restores the session from browser storage.
   await page.goto(`${HTTPS_URL}/`);
-  await page.getByTestId("home-stream-card").first().click();
-  // chat needs the streamer's profile, which arrives over the stream's
-  // websocket along with this system message
+  await page
+    .getByRole("link")
+    .filter({ hasText: "e2e test stream" })
+    .first()
+    .click();
   await expect(
-    page.getByText("Now streaming - e2e test stream").first(),
+    page.getByRole("heading", { name: "e2e test stream", exact: true }),
   ).toBeVisible({ timeout: 30_000 });
-  const chatInput = page.getByPlaceholder("Type a message...");
+  const chatInput = page.getByRole("textbox");
   const message = `hello from oauth-login ${Date.now()}`;
+  await chatInput.fill(message);
   const messageCreateResponse = page.waitForResponse((response) => {
     const request = response.request();
     return (
@@ -34,44 +37,39 @@ test("oauth-login: log in, chat, and reopen a profile", async ({ page }) => {
       request.postData()?.includes(message) === true
     );
   });
-  // a send the page wasn't ready for clears the box and is dropped; resend
-  await expect(async () => {
-    await chatInput.fill(message);
-    await chatInput.press("Enter");
-    await expect(page.getByText(message).first()).toBeVisible({
-      timeout: 10_000,
-    });
-  }).toPass({ timeout: 45_000 });
-  await expect(chatInput).toHaveValue("");
+  await chatInput.press("Enter");
   const response = await messageCreateResponse;
   expect(
     response.ok(),
     `chat record creation returned ${response.status()}`,
   ).toBe(true);
+  await expect(chatInput).toHaveText("");
 
   // The box shows sends optimistically, so reload: only the node's chat
   // history can put the message back, and it only has what the firehose
   // brought back from the PDS.
   await page.reload();
-  await expect(page.getByText(message).first()).toBeVisible({
+  await expect(
+    page.getByText(message).filter({ visible: true }).first(),
+  ).toBeVisible({
     timeout: 30_000,
   });
 
   // Exercise the real card rendered outside the chat row. Checking its own
   // handle avoids accidentally matching the account settings or chat username.
   const profileTrigger = page
-    .getByTestId(`chat-profile-trigger-${HANDLE}`)
+    .getByRole("button", { name: HANDLE, exact: true })
     .first();
-  const profileCard = page.getByTestId("chat-profile-card");
+  const profileCard = page
+    .getByRole("dialog")
+    .filter({ hasText: `@${HANDLE}` });
   for (let opening = 0; opening < 2; opening++) {
     await profileTrigger.click();
     await expect(profileCard).toBeVisible();
-    await expect(profileCard.getByTestId("chat-profile-handle")).toHaveText(
-      `@${HANDLE}`,
-    );
-    await page
-      .getByTestId("chat-profile-backdrop")
-      .click({ position: { x: 10, y: 10 } });
+    await expect(
+      profileCard.getByText(`@${HANDLE}`, { exact: true }),
+    ).toBeVisible();
+    await page.keyboard.press("Escape");
     await expect(profileCard).toBeHidden();
   }
 
@@ -79,13 +77,17 @@ test("oauth-login: log in, chat, and reopen a profile", async ({ page }) => {
   // existing chat session usable. Reload only afterward to prove persistence.
   const afterProfileMessage = `chat after profile ${Date.now()}`;
   await chatInput.fill(afterProfileMessage);
-  await page.getByTestId("chat-send").click();
-  await expect(page.getByText(afterProfileMessage).first()).toBeVisible({
+  await page.getByRole("button", { name: "Chat", exact: true }).click();
+  await expect(
+    page.getByText(afterProfileMessage).filter({ visible: true }).first(),
+  ).toBeVisible({
     timeout: 15_000,
   });
-  await expect(chatInput).toHaveValue("");
+  await expect(chatInput).toHaveText("");
   await page.reload();
-  await expect(page.getByText(afterProfileMessage).first()).toBeVisible({
+  await expect(
+    page.getByText(afterProfileMessage).filter({ visible: true }).first(),
+  ).toBeVisible({
     timeout: 30_000,
   });
 });

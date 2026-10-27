@@ -16,17 +16,20 @@ test("chat-facets: send a link and check the facets it writes", async ({
   await loginThroughPds(page);
 
   await page.goto(`${HTTPS_URL}/`);
-  await page.getByTestId("home-stream-card").first().click();
-  // chat needs the streamer's profile, which arrives over the stream's
-  // websocket along with this system message
+  await page
+    .getByRole("link")
+    .filter({ hasText: "e2e test stream" })
+    .first()
+    .click();
   await expect(
-    page.getByText("Now streaming - e2e test stream").first(),
+    page.getByRole("heading", { name: "e2e test stream", exact: true }),
   ).toBeVisible({ timeout: 30_000 });
 
-  const chatInput = page.getByPlaceholder("Type a message...");
+  const chatInput = page.getByRole("textbox");
   const marker = `link facet check ${Date.now()}`;
   const link = "https://dist.town/release.software";
   const message = `${marker}: read the ${link} docs`;
+  await chatInput.fill(message);
   const messageCreateResponse = page.waitForResponse((response) => {
     const request = response.request();
     return (
@@ -36,20 +39,16 @@ test("chat-facets: send a link and check the facets it writes", async ({
       request.postData()?.includes(message) === true
     );
   });
-  // a send the page wasn't ready for clears the box and is dropped; resend
-  await expect(async () => {
-    await chatInput.fill(message);
-    await chatInput.press("Enter");
-    await expect(page.getByText(marker).first()).toBeVisible({
-      timeout: 10_000,
-    });
-  }).toPass({ timeout: 45_000 });
+  await chatInput.press("Enter");
 
   const response = await messageCreateResponse;
   expect(
     response.ok(),
     `chat record creation returned ${response.status()}`,
   ).toBe(true);
+  await expect(
+    page.getByText(marker).filter({ visible: true }).first(),
+  ).toBeVisible();
   // detectFacets leaves link facets untyped and types mention facets as
   // app.bsky's, and a record carrying either is rejected by anything
   // validating it against place.stream.richtext.facet.
@@ -69,7 +68,9 @@ test("chat-facets: send a link and check the facets it writes", async ({
   // history can put the message back, and it only has what the firehose
   // brought back from the PDS.
   await page.reload();
-  await expect(page.getByText(marker).first()).toBeVisible({
+  await expect(
+    page.getByText(marker).filter({ visible: true }).first(),
+  ).toBeVisible({
     timeout: 30_000,
   });
 });
