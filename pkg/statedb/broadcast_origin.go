@@ -7,7 +7,7 @@ import (
 type BroadcastOrigin struct {
 	StreamerRepoDID string    `gorm:"column:streamer_repo_did;primarykey;index:idx_streamer_repo_did_updated_at,priority:1"`
 	ServerDID       string    `gorm:"column:server_did;primarykey;index:idx_server_did_updated_at,priority:1"`
-	UpdatedAt       time.Time `gorm:"column:updated_at;index:idx_streamer_repo_did_updated_at,priority:2;index:idx_server_did_updated_at,priority:2"`
+	UpdatedAt       time.Time `gorm:"column:updated_at;autoUpdateTime:false;index:idx_streamer_repo_did_updated_at,priority:2;index:idx_server_did_updated_at,priority:2"`
 	// MoqURL is where the ingest node serves the stream over Media over
 	// QUIC, with its certificate hash when self-signed: unlike the
 	// websocket URL it cannot be derived from the server DID, so the
