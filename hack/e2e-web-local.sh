@@ -7,12 +7,8 @@
 #
 # Prerequisites:
 #   * A streamplace binary with the embedded web bundle (`make dev`).
-#     EXPO_PUBLIC_WEB_TRY_LOCAL is *not* required: the Playwright global
-#     setup drives Settings -> Advanced and points the app at the harness
-#     node itself (the web counterpart of .maestro/setup/server-setup.yaml), so
-#     a plain `make dev` build works. Building with
-#     EXPO_PUBLIC_WEB_TRY_LOCAL=true only changes the app's compile-time
-#     default (window origin instead of https://stream.place).
+#     The web app uses its own origin as the node. Global setup waits for
+#     the harness's real live stream before the browser flows start.
 #   * Playwright + its chromium browser installed in js/e2e-web
 #     (pnpm --filter @streamplace/e2e-web install-browser; needs root for
 #     --with-deps, so run it inside the container).

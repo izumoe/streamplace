@@ -1,5 +1,4 @@
 import { expect, type Page } from "@playwright/test";
-import { pointAppAtNode } from "../server-setup";
 
 // Log in the way a user does: the app's atproto OAuth client talks to the
 // node's OAuth proxy (oatproxy), which sends the browser to the PDS's own
@@ -18,16 +17,14 @@ export async function loginThroughPds(page: Page): Promise<void> {
   const appOrigin = new URL(httpsUrl).origin;
   const pdsOrigin = new URL(pdsUrl).origin;
 
-  // This origin is new to the browser, so point the app at the node again.
-  await pointAppAtNode(page, httpsUrl);
-
   await page.goto(`${httpsUrl}/login`);
-  const handleField = page
-    .locator('[data-testid="login-handle"], [data-testid="login-handle"] input')
-    .first();
+  const handleField = page.getByRole("textbox", {
+    name: "Handle",
+    exact: true,
+  });
   await expect(handleField).toBeVisible({ timeout: 30_000 });
   await handleField.fill(handle);
-  await page.getByTestId("login-submit").click();
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
 
   // oatproxy hands the browser to the PDS's authorization UI; the handle comes
   // along as login_hint, so only the password is asked for
@@ -49,7 +46,7 @@ export async function loginThroughPds(page: Page): Promise<void> {
   // back through the node's /oauth/return to the app's /login, which lands a
   // logged-in user on their account settings
   await page.waitForURL((u) => u.origin === appOrigin, { timeout: 60_000 });
-  await expect(page.getByText(`@${handle}`).first()).toBeVisible({
+  await expect(page.locator('header a[href="/settings/account"]')).toBeVisible({
     timeout: 30_000,
   });
 }

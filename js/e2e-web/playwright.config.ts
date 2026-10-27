@@ -1,11 +1,10 @@
 import { defineConfig, devices } from "@playwright/test";
-import { STORAGE_STATE } from "./storage";
 
 // The web app under test is served by a `streamplace e2e` harness (see
 // pkg/cmd/e2e.go), which prints SERVER_URL / ACCOUNT_HANDLE / ACCOUNT_DID.
 // hack/e2e-web-local.sh starts that harness and exports SERVER_URL before
-// invoking playwright. global-setup then points the app at that node (see
-// global-setup.ts), which is where a missing SERVER_URL is reported — we don't
+// invoking playwright. global-setup verifies that node's live home feed,
+// which is where a missing SERVER_URL is reported — we don't
 // throw here so the config stays importable by static tooling (knip, etc.).
 const SERVER_URL = process.env.SERVER_URL;
 
@@ -19,9 +18,6 @@ const E2E_TLS_SPKI = process.env.E2E_TLS_SPKI;
 
 export default defineConfig({
   testDir: "./flows",
-  // Point the app at the test node once (Settings -> Advanced), then reuse that
-  // browser state so every flow starts already configured — the web analogue of
-  // .maestro/setup/server-setup.yaml.
   globalSetup: require.resolve("./global-setup"),
   // Run serially to limit contention on the shared harness account and looping
   // stream. Each test gets an isolated browser context, with no ordering contract.
@@ -36,8 +32,8 @@ export default defineConfig({
   expect: { timeout: 30_000 },
   use: {
     baseURL: SERVER_URL,
-    storageState: STORAGE_STATE,
     headless: true,
+    actionTimeout: 15_000,
     // A failed flow's trace has its console and network too; the OAuth flow's
     // errors surface nowhere else on web.
     trace: "retain-on-failure",
@@ -63,11 +59,17 @@ export default defineConfig({
       name: "chromium",
       use: { ...devices["Desktop Chrome"] },
     },
-    // Firefox covers browser-specific behavior and the bare web bootstrap.
+    {
+      name: "web",
+      testDir: "../web/e2e",
+      testMatch: /(?:frontend-cutover|moq-playback|moq-unavailable)\.spec\.ts$/,
+      use: { ...devices["Desktop Chrome"] },
+    },
+    // Firefox covers browser-specific chat behavior.
     // No login flows: the harness's certificate pinning above is a Chromium flag.
     {
       name: "firefox",
-      testMatch: /(?:chat-wheel-scroll|bootstrap)\.spec\.ts$/,
+      testMatch: /chat-wheel-scroll\.spec\.ts$/,
       use: {
         ...devices["Desktop Firefox"],
         // the launch flags above are Chromium's

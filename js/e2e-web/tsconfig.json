@@ -12,8 +12,8 @@
   },
   "include": [
     "flows/**/*.ts",
+    "../web/e2e/**/*.ts",
     "global-setup.ts",
-    "storage.ts",
     "playwright.config.ts"
   ]
 }

@@ -1,10 +1,7 @@
 import { chromium, expect, type FullConfig } from "@playwright/test";
-import { pointAppAtNode } from "./server-setup";
-import { STORAGE_STATE } from "./storage";
 
-// Web counterpart to .maestro/setup/server-setup.yaml: point the app at the
-// harness node once, here (see server-setup.ts), and save the resulting
-// localStorage via storageState so every flow starts already pointed at it.
+// The browser app uses its own origin as the node. Wait for actual ingest
+// readiness before any flow loads the home feed.
 export default async function globalSetup(_config: FullConfig) {
   const SERVER_URL = process.env.SERVER_URL;
   if (!SERVER_URL) {
@@ -14,8 +11,6 @@ export default async function globalSetup(_config: FullConfig) {
   const browser = await chromium.launch();
   const page = await browser.newPage();
   try {
-    await pointAppAtNode(page, SERVER_URL);
-
     // The harness WHIP stream takes a few seconds after boot to ingest its
     // first segments and register as live. The home feed fetches getLiveUsers
     // on mount and doesn't aggressively re-poll, so wait for the stream to be
@@ -23,14 +18,10 @@ export default async function globalSetup(_config: FullConfig) {
     // see an empty "no one is streaming" feed.
     await waitForLiveStream(SERVER_URL);
 
-    // prove the app is now talking to the test node: its isolated firehose only
-    // has our looping test stream, so a card must appear on the home feed
     await page.goto(`${SERVER_URL}/`);
-    await expect(page.getByTestId("home-stream-card").first()).toBeVisible({
-      timeout: 30_000,
-    });
-
-    await page.context().storageState({ path: STORAGE_STATE });
+    await expect(
+      page.getByRole("link").filter({ hasText: "e2e test stream" }).first(),
+    ).toBeVisible({ timeout: 30_000 });
   } finally {
     await browser.close();
   }

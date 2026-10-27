@@ -15,7 +15,9 @@ test("tabs: primary navigation", async ({ page }) => {
   await expect(page.getByText("Advanced").first()).toBeVisible();
 
   await page.getByRole("link", { name: "Home", exact: true }).first().click();
-  await expect(page.getByTestId("home-stream-card").first()).toBeVisible({
+  await expect(
+    page.getByRole("link").filter({ hasText: "e2e test stream" }).first(),
+  ).toBeVisible({
     timeout: 30_000,
   });
 });
