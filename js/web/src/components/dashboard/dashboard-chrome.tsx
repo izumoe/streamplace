@@ -98,7 +98,7 @@ export default function DashboardChrome() {
           })}
         </p>
         <Button onClick={() => useStore.getState().openLoginModal()}>
-          {t("log-in")}
+          {t("common:log-in")}
         </Button>
       </div>
     );

@@ -1,20 +1,13 @@
-import { place } from "streamplace";
 // Search page. Searches actors via searchActorsTypeahead and shows
 // results as profile cards linking to their streams.
 import useAvatars from "@/hooks/use-avatars";
-import { useStore } from "@/lib/store";
+import { useNodeActorSearch } from "@/hooks/use-node-actor-search";
 import { formatHandle, formatHandleWithAt } from "@streamplace/core";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { Search } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Input } from "../components/ui/input";
-
-interface SearchResult {
-  did: string;
-  handle: string;
-  displayName?: string;
-}
 
 export const Route = createFileRoute("/search")({
   validateSearch: (
@@ -29,70 +22,21 @@ function SearchPage() {
   const { t } = useTranslation("common");
   const { q: initialQ } = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
-  const pdsAgent = useStore((s) => s.pdsAgent);
-  const anonPDSAgent = useStore((s) => s.anonPDSAgent);
-  const agent = pdsAgent ?? anonPDSAgent;
   const [query, setQuery] = useState(initialQ ?? "");
-  const [results, setResults] = useState<SearchResult[]>([]);
-  const [searching, setSearching] = useState(false);
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { results, searching, error } = useNodeActorSearch(query, 20);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const dids = results.map((r) => r.did);
   const avatars = useAvatars(dids);
 
-  const searchActors = useCallback(
-    async (q: string) => {
-      if (!agent || !q.trim()) {
-        setResults([]);
-        return;
-      }
-      try {
-        setSearching(true);
-        const response = await agent.client.call(
-          place.stream.live.searchActorsTypeahead,
-          {
-            q,
-            limit: 20,
-          },
-        );
-        setResults(
-          response.actors.map((a: any) => ({
-            did: a.did,
-            handle: a.handle,
-            displayName: a.displayName,
-          })),
-        );
-      } catch (error) {
-        console.error("Search failed:", error);
-        setResults([]);
-      } finally {
-        setSearching(false);
-      }
-    },
-    [agent],
-  );
-
-  // Sync initial query param into the input and trigger a search.
   useEffect(() => {
-    if (initialQ) {
-      searchActors(initialQ);
-    }
+    setQuery(initialQ ?? "");
     inputRef.current?.focus();
-  }, [initialQ, searchActors]);
+  }, [initialQ]);
 
   const handleChange = (value: string) => {
     setQuery(value);
-    if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    if (value.trim()) {
-      timeoutRef.current = setTimeout(() => {
-        searchActors(value);
-        navigate({ search: { q: value }, replace: true });
-      }, 300);
-    } else {
-      setResults([]);
-      navigate({ search: { q: undefined }, replace: true });
-    }
+    navigate({ search: { q: value || undefined }, replace: true });
   };
 
   return (
@@ -120,7 +64,9 @@ function SearchPage() {
         </div>
       )}
 
-      {!searching && query.trim() && results.length === 0 && (
+      {error && <p role="alert">{t("search-failed")}</p>}
+
+      {!searching && !error && query.trim() && results.length === 0 && (
         <div className="py-12 text-center">
           <p className="text-(--color-fg-muted)">
             {t("no-results-for", { query })}
@@ -146,7 +92,7 @@ function SearchPage() {
               ) : (
                 <div className="flex h-10 w-10 items-center justify-center rounded-full border border-(--color-border) bg-(--color-bg-overlay) text-sm font-medium text-(--color-fg-muted)">
                   {(
-                    actor.displayName?.[0] ||
+                    avatars[actor.did]?.displayName?.[0] ||
                     formatHandle(actor)[0] ||
                     "?"
                   ).toUpperCase()}
@@ -154,7 +100,7 @@ function SearchPage() {
               )}
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-medium text-(--color-fg)">
-                  {actor.displayName || formatHandle(actor)}
+                  {avatars[actor.did]?.displayName || formatHandle(actor)}
                 </div>
                 <div className="truncate text-xs text-(--color-fg-muted)">
                   {formatHandleWithAt(actor)}

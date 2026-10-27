@@ -3,21 +3,16 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { ArrowRight, Search, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { place } from "streamplace";
+import type { place } from "streamplace";
 import useAvatars from "../hooks/use-avatars";
+import { useNodeActorSearch } from "../hooks/use-node-actor-search";
 import { useSession } from "../lib/session";
 import { useStore } from "../lib/store";
-import { usePDSAgent, useSiteTitle, useUserProfile } from "../lib/store/hooks";
+import { useSiteTitle, useUserProfile } from "../lib/store/hooks";
 import StreamplaceSvg from "./svg/streamplace-bw";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { SidebarTrigger } from "./ui/sidebar";
-
-interface SearchResult {
-  did: string;
-  handle: string;
-  displayName?: string;
-}
 
 export default function Header() {
   const { t } = useTranslation("common");
@@ -33,14 +28,11 @@ export default function Header() {
     userProfile?.displayName ||
     (userProfile ? formatHandle(userProfile) : undefined);
 
-  const agent = usePDSAgent();
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<SearchResult[]>([]);
-  const [searching, setSearching] = useState(false);
+  const { results, searching, error } = useNodeActorSearch(query, 8);
   const [open, setOpen] = useState(false);
   const [highlightIndex, setHighlightIndex] = useState(-1);
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const resultsRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -48,55 +40,15 @@ export default function Header() {
   const resultDids = results.map((r) => r.did);
   const avatars = useAvatars(resultDids);
 
-  const searchActors = useCallback(
-    async (q: string) => {
-      if (!agent || !q.trim()) {
-        setResults([]);
-        return;
-      }
-      try {
-        setSearching(true);
-        const response = await agent.client.call(
-          place.stream.live.searchActorsTypeahead,
-          {
-            q,
-            limit: 8,
-          },
-        );
-        setResults(
-          response.actors.map((a: any) => ({
-            did: a.did,
-            handle: a.handle,
-            displayName: a.displayName,
-          })),
-        );
-      } catch (error) {
-        console.error("Search failed:", error);
-        setResults([]);
-      } finally {
-        setSearching(false);
-      }
-    },
-    [agent],
-  );
-
   const handleChange = (value: string) => {
     setQuery(value);
     setHighlightIndex(-1);
-    if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    if (value.trim()) {
-      setOpen(true);
-      timeoutRef.current = setTimeout(() => searchActors(value), 250);
-    } else {
-      setResults([]);
-      setOpen(false);
-    }
+    setOpen(Boolean(value.trim()));
   };
 
   const selectResult = useCallback(
-    (actor: SearchResult) => {
+    (actor: place.stream.live.searchActorsTypeahead.Actor) => {
       setQuery("");
-      setResults([]);
       setOpen(false);
       navigate({ to: "/$user", params: { user: formatHandle(actor) } });
     },
@@ -137,6 +89,8 @@ export default function Header() {
     return () => document.removeEventListener("mousedown", onClick);
   }, [open]);
 
+  useEffect(() => setHighlightIndex(-1), [results]);
+
   // Scroll highlighted item into view.
   useEffect(() => {
     if (highlightIndex < 0 || !resultsRef.current) return;
@@ -146,7 +100,6 @@ export default function Header() {
 
   const clearSearch = () => {
     setQuery("");
-    setResults([]);
     setOpen(false);
     inputRef.current?.focus();
   };
@@ -178,7 +131,7 @@ export default function Header() {
                 placeholder={t("search-placeholder")}
                 aria-label={t("search-placeholder")}
                 role="combobox"
-                aria-expanded={open && (results.length > 0 || searching)}
+                aria-expanded={open && Boolean(query.trim())}
                 aria-controls="header-search-results"
                 aria-activedescendant={
                   highlightIndex >= 0
@@ -202,7 +155,7 @@ export default function Header() {
             </div>
 
             {/* results dropdown */}
-            {open && (results.length > 0 || searching) && (
+            {open && Boolean(query.trim()) && (
               <div
                 ref={resultsRef}
                 id="header-search-results"
@@ -217,6 +170,16 @@ export default function Header() {
                   >
                     <div className="h-4 w-4 animate-spin rounded-full border-2 border-(--color-border) border-t-(--color-accent)" />
                   </div>
+                )}
+                {error && (
+                  <p role="alert" className="px-3 py-2 text-sm">
+                    {t("search-failed")}
+                  </p>
+                )}
+                {!searching && !error && results.length === 0 && (
+                  <p className="px-3 py-2 text-sm">
+                    {t("no-results-for", { query })}
+                  </p>
                 )}
                 {results.map((actor, i) => (
                   <Button
@@ -243,7 +206,7 @@ export default function Header() {
                     ) : (
                       <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-(--color-border) bg-(--color-bg-overlay) text-xs font-medium text-(--color-fg-muted)">
                         {(
-                          actor.displayName?.[0] ||
+                          avatars[actor.did]?.displayName?.[0] ||
                           formatHandle(actor)[0] ||
                           "?"
                         ).toUpperCase()}
@@ -251,7 +214,7 @@ export default function Header() {
                     )}
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-sm font-medium text-(--color-fg)">
-                        {actor.displayName || formatHandle(actor)}
+                        {avatars[actor.did]?.displayName || formatHandle(actor)}
                       </div>
                       <div className="truncate text-xs text-(--color-fg-muted)">
                         {formatHandleWithAt(actor)}

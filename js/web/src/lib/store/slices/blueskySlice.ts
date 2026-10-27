@@ -191,11 +191,14 @@ export const createBlueskySlice: StateCreator<
   },
 
   loadOAuthClient: async () => {
-    set({ authStatus: "start" });
     try {
-      const streamplaceUrl = get().url;
+      const { url: streamplaceUrl, oauthSession, pdsAgent, loginState } = get();
+      set({
+        authStatus: oauthSession && pdsAgent ? "loggedIn" : "start",
+        anonPDSAgent: new StreamplaceAgent(streamplaceUrl),
+        loginState: { ...loginState, error: null },
+      });
       const client = await createOAuthClient(streamplaceUrl);
-      const anonPDSAgent = new StreamplaceAgent(streamplaceUrl);
       const maybeDIDs = await Promise.all([
         storage.getItem(DID_KEY),
         storage.getItem("@@atproto/oauth-client-browser(sub)"),
@@ -220,18 +223,25 @@ export const createBlueskySlice: StateCreator<
           authStatus: "loggedIn",
           oauthSession: session,
           pdsAgent: new StreamplaceAgent(session),
-          anonPDSAgent,
         });
       } else {
         set({
           oauthSession: session,
           authStatus: "loggedOut",
+          pdsAgent: null,
           client,
-          anonPDSAgent,
         });
       }
     } catch (error) {
       console.error("loadOAuthClient error", error);
+      set((state) => ({
+        authStatus:
+          state.oauthSession && state.pdsAgent ? "loggedIn" : "loggedOut",
+        loginState: {
+          loading: false,
+          error: "Sign-in is unavailable. Please try again.",
+        },
+      }));
     }
   },
 
@@ -262,7 +272,10 @@ export const createBlueskySlice: StateCreator<
       await state.loadOAuthClient();
       const updatedState = get() as BlueskySlice;
       if (!updatedState.client) {
-        throw new Error("No client");
+        throw new Error(
+          updatedState.loginState.error ||
+            "Sign-in is unavailable. Please try again.",
+        );
       }
       if (mode === "redirect") {
         // Full-page redirect to the PDS OAuth page. The user
