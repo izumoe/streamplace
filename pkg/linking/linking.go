@@ -41,7 +41,7 @@ type PageConfig struct {
 	Title     string
 	Metas     []MetaTag
 	SentryDSN string
-	Branding  []string
+	Favicons  [3]string
 }
 
 // Define all meta tags in a structured way
@@ -172,23 +172,41 @@ func (l *Linker) getBrandingAssets(broadcasterDid string) ([]placestream.Brandin
 
 // brandMetas fetches the node's branding once for a card: the
 // internal-brand:* meta tags the app hydrates from, plus every text value by
-// key so the card's own title and description can be branded.
-func (l *Linker) brandMetas(ctx context.Context) ([]MetaTag, map[string]string) {
+// key so the card's own title and description can be branded, and icon sources
+// reused by the browser's favicon links.
+func (l *Linker) brandMetas(ctx context.Context) ([]MetaTag, map[string]string, [3]string) {
 	values := map[string]string{}
+	var icons [3]string
 	if l.sdb == nil || l.cli == nil {
-		return nil, values
+		return nil, values, icons
 	}
 	assets, err := l.getBrandingAssets("did:web:" + l.cli.BroadcasterHost)
 	if err != nil {
 		// log but we should not block rendering
 		log.Error(ctx, "error fetching branding assets", "error", err)
-		return nil, values
+		return nil, values, icons
 	}
 	var metas []MetaTag
 	for i := range assets {
 		val := assets[i]
 		if val.MimeType == branding.TextMime && val.Data != nil {
 			values[val.Key] = strings.TrimSpace(*val.Data)
+		}
+		icon := -1
+		switch val.Key {
+		case "favicon":
+			icon = 0
+		case "faviconLight":
+			icon = 1
+		case "faviconDark":
+			icon = 2
+		}
+		if icon >= 0 && strings.HasPrefix(val.MimeType, "image/") {
+			if val.Data != nil {
+				icons[icon] = *val.Data
+			} else if val.Url != nil {
+				icons[icon] = *val.Url
+			}
 		}
 		marshalledJson, err := json.Marshal(val)
 		if err != nil {
@@ -201,7 +219,7 @@ func (l *Linker) brandMetas(ctx context.Context) ([]MetaTag, map[string]string) 
 			Content: string(marshalledJson),
 		})
 	}
-	return metas, values
+	return metas, values, icons
 }
 
 // The card text when a node has no siteTitle / siteDescription branding.
@@ -300,7 +318,7 @@ func (l *Linker) GenerateStreamerCard(ctx context.Context, u *url.URL, lsv *plac
 	thumbURL.Path = "/xrpc/place.stream.live.getProfileCard"
 	thumbURL.RawQuery = fmt.Sprintf("id=%s", lsv.Author.Did)
 
-	brandMetas, values := l.brandMetas(ctx)
+	brandMetas, values, icons := l.brandMetas(ctx)
 	title := expandCard(cardText(values, "cardLiveTitle"), values, &lsv.Author)
 	metaTags := cardTags(u, "website", title, ls.Title, thumbURL.String(), siteTitle(values))
 	metaTags = append(metaTags, brandMetas...)
@@ -313,6 +331,7 @@ func (l *Linker) GenerateStreamerCard(ctx context.Context, u *url.URL, lsv *plac
 		Title:     title,
 		Metas:     metaTags,
 		SentryDSN: sentryDSN,
+		Favicons:  icons,
 	})
 }
 
@@ -350,7 +369,7 @@ func (l *Linker) GenerateVideoCard(ctx context.Context, u *url.URL, vv *placestr
 		imageURL = cardURL.String()
 	}
 
-	brandMetas, values := l.brandMetas(ctx)
+	brandMetas, values, icons := l.brandMetas(ctx)
 	title := expandCard(cardText(values, "cardVideoTitle"), values, &vv.Author)
 	// The description is the video's title, the post text it was published
 	// with; a video without one falls back to its description.
@@ -376,6 +395,7 @@ func (l *Linker) GenerateVideoCard(ctx context.Context, u *url.URL, vv *placestr
 		Title:     pageTitle,
 		Metas:     metaTags,
 		SentryDSN: sentryDSN,
+		Favicons:  icons,
 	})
 }
 
@@ -429,7 +449,7 @@ func (l *Linker) GenerateLandingCard(ctx context.Context, u *url.URL, page Landi
 	thumbURL, _ := url.Parse(u.String())
 	thumbURL.Path = "/linkbanner.png"
 
-	brandMetas, values := l.brandMetas(ctx)
+	brandMetas, values, icons := l.brandMetas(ctx)
 	title := siteTitle(values)
 	description := values["siteDescription"]
 	if description == "" {
@@ -465,6 +485,7 @@ func (l *Linker) GenerateLandingCard(ctx context.Context, u *url.URL, page Landi
 		Title:     title,
 		Metas:     metaTags,
 		SentryDSN: sentryDSN,
+		Favicons:  icons,
 	})
 }
 
@@ -529,6 +550,13 @@ func (l *Linker) GenerateHTML(ctx context.Context, pc *PageConfig) ([]byte, erro
 		if node.Data == "title" || (node.Data == "meta" && isLinkPreviewMeta(node)) {
 			stale = append(stale, node)
 		}
+		if node.Data == "link" {
+			for _, attr := range node.Attr {
+				if attr.Key == "rel" && attr.Val == "icon" {
+					stale = append(stale, node)
+				}
+			}
+		}
 		if dropAppBanner && node.Data == "meta" && isAppBannerMeta(node) {
 			stale = append(stale, node)
 		}
@@ -547,7 +575,6 @@ func (l *Linker) GenerateHTML(ctx context.Context, pc *PageConfig) ([]byte, erro
 		Data: pc.Title,
 	})
 
-	// Add all meta tags in a loop
 	for _, tag := range pc.Metas {
 		head.AppendChild(&html.Node{
 			Type: html.ElementNode,
@@ -557,6 +584,24 @@ func (l *Linker) GenerateHTML(ctx context.Context, pc *PageConfig) ([]byte, erro
 				{Key: "content", Val: tag.Content},
 			},
 		})
+	}
+	// Reuse the branding images already included in the page. Media queries
+	// follow the browser's scheme without script, and inline images cannot
+	// revive an old cached icon after an upload or deletion.
+	icons := pc.Favicons
+	if icons[0] == "" {
+		icons[0] = "/favicon.svg"
+	}
+	for i, media := range [3]string{"", "(prefers-color-scheme: light)", "(prefers-color-scheme: dark)"} {
+		href := icons[i]
+		if href == "" {
+			continue
+		}
+		attrs := []html.Attribute{{Key: "rel", Val: "icon"}, {Key: "href", Val: href}}
+		if media != "" {
+			attrs = append(attrs, html.Attribute{Key: "media", Val: media})
+		}
+		head.AppendChild(&html.Node{Type: html.ElementNode, Data: "link", Attr: attrs})
 	}
 
 	// Paint the branded background before any script runs: on the root

@@ -2,6 +2,7 @@ package linking
 
 import (
 	"context"
+	"encoding/base64"
 	"golang.org/x/net/html"
 	"io/fs"
 	"net/url"
@@ -337,6 +338,87 @@ func TestInitialBackgroundBranding(t *testing.T) {
 			}
 			require.NotContains(t, page, "--bootstrap-")
 			require.NotContains(t, page, "alert(1)")
+		})
+	}
+}
+
+func TestFaviconLinksUseBranding(t *testing.T) {
+	ctx := context.Background()
+	generic := []byte(`<svg xmlns="http://www.w3.org/2000/svg"><rect width="32" height="32"/></svg>`)
+	light := []byte(`<svg xmlns="http://www.w3.org/2000/svg"><circle r="12"/></svg>`)
+	dark := []byte(`<svg xmlns="http://www.w3.org/2000/svg"><circle r="16"/></svg>`)
+	large := []byte(`<svg xmlns="http://www.w3.org/2000/svg"><!--` + strings.Repeat("x", inlineBrandingImageLimit) + `--></svg>`)
+	dataURL := func(data []byte) string {
+		return "data:image/svg+xml;base64," + base64.StdEncoding.EncodeToString(data)
+	}
+	for _, tc := range []struct {
+		name   string
+		assets map[string][]byte
+		icons  map[string]string
+	}{
+		{
+			name:  "bundled fallback",
+			icons: map[string]string{"": "/favicon.svg"},
+		},
+		{
+			name:   "generic icon",
+			assets: map[string][]byte{"favicon": generic},
+			icons:  map[string]string{"": dataURL(generic)},
+		},
+		{
+			name:   "scheme override and generic fallback",
+			assets: map[string][]byte{"favicon": generic, "faviconLight": light},
+			icons:  map[string]string{"": dataURL(generic), "light": dataURL(light)},
+		},
+		{
+			name:   "independent scheme overrides",
+			assets: map[string][]byte{"favicon": generic, "faviconLight": light, "faviconDark": dark},
+			icons:  map[string]string{"": dataURL(generic), "light": dataURL(light), "dark": dataURL(dark)},
+		},
+		{
+			name:   "scheme override and bundled fallback",
+			assets: map[string][]byte{"faviconLight": light},
+			icons:  map[string]string{"": "/favicon.svg", "light": dataURL(light)},
+		},
+		{
+			name:   "large icon uses existing blob URL",
+			assets: map[string][]byte{"favicon": large},
+			icons: map[string]string{
+				"": "/xrpc/place.stream.branding.getBlob?key=favicon&broadcaster=did:web:example.com",
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sdb, err := statedb.MakeDB(ctx, &config.CLI{DBURL: ":memory:"}, nil, nil)
+			require.NoError(t, err)
+			for key, data := range tc.assets {
+				require.NoError(t, sdb.PutBrandingBlob("did:web:example.com", key, "image/svg+xml", data, nil, nil))
+			}
+			linker, err := NewLinker(ctx, IndexHTML(t), sdb, &config.CLI{BroadcasterHost: "example.com"})
+			require.NoError(t, err)
+			u, err := url.Parse("https://example.com/")
+			require.NoError(t, err)
+			out, err := linker.GenerateDefaultCard(ctx, u, "")
+			require.NoError(t, err)
+			document, err := html.Parse(strings.NewReader(string(out)))
+			require.NoError(t, err)
+			icons := map[string]string{}
+			count := 0
+			for node := range document.Descendants() {
+				if node.Type != html.ElementNode || node.Data != "link" {
+					continue
+				}
+				attrs := map[string]string{}
+				for _, attr := range node.Attr {
+					attrs[attr.Key] = attr.Val
+				}
+				if attrs["rel"] == "icon" {
+					count++
+					icons[strings.TrimSuffix(strings.TrimPrefix(attrs["media"], "(prefers-color-scheme: "), ")")] = attrs["href"]
+				}
+			}
+			require.Equal(t, len(tc.icons), count, "replace the template icon without duplicates")
+			require.Equal(t, tc.icons, icons)
 		})
 	}
 }

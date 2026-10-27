@@ -396,7 +396,7 @@ function ChatMessage({
             {formatTime(message.record.createdAt)}
           </span>
         )}
-        <div className="min-w-0 flex-1 flex-wrap items-center gap-1">
+        <div className="min-w-0 flex-1 flex-wrap items-center gap-1 break-words">
           {!isGrouped &&
             message.badges?.map((badge, i) => (
               <span key={i} className="inline-block">
