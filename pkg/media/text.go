@@ -7,7 +7,6 @@ import (
 	"image/color"
 	"image/draw"
 	"image/png"
-	"io"
 	"strings"
 
 	"github.com/golang/freetype"
@@ -29,33 +28,11 @@ func NewTextRenderer() (*TextRenderer, error) {
 }
 
 func loadFont() (*truetype.Font, error) {
-	entries, err := app.AllFiles.ReadDir("dist/assets/assets/fonts")
+	fontBytes, err := app.AssetFiles.ReadFile("assets/fonts/GeistMono-Regular.ttf")
 	if err != nil {
 		return nil, err
 	}
-	var fontFile string
-	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), "AtkinsonHyperlegibleM") {
-			fontFile = fmt.Sprintf("dist/assets/assets/fonts/%s", entry.Name())
-			break
-		}
-	}
-	if fontFile == "" {
-		return nil, fmt.Errorf("could not find AtkinsonHyperlegibleMono-Regular font")
-	}
-	fd, err := app.AllFiles.Open(fontFile)
-	if err != nil {
-		return nil, err
-	}
-	fontBytes, err := io.ReadAll(fd)
-	if err != nil {
-		return nil, err
-	}
-	f, err := freetype.ParseFont(fontBytes)
-	if err != nil {
-		return nil, err
-	}
-	return f, nil
+	return freetype.ParseFont(fontBytes)
 }
 
 func (tr *TextRenderer) GenerateImage(textContent string, fgColorHex string, bgColorHex string, fontSize float64) ([]byte, error) {
