@@ -64,6 +64,12 @@ func Configure(initialBytes, maxBytes uint64) {
 	memInitial, memMax = initialBytes, maxBytes
 }
 
+// Initialize compiles the shared engine before media can arrive.
+func Initialize() error {
+	_, err := getEngine()
+	return err
+}
+
 // getEngine compiles the embedded muxl wasm once and returns the shared Engine.
 // Compilation is the expensive step; each operation instantiates a fresh,
 // isolated module internally, so the Engine is safe for concurrent use.

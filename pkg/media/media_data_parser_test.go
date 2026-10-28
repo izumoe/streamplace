@@ -2,11 +2,16 @@ package media
 
 import (
 	"context"
+	"flag"
+	"fmt"
 	"io"
+	"log/slog"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sync/errgroup"
 	"stream.place/streamplace/pkg/log"
 	"stream.place/streamplace/test/remote"
 )
@@ -69,4 +74,41 @@ func TestMediaDataParserVideoHeaderWithNoVideo(t *testing.T) {
 		require.ErrorContains(t, err, "no video in segment")
 		require.Nil(t, mediaData)
 	})
+}
+
+// Video and audio finish on separate native threads. Concurrent real parses
+// must retain both tracks and their metadata through EOS.
+func TestMediaDataParserConcurrentEOS(t *testing.T) {
+	var logs logCapture
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+	previousVerbosity := flag.Lookup("v").Value.String()
+	require.NoError(t, flag.Set("v", "3"))
+	t.Cleanup(func() { require.NoError(t, flag.Set("v", previousVerbosity)) })
+	withNoGSTLeaks(t, func() {
+		data, err := os.ReadFile(getFixture("sample-segment.mp4"))
+		require.NoError(t, err)
+		group, ctx := errgroup.WithContext(t.Context())
+		group.SetLimit(4)
+		for range 16 {
+			group.Go(func() error {
+				metadata, err := ParseSegmentMediaData(ctx, data)
+				if err != nil {
+					return err
+				}
+				if len(metadata.Video) != 1 || len(metadata.Audio) != 1 || metadata.Duration <= 0 {
+					return fmt.Errorf("EOS lost media tracks or duration: %+v", metadata)
+				}
+				if metadata.Video[0].Width <= 0 || metadata.Video[0].Height <= 0 || metadata.Audio[0].Rate <= 0 || metadata.Audio[0].Channels <= 0 {
+					return fmt.Errorf("EOS lost video dimensions or audio configuration: %+v", metadata)
+				}
+				return nil
+			})
+		}
+		require.NoError(t, group.Wait())
+	})
+	// The fixture's initial zero-duration picture warns once per parse.
+	require.Equal(t, 16, strings.Count(logs.String(), "no duration found for track"))
+	require.NotContains(t, logs.String(), "level=ERROR")
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/pion/webrtc/v4"
 	"stream.place/streamplace/pkg/gstinit"
 	"stream.place/streamplace/pkg/log"
+	"stream.place/streamplace/pkg/muxl"
 	"stream.place/streamplace/pkg/rtcrec"
 )
 
@@ -56,6 +57,10 @@ func ServeWHIPIngestWorkerSocket(ctx context.Context, cfg IngestWorkerConfig) er
 		srv.waitDrained(ctx, workerDrainGrace)
 		srv.closeConn()
 		return runErr
+	}
+
+	if err := muxl.Initialize(); err != nil {
+		return finish(fmt.Errorf("initialize muxl: %w", err))
 	}
 
 	mm := &MediaManager{cli: cfg.workerCLI()}

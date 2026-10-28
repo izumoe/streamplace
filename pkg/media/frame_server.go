@@ -24,6 +24,9 @@ const workerFrameBuffer = 600
 // orphaned worker (main never returns) exits after it.
 const workerDrainGrace = 60 * time.Second
 
+// workerFrameWriteTimeout bounds how long a stalled main can block ingest.
+const workerFrameWriteTimeout = 5 * time.Second
+
 // FrameWriter is the worker's segment sink. Stage 1 uses a direct framed pipe
 // (*ingestframe.Writer); the zero-downtime path uses *frameServer, which buffers
 // across a disconnected main and replays on reconnect. Structurally satisfied by
@@ -73,10 +76,15 @@ func (s *frameServer) push(typ ingestframe.Type, payload []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.w != nil {
-		if err := s.w.WriteFrame(typ, payload); err == nil {
+		err := s.conn.SetWriteDeadline(time.Now().Add(workerFrameWriteTimeout))
+		if err == nil {
+			err = s.w.WriteFrame(typ, payload)
+		}
+		if err == nil {
 			return
 		}
 		// Client gone; drop it and buffer this frame instead.
+		s.conn.Close()
 		s.conn, s.w = nil, nil
 	}
 	s.pending = append(s.pending, bufferedFrame{typ, bytes.Clone(payload)})
@@ -115,7 +123,12 @@ func (s *frameServer) attach(conn net.Conn) {
 	w := ingestframe.NewWriter(conn)
 	for len(s.pending) > 0 {
 		f := s.pending[0]
-		if err := w.WriteFrame(f.typ, f.payload); err != nil {
+		err := conn.SetWriteDeadline(time.Now().Add(workerFrameWriteTimeout))
+		if err == nil {
+			err = w.WriteFrame(f.typ, f.payload)
+		}
+		if err != nil {
+			conn.Close()
 			return
 		}
 		s.pending[0] = bufferedFrame{}

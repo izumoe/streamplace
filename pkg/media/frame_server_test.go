@@ -1,11 +1,14 @@
 package media
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"stream.place/streamplace/pkg/ingestframe"
@@ -167,6 +170,132 @@ func TestFrameServerReconnectAfterPartialDrain(t *testing.T) {
 	require.Equal(t, seg(0), payload)
 }
 
+func TestFrameServerSlowReaderReconnect(t *testing.T) {
+	for _, replay := range []bool{false, true} {
+		name := "live"
+		if replay {
+			name = "replay"
+		}
+		t.Run(name, func(t *testing.T) {
+			srv := newFrameServer(3)
+			payload := bytes.Repeat([]byte{0x42}, 1<<20)
+			client, server := unixPair(t)
+			require.NoError(t, server.(*net.UnixConn).SetWriteBuffer(1024))
+			if replay {
+				require.NoError(t, srv.SourceSegment(payload))
+			} else {
+				srv.attach(server)
+			}
+			done := make(chan struct{})
+			go func() {
+				if replay {
+					srv.attach(server)
+				} else {
+					_ = srv.SourceSegment(payload)
+				}
+				close(done)
+			}()
+
+			// Read only the item header, then leave the real socket backpressured.
+			require.NoError(t, client.SetReadDeadline(time.Now().Add(time.Second)))
+			_, err := io.ReadFull(client, make([]byte, 1))
+			require.NoError(t, err)
+			select {
+			case <-done:
+			case <-time.After(6 * time.Second):
+				t.Fatal("a connected main that stops reading must not stall the worker")
+			}
+			require.NoError(t, client.SetReadDeadline(time.Now().Add(time.Second)))
+			_, err = io.Copy(io.Discard, client)
+			require.NoError(t, err, "failed partial frame must close so main can reconnect")
+			require.NoError(t, srv.CompletedSourceSegment(seg(1)))
+
+			client, server = unixPair(t)
+			require.NoError(t, client.SetReadDeadline(time.Now().Add(2*time.Second)))
+			type result struct {
+				typ     ingestframe.Type
+				payload []byte
+				err     error
+			}
+			frames := make(chan result, 2)
+			go func() {
+				reader := ingestframe.NewReader(client)
+				for range 2 {
+					typ, data, err := reader.ReadFrame()
+					frames <- result{typ, data, err}
+				}
+			}()
+			srv.attach(server)
+			first, second := <-frames, <-frames
+			require.NoError(t, first.err)
+			require.Equal(t, ingestframe.SourceSegment, first.typ)
+			require.Equal(t, payload, first.payload, "reconnect must replay the entire partial frame")
+			require.NoError(t, second.err)
+			require.Equal(t, ingestframe.CompletedSourceSegment, second.typ)
+			require.Equal(t, seg(1), second.payload)
+			require.Zero(t, srv.droppedCount())
+		})
+	}
+}
+
+func TestServeFrameSocketCancelBoundsBlockedWrite(t *testing.T) {
+	for _, replay := range []bool{false, true} {
+		name := "live"
+		if replay {
+			name = "replay"
+		}
+		t.Run(name, func(t *testing.T) {
+			sock := filepath.Join(t.TempDir(), "frames.sock")
+			ln, err := net.Listen("unix", sock)
+			require.NoError(t, err)
+			t.Cleanup(func() { ln.Close() })
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			srv := newFrameServer(3)
+			payload := bytes.Repeat([]byte{0x42}, 1<<20)
+			if replay {
+				require.NoError(t, srv.SourceSegment(payload))
+			} else {
+				require.NoError(t, srv.Segment(seg(0)))
+			}
+			serveDone := make(chan struct{})
+			go func() {
+				serveFrameSocket(ctx, ln, srv, newManifestHolder(nil))
+				close(serveDone)
+			}()
+			client, err := net.Dial("unix", sock)
+			require.NoError(t, err)
+			t.Cleanup(func() { client.Close() })
+			require.NoError(t, client.SetReadDeadline(time.Now().Add(time.Second)))
+			writeDone := serveDone
+			if !replay {
+				readSegs(t, ingestframe.NewReader(client), 1)
+				writeDone = make(chan struct{})
+				go func() {
+					_ = srv.SourceSegment(payload)
+					close(writeDone)
+				}()
+			}
+			_, err = io.ReadFull(client, make([]byte, 1))
+			require.NoError(t, err, "worker started writing the oversized frame")
+			cancel()
+			select {
+			case <-writeDone:
+			case <-time.After(6 * time.Second):
+				t.Fatal("a blocked frame write must not prevent worker shutdown")
+			}
+			select {
+			case <-serveDone:
+			case <-time.After(time.Second):
+				t.Fatal("cancel must stop the socket server")
+			}
+			require.NoError(t, client.SetReadDeadline(time.Now().Add(time.Second)))
+			_, err = io.Copy(io.Discard, client)
+			require.NoError(t, err, "cancel must close the partial frame connection")
+		})
+	}
+}
+
 // TestServeFrameSocketAttachAndFlush exercises the real accept loop: frames
 // buffered before any client are flushed on connect, then live frames stream.
 func TestServeFrameSocketAttachAndFlush(t *testing.T) {
@@ -180,7 +309,11 @@ func TestServeFrameSocketAttachAndFlush(t *testing.T) {
 	for i := 0; i < 3; i++ { // buffered before anyone connects
 		require.NoError(t, srv.Segment(seg(i)))
 	}
-	go serveFrameSocket(ctx, ln, srv, newManifestHolder(nil))
+	serveDone := make(chan struct{})
+	go func() {
+		serveFrameSocket(ctx, ln, srv, newManifestHolder(nil))
+		close(serveDone)
+	}()
 
 	client, err := net.Dial("unix", sock)
 	require.NoError(t, err)
@@ -201,12 +334,18 @@ func TestServeFrameSocketAttachAndFlush(t *testing.T) {
 		require.Equal(t, seg(i), got[i-3])
 	}
 
-	// End frame then a clean EOF on cancel.
+	// Ingest cancels before flushing its tail and End to the attached main.
+	cancel()
+	select {
+	case <-serveDone:
+	case <-time.After(time.Second):
+		t.Fatal("cancel must stop accepting new connections")
+	}
 	require.NoError(t, srv.End())
 	typ, _, err := r.ReadFrame()
 	require.NoError(t, err)
 	require.Equal(t, ingestframe.End, typ)
-
-	cancel()
-	ln.Close()
+	srv.closeConn()
+	_, _, err = r.ReadFrame()
+	require.ErrorIs(t, err, io.EOF)
 }

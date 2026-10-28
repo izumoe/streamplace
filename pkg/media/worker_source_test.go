@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"flag"
 	"io"
 	"log/slog"
 	"testing"
@@ -90,6 +91,9 @@ func TestWorkerSourceFramePublishesBeforeCompletion(t *testing.T) {
 // A phase frame is subject to the same signature, identity and distribution
 // checks as an ordinary ingest segment. The bitrate gate waits for completion.
 func TestWorkerSourceFrameAdmission(t *testing.T) {
+	previousVerbosity := flag.Lookup("v").Value.String()
+	require.NoError(t, flag.Set("v", "3"))
+	t.Cleanup(func() { require.NoError(t, flag.Set("v", previousVerbosity)) })
 	streamer, source := workerSourceForTest(t)
 	tests := []struct {
 		name   string
@@ -229,6 +233,9 @@ func TestWorkerEmitsSourceBeforeCodecCompletion(t *testing.T) {
 }
 
 func TestWorkerWatchdogRequiresCodecCompletion(t *testing.T) {
+	previousVerbosity := flag.Lookup("v").Value.String()
+	require.NoError(t, flag.Set("v", "3"))
+	t.Cleanup(func() { require.NoError(t, flag.Set("v", previousVerbosity)) })
 	for _, sourceOnly := range []bool{true, false} {
 		name := "completion resets deadline"
 		if sourceOnly {

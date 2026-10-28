@@ -25,6 +25,7 @@ import (
 	"stream.place/streamplace/pkg/livehls"
 	"stream.place/streamplace/pkg/localdb"
 	"stream.place/streamplace/pkg/model"
+	"stream.place/streamplace/pkg/muxl"
 	"stream.place/streamplace/pkg/placestream"
 
 	"stream.place/streamplace/pkg/log"
@@ -142,6 +143,9 @@ func MakeMediaManager(ctx context.Context, cli *config.CLI, signer crypto.Signer
 	err := SelfTest(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("error in gstreamer self-test: %w", err)
+	}
+	if err := muxl.Initialize(); err != nil {
+		return nil, fmt.Errorf("initialize muxl: %w", err)
 	}
 
 	api, config, err := newWebRTCAPI()
