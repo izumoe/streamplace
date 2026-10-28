@@ -7,6 +7,8 @@ export default async function globalSetup(_config: FullConfig) {
   if (!SERVER_URL) {
     throw new Error("SERVER_URL is not set — start the harness first");
   }
+  // The latency flow supplies its own marked source after setup.
+  if (process.env.E2E_LATENCY === "1") return;
 
   const browser = await chromium.launch();
   const page = await browser.newPage();

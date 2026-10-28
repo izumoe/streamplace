@@ -35,6 +35,11 @@ case "$(uname)-$(uname -m)" in
   Darwin-x86_64) BUILDDIR=build-darwin-amd64 ;;
   *) echo "unsupported host $(uname)-$(uname -m)"; exit 1 ;;
 esac
+BUILDDIR="${E2E_BUILDDIR:-$BUILDDIR}"
+# Match cleanup against the selected executable, including comparison builds.
+if [ -d "$BUILDDIR" ]; then
+  BUILDDIR="$(cd "$BUILDDIR" && pwd -P)"
+fi
 
 e2e_harness_start() {
   if [ ! -x "$BUILDDIR/streamplace" ]; then
@@ -62,6 +67,9 @@ e2e_harness_start() {
   E2E_HTTPS_PDS_HOSTNAME="${E2E_HTTPS_PDS_HOSTNAME-localhost-pds.streamplace.network}"
   E2E_HTTPS_STATION_HOSTNAME="${E2E_HTTPS_STATION_HOSTNAME-localhost-station.streamplace.team}"
   local args=(e2e)
+  if [ "${E2E_LATENCY:-}" = 1 ]; then
+    args+=(--external-stream)
+  fi
   if [ -n "$E2E_HTTPS_PDS_HOSTNAME" ]; then
     args+=(--https-pds-hostname "$E2E_HTTPS_PDS_HOSTNAME"
       --https-station-hostname "$E2E_HTTPS_STATION_HOSTNAME"
@@ -83,6 +91,7 @@ e2e_harness_start() {
   . "$E2E_ENVFILE"
   export SERVER_URL SERVER2_URL ACCOUNT_HANDLE ACCOUNT_DID ACCOUNT_PASSWORD VIDEO_URI
   export E2E_FIXTURE_MP4 PDS_HTTP_URL
+  export E2E_STREAM_KEY
   # Every node's log, for specs that check how something happened.
   export E2E_LOGFILE
   # only set in HTTPS mode
