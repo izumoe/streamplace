@@ -1,7 +1,7 @@
 name: docker-builder
 
 # Publishes the pinned builder toolchain image:
-# ghcr.io/streamplace/streamplace:builder-<DOCKERFILE_HASH>, the tag that
+# ghcr.io/izumoe/streamplace:builder-<DOCKERFILE_HASH>, the tag that
 # .gitlab-ci.yml jobs and hack/container.sh (local dev containers) run on,
 # resolved from .ci/dockerfile-hash.yaml. The hash covers every file the
 # image bakes in (build.Dockerfile plus its ADD inputs), so any change
@@ -26,7 +26,7 @@ permissions:
   packages: write
 
 env:
-  REGISTRY_IMAGE: ghcr.io/streamplace/streamplace
+  REGISTRY_IMAGE: ghcr.io/izumoe/streamplace
 
 jobs:
   builder:

@@ -14,9 +14,9 @@ workflow:
     - when: always
 
 variables:
-  # The builder toolchain image, published to ghcr.io by .github/workflows/docker.yaml
+  # The builder toolchain image, published to ghcr.io by .github/workflows/docker-builder.yaml
   # (tag builder-<DOCKERFILE_HASH>, resolved from .ci/dockerfile-hash.yaml).
-  DOCKER_REPO: "ghcr.io/streamplace/streamplace"
+  DOCKER_REPO: "ghcr.io/izumoe/streamplace"
 
 .build:
   stage: build

@@ -2,12 +2,12 @@ name: docker
 
 # Builds the streamplace container images and publishes them to ghcr.io.
 #
-#   ghcr.io/streamplace/streamplace:next                 - release image (amd64+arm64)
-#   ghcr.io/streamplace/streamplace:<version>            - immutable release image
-#   ghcr.io/streamplace/streamplace:latest               - newest tagged release
-#   ghcr.io/streamplace/streamplace:next-mistserver      - MistServer companion (amd64)
-#   ghcr.io/streamplace/streamplace:bunny                - leak-test fixture image (amd64)
-#   ghcr.io/streamplace/streamplace:builder              - cross-compile toolchain (amd64)
+#   ghcr.io/izumoe/streamplace:next                 - release image (amd64+arm64)
+#   ghcr.io/izumoe/streamplace:<version>            - immutable release image
+#   ghcr.io/izumoe/streamplace:latest               - newest tagged release
+#   ghcr.io/izumoe/streamplace:next-mistserver      - MistServer companion (amd64)
+#   ghcr.io/izumoe/streamplace:bunny                - leak-test fixture image (amd64)
+#   ghcr.io/izumoe/streamplace:builder              - cross-compile toolchain (amd64)
 #
 # Pushes happen on `next` and on `v*` tags. Pull requests build everything but
 # do not push, so the Dockerfiles stay validated without publishing.
@@ -29,7 +29,7 @@ permissions:
   packages: write
 
 env:
-  REGISTRY_IMAGE: ghcr.io/streamplace/streamplace
+  REGISTRY_IMAGE: ghcr.io/izumoe/streamplace
 
 jobs:
   # The cross-compilation toolchain image, published so it can be pulled for
@@ -118,7 +118,7 @@ jobs:
           make in-container \
             BUILDER_TARGET=builder-no-darwin \
             DOCKER_PWD_MOUNT_PATH=/app \
-            DOCKER_BUILD_OPTS="--layers --cache-to ghcr.io/streamplace/streamplace --cache-from ghcr.io/streamplace/streamplace" \
+            DOCKER_BUILD_OPTS="--layers --cache-to ghcr.io/izumoe/streamplace --cache-from ghcr.io/izumoe/streamplace" \
             DOCKER_OPTS="-e CI=true -e GITHUB_ACTION=true" \
             IN_CONTAINER_CMD="make linux-amd64 && make linux-arm64 && go run ./pkg/config/git/git.go -v > sp-version.txt"
 

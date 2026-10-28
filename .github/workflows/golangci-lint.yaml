@@ -38,7 +38,7 @@ jobs:
           mkdir -p ~/.config/containers
           printf '[engine]\nlock_type = "file"\n' >> ~/.config/containers/containers.conf
           sudo ln -s $(realpath ./hack/golangci-lint) /usr/bin/golangci-lint
-          make golangci-lint-container BUILDER_TARGET=builder-no-darwin DOCKER_BUILD_OPTS="--layers --cache-to ghcr.io/streamplace/streamplace --cache-from ghcr.io/streamplace/streamplace"
+          make golangci-lint-container BUILDER_TARGET=builder-no-darwin DOCKER_BUILD_OPTS="--layers --cache-to ghcr.io/izumoe/streamplace --cache-from ghcr.io/izumoe/streamplace"
 
       - name: sanity-check wrapper from bash
         run:
