@@ -36,6 +36,25 @@ func idleStreamSession(b *bus.Bus) (*StreamSession, *media.NewSegmentNotificatio
 		}
 }
 
+func TestTranscodeBusyReleasesPublicationTurn(t *testing.T) {
+	slots := make(chan struct{}, 1)
+	slots <- struct{}{}
+	ss := &StreamSession{transcodeSlots: slots}
+	lane := newLane()
+	first, next := lane.turn(), lane.turn()
+	require.NoError(t, ss.Transcode(context.Background(), nil, nil, first))
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	require.True(t, next.wait(ctx), "a skipped job must not hold later rendition publication")
+	next.release()
+}
+
+func TestTranscodeSkipsEmptyLadder(t *testing.T) {
+	ss := &StreamSession{cli: &config.CLI{}, transcodeSlots: make(chan struct{}, 2)}
+	segment := &placestream.Segment{Video: []placestream.Segment_Video{{Width: 80, Height: 60, Framerate: &placestream.Segment_Framerate{Num: 30, Den: 1}}}}
+	require.NoError(t, ss.Transcode(context.Background(), segment, nil, nil))
+}
+
 func TestStreamSessionIdleTimeout(t *testing.T) {
 	for _, cancelSession := range []bool{false, true} {
 		name := "activity resets timeout"

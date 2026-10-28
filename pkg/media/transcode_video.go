@@ -14,7 +14,7 @@ import (
 )
 
 // Video renditions as first-class MUXL tracks — the audio dual-codec path
-// (finishTranscodedSegment) applied to video. A transcoder (Livepeer) hands
+// (finishTranscodedSegment) applied to video. The transcoder hands
 // back one MP4 per rendition of a source segment; each rendition's video
 // track is relabelled to a fixed track id, signed as a c2pa.transcoded
 // derivative of the source video track under the node's identity, and the
@@ -51,8 +51,8 @@ func UnframeRenditions(msg []byte) ([]byte, bool) {
 }
 
 // RenditionInput is one transcoded rendition of a source segment as the
-// transcoder returned it: an MP4 carrying the rendition's video (and, from
-// Livepeer, the source audio muxed back in — ignored here).
+// transcoder returned it: an MP4 carrying the rendition's video and source
+// audio, which is ignored here.
 type RenditionInput struct {
 	Name string
 	MP4  []byte
@@ -121,9 +121,8 @@ func (mm *MediaManager) mintVideoRenditions(ctx context.Context, srcSeg []byte, 
 			log.Warn(ctx, "rendition: canonicalize failed, skipping", "rendition", r.Name, "error", err)
 			continue
 		}
-		// The transcoder saw a segment that starts at zero (the TS we hand
-		// it carries running time, not the stream's), so its output starts
-		// at zero too: put every fragment back on the source's timeline.
+		// The transcoder's output carries running time. Put every fragment
+		// back on the source's timeline.
 		if delta, ok := retimeDelta(sourceVideo, srcTimescale, pieces[0], renTimescale); ok {
 			for j := range pieces {
 				pieces[j] = shiftTfdt(pieces[j], delta)

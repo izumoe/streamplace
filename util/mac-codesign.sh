@@ -3,12 +3,12 @@
 set -euo pipefail
 
 CODESIGN="$(command -v codesign || echo -n "/usr/bin/codesign")"
-NOTARIZATION_FILE="/tmp/LP_NOTARIZATION_${RANDOM}.zip"
+NOTARIZATION_FILE="/tmp/STREAMPLACE_NOTARIZATION_${RANDOM}.zip"
 CERTIFICATE_FILE="certificate.csr"
 KEYCHAIN_NAME="streamplace.keychain"
 KEYCHAIN_FILE=""
 
-function livepeer-keychain() {
+function streamplace-keychain() {
   # Create and unlock a custom temporary keychain for codesigning and
   # notarization purpose
   local password="$(uuidgen)"
@@ -28,13 +28,13 @@ function livepeer-keychain() {
   rm -f "${CERTIFICATE_FILE}"
 }
 
-function livepeer-codesign() {
+function streamplace-codesign() {
   $CODESIGN --force --sign "${DEVELOPER_CERTIFICATE_ID}" -o runtime "${BINARY_PATH}"
   zip -9r "${NOTARIZATION_FILE}" "${BINARY_PATH}"
 }
 
-function livepeer-notarize() {
-  local keychain_profile="lp-notarize_${RANDOM}"
+function streamplace-notarize() {
+  local keychain_profile="streamplace-notarize_${RANDOM}"
   security default-keychain -s "$KEYCHAIN_NAME"
   security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_NAME"
   if [[ "$KEYCHAIN_FILE" == "" ]]; then
@@ -58,9 +58,9 @@ function livepeer-notarize() {
 }
 
 export BINARY_PATH="${1:-}"
-livepeer-keychain
+streamplace-keychain
 if [[ "${BINARY_PATH:-}" != "" ]]; then
-  livepeer-codesign
-  livepeer-notarize
+  streamplace-codesign
+  streamplace-notarize
   codesign -dvv "$BINARY_PATH"
 fi

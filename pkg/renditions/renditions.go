@@ -31,7 +31,7 @@ var AudioRendition = Rendition{
 	AudioOnly: true,
 }
 
-type JSONProfile struct {
+type Profile struct {
 	Name    string `json:"name,omitempty"`
 	Width   int    `json:"width,omitempty"`
 	Height  int    `json:"height,omitempty"`
@@ -39,18 +39,12 @@ type JSONProfile struct {
 	FPS     uint   `json:"fps,omitempty"`
 	FPSDen  uint   `json:"fpsDen,omitempty"`
 	Profile string `json:"profile,omitempty"`
-	GOP     string `json:"gop,omitempty"`
-	Encoder string `json:"encoder,omitempty"`
-	Quality uint   `json:"quality,omitempty"`
 }
 
-// ToLivepeerProfile is the rendition as the gateway's transcode
-// configuration wants it. Both dimensions are sent: GenerateRenditions has
-// already fitted them to the source's aspect, and a gateway handed one
-// dimension takes it as the width (a "720p" asked for by height alone came
-// back 720 pixels wide). Dimensions are rounded to even for the encoder.
-func (r Rendition) ToLivepeerProfile() JSONProfile {
-	return JSONProfile{
+// ToProfile preserves the fitted aspect ratio and rounds dimensions to even
+// values for the encoder.
+func (r Rendition) ToProfile() Profile {
+	return Profile{
 		Name:    r.Name,
 		Width:   even(r.Width),
 		Height:  even(r.Height),
@@ -70,10 +64,10 @@ func even(n int64) int {
 
 type Renditions []Rendition
 
-func (rs Renditions) ToLivepeerProfiles() []JSONProfile {
-	profiles := make([]JSONProfile, len(rs))
+func (rs Renditions) ToProfiles() []Profile {
+	profiles := make([]Profile, len(rs))
 	for i, r := range rs {
-		profiles[i] = r.ToLivepeerProfile()
+		profiles[i] = r.ToProfile()
 	}
 	return profiles
 }
@@ -88,7 +82,7 @@ var DesiredRenditions = []Rendition{
 			Num: 60,
 			Den: 1,
 		},
-		Profile: "h264constrainedhigh",
+		Profile: "high",
 	},
 	{
 		Name:    "720p",
@@ -99,7 +93,7 @@ var DesiredRenditions = []Rendition{
 			Num: 60,
 			Den: 1,
 		},
-		Profile: "h264constrainedhigh",
+		Profile: "high",
 	},
 	{
 		Name:    "360p",
@@ -110,7 +104,7 @@ var DesiredRenditions = []Rendition{
 			Num: 30,
 			Den: 1,
 		},
-		Profile: "h264constrainedhigh",
+		Profile: "high",
 	},
 	{
 		Name:    "240p",
@@ -121,7 +115,7 @@ var DesiredRenditions = []Rendition{
 			Num: 30,
 			Den: 1,
 		},
-		Profile: "h264constrainedhigh",
+		Profile: "high",
 	},
 	{
 		Name:    "160p",
@@ -132,7 +126,7 @@ var DesiredRenditions = []Rendition{
 			Num: 30,
 			Den: 1,
 		},
-		Profile: "h264baseline",
+		Profile: "baseline",
 	},
 }
 

@@ -4,14 +4,11 @@ Package clog provides Context with logging metadata, as well as logging helper f
 package log
 
 import (
-	"bufio"
 	"context"
-	"flag"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strconv"
 
@@ -43,15 +40,7 @@ var traceLogLevel glog.Level = 9
 // creation, so we don't have to worry about locking.
 type metadata [][]string
 
-// LOG: I0809 17:23:01.775710  255904 broadcast.go:1162] manifestID=didplcdkh4rwafdcda4ko7lewe43ml-84zq1aff-4ren nonce=9899027318953397582 seqNo=2 clientIP=127.0.0.1 Trying to transcode segment using sessions=1
-// LOG: I0809 17:23:01.777792  255904 segment_rpc.go:551] manifestID=didplcdkh4rwafdcda4ko7lewe43ml-84zq1aff-4ren nonce=9899027318953397582 seqNo=2 orchSessionID=cdc9e3b9 orchestrator=https://127.0.0.1:9001 clientIP=127.0.0.1 Submitting segment bytes=1017268 orch=https://127.0.0.1:9001 timeout=8s uploadTimeout=2s segDur=0.832
-// LOG: I0809 17:23:01.778444  255904 discovery.go:211] manifestID=didplcdkh4rwafdcda4ko7lewe43ml-84zq1aff-4ren nonce=9899027318953397582 clientIP=127.0.0.1 Done fetching orch info numOrch=1 responses=1/1 timedOut=false
-// LOG: I0809 17:23:01.782914  255904 segment_rpc.go:587] manifestID=didplcdkh4rwafdcda4ko7lewe43ml-84zq1aff-4ren nonce=9899027318953397582 seqNo=2 orchSessionID=cdc9e3b9 orchestrator=https://127.0.0.1:9001 clientIP=127.0.0.1 Uploaded segment orch=https://127.0.0.1:9001 dur=5.106541ms
-// LOG: I0809 17:23:01.892735  255904 segment_rpc.go:668] manifestID=didplcdkh4rwafdcda4ko7lewe43ml-84zq1aff-4ren nonce=9899027318953397582 seqNo=2 orchSessionID=cdc9e3b9 orchestrator=https://127.0.0.1:9001 clientIP=127.0.0.1 Successfully transcoded segment segName= seqNo=2 orch=https://127.0.0.1:9001 dur=109.762457ms
-// LOG: I0809 17:23:01.893821  255904 mediaserver.go:1046] manifestID=didplcdkh4rwafdcda4ko7lewe43ml-84zq1aff-4ren nonce=9899027318953397582 seqNo=2 orchSessionID=cdc9e3b9 orchestrator=https://127.0.0.1:9001 clientIP=127.0.0.1 Finished transcoding push request at url=http://127.0.0.1:8935/live/didplcdkh4rwafdcda4ko7lewe43ml-84zq1aff-4ren/2.ts took=160.894832ms
-
 var realStderr = os.Stderr
-var logLineRegex = regexp.MustCompile(`^([IWEF])\d+ \d{2}:\d{2}:\d{2}\.\d{6}\s+\d+\s+([^:]+:\d+)\]\s*(.*)$`)
 
 func SetColorLogger(color string) {
 	noColor := false
@@ -80,51 +69,6 @@ func SetColorLogger(color string) {
 			NoColor:    noColor,
 		}),
 	))
-}
-
-func MonkeypatchStderr() {
-	r, w, err := os.Pipe()
-	if err != nil {
-		panic(err)
-	}
-	realStderr := os.Stderr
-	os.Stderr = w
-	ctx := WithLogValues(context.Background(), "component", "livepeer")
-	go func() {
-		scanner := bufio.NewScanner(r)
-		for scanner.Scan() {
-			match := logLineRegex.FindStringSubmatch(scanner.Text())
-			if len(match) == 0 {
-				fmt.Fprintf(realStderr, "%s\n", scanner.Text())
-				continue
-			}
-			level := match[1]
-			caller := match[2]
-			message := match[3]
-			if level == "I" {
-				Log(ctx, message, "caller", caller)
-			} else if level == "W" {
-				Warn(ctx, message)
-			} else if level == "E" {
-				Error(ctx, message)
-			} else if level == "F" {
-				Warn(ctx, message)
-			} else {
-				fmt.Fprintf(realStderr, "UNKNOWN LOG LEVEL: %s %s\n", level, message)
-			}
-		}
-		if err := scanner.Err(); err != nil {
-			fmt.Fprintf(realStderr, "LOG: Error reading pipe: %v\n", err)
-		}
-
-	}()
-	// set global logger with custom options
-	SetColorLogger("")
-
-	// Set default v level to 3; this is overridden in main() but is useful for tests
-	vFlag := flag.Lookup("v")
-	// nolint:errcheck
-	vFlag.Value.Set(fmt.Sprintf("%d", defaultLogLevel))
 }
 
 type VerboseLogger struct {

@@ -40,8 +40,8 @@ func TestCheckConfig(t *testing.T) {
 		"--secure")
 	ok(CLI{DataDir: t.TempDir(), DuplicateMistTest: true, Secure: true, RTMPServerAddon: "127.0.0.1:31935"})
 	bad(CLI{}, "data-dir")
-	bad(CLI{DataDir: t.TempDir(), LivepeerGateway: true, LivepeerGatewayURL: "http://127.0.0.1:8935"},
-		"livepeer-gateway")
+	bad(CLI{DataDir: t.TempDir(), TranscoderURL: "invalid"},
+		"transcoder-url")
 	bad(CLI{DataDir: t.TempDir(), TranscodeRenditions: "not-a-rendition"},
 		"--transcode-renditions")
 	bad(CLI{DataDir: t.TempDir(),
@@ -61,11 +61,11 @@ func TestCheckConfig(t *testing.T) {
 		"--transcode-renditions", "--firebase-service-account-file")
 
 	// Multiple problems are reported together, not one at a time.
-	multi := CLI{LivepeerGateway: true, LivepeerGatewayURL: "http://127.0.0.1:8935",
+	multi := CLI{TranscoderURL: "invalid",
 		VODCDNProvider: "bunny"}
 	err := multi.CheckConfig()
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "livepeer-gateway")
+	require.Contains(t, err.Error(), "transcoder-url")
 	require.Contains(t, err.Error(), "vod-cdn-url")
 }
 

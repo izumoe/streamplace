@@ -37,7 +37,7 @@ func TestValidateConfigCommandRuns(t *testing.T) {
 	require.NoError(t, err)
 
 	err = cmd.Run(t.Context(), []string{"validate-config", "--data-dir", t.TempDir(),
-		"--livepeer-gateway"})
+		"--transcoder-url", "http://127.0.0.1:8935/transcode"})
 	require.NoError(t, err)
 
 	err = cmd.Run(t.Context(), []string{"validate-config", "--data-dir", t.TempDir(),

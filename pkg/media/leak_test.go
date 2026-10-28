@@ -2,6 +2,7 @@ package media
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,6 +20,7 @@ import (
 	"github.com/cenkalti/backoff/v5"
 	"github.com/stretchr/testify/require"
 	"stream.place/streamplace/pkg/gstinit"
+	"stream.place/streamplace/pkg/transcoder"
 )
 
 var streamplaceTestCount = 50
@@ -48,6 +50,13 @@ var LeakReportMutex sync.Mutex
 var LeakDoneCh = make(chan struct{})
 
 func TestMain(m *testing.M) {
+	if len(os.Args) == 3 && os.Args[1] == "-job" {
+		if err := transcoder.RunJob(context.Background(), os.Args[2], os.Stdin, os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
 	// When the parent test re-execs us as an isolated ingest worker (mirroring the
 	// `streamplace ingest-worker` subcommand), act as that worker and exit — before
 	// any leak-tracer setup, so the child stays a clean media pipeline.

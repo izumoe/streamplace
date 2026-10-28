@@ -15,8 +15,8 @@ import (
 var pushEndPayload = MistTriggerBody(`
 	2596
 	video+c447r0acdmqhhhpb
-	rtmp://rtmp.livepeer.com/live/stream-key?video=maxbps&audio=maxbps
-	rtmp://rtmp.livepeer.com/live/stream-key-2?video=minbps&audio=maxbps
+	rtmp://rtmp.example.com/live/stream-key?video=maxbps&audio=maxbps
+	rtmp://rtmp.example.com/live/stream-key-2?video=minbps&audio=maxbps
 	[[1688427369,"INFO","Automatically seeking to resume playback","video+c447r0acdmqhhhpb"],[1688427369,"INFO","Track selection changed - resending headers and continuing","video+c447r0acdmqhhhpb"],[1688427369,"FAIL","Opening file '/maxbps' failed: No such file or directory","video+c447r0acdmqhhhpb"],[1688427369,"INFO","Could not parse audio parameter maxbps. Skipping...","video+c447r0acdmqhhhpb"],[1688427372,"INFO","Switching UDP socket from IPv6 to IPv4","video+c447r0acdmqhhhpb"],[1688427377,"INFO","Switching UDP socket from IPv6 to IPv4","video+c447r0acdmqhhhpb"],[1688427382,"INFO","Switching UDP socket from IPv6 to IPv4","video+c447r0acdmqhhhpb"],[1688427387,"INFO","Switching UDP socket from IPv6 to IPv4","video+c447r0acdmqhhhpb"],[1688427389,"INFO","Received signal Terminated (15) from process 2550","video+c447r0acdmqhhhpb"],[1688427389,"INFO","Client handler shutting down, exit reason: signal Terminated (15) from process 2550","video+c447r0acdmqhhhpb"]]
 	{"active_seconds":24,"bytes":2388218,"mediatime":26693,"tracks":[0,1]}
 `)
@@ -53,8 +53,8 @@ func TestItCanParseValidPushEndPayload(t *testing.T) {
 	payload, err := ParsePushEndPayload(pushEndPayload)
 	require.NoError(t, err)
 	require.Equal(t, payload.StreamName, "video+c447r0acdmqhhhpb")
-	require.Equal(t, payload.Destination, "rtmp://rtmp.livepeer.com/live/stream-key?video=maxbps&audio=maxbps")
-	require.Equal(t, payload.ActualDestination, "rtmp://rtmp.livepeer.com/live/stream-key-2?video=minbps&audio=maxbps")
+	require.Equal(t, payload.Destination, "rtmp://rtmp.example.com/live/stream-key?video=maxbps&audio=maxbps")
+	require.Equal(t, payload.ActualDestination, "rtmp://rtmp.example.com/live/stream-key-2?video=minbps&audio=maxbps")
 	require.Equal(t, payload.PushStatus.ActiveSeconds, int64(24))
 	require.Equal(t, payload.PushStatus.Bytes, int64(2388218))
 	require.Equal(t, payload.PushStatus.MediaTime, int64(26693))

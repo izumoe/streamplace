@@ -14,7 +14,7 @@ import (
 
 var pushOutStartPayload = MistTriggerBody(`
 	video+c447r0acdmqhhhpb
-	rtmp://rtmp.livepeer.com/live/stream-key?video=maxbps&audio=maxbps
+	rtmp://rtmp.example.com/live/stream-key?video=maxbps&audio=maxbps
 `)
 
 var pushOutStartPayloadInvalidLines = MistTriggerBody(`
@@ -24,7 +24,7 @@ var pushOutStartPayloadInvalidLines = MistTriggerBody(`
 func TestItCanParseAValidPushOutStartPayload(t *testing.T) {
 	p, err := ParsePushOutStartPayload(pushOutStartPayload)
 	require.NoError(t, err)
-	require.Equal(t, p.URL, "rtmp://rtmp.livepeer.com/live/stream-key?video=maxbps&audio=maxbps")
+	require.Equal(t, p.URL, "rtmp://rtmp.example.com/live/stream-key?video=maxbps&audio=maxbps")
 	require.Equal(t, p.StreamName, "video+c447r0acdmqhhhpb")
 }
 
@@ -46,7 +46,7 @@ func doPushOutStartRequest(t *testing.T, payload MistTriggerBody, cb func(ctx co
 
 func TestItCanHandlePushOutStartRequests(t *testing.T) {
 	rr := doPushOutStartRequest(t, pushOutStartPayload, func(ctx context.Context, p *PushOutStartPayload) (string, error) {
-		require.Equal(t, p.URL, "rtmp://rtmp.livepeer.com/live/stream-key?video=maxbps&audio=maxbps")
+		require.Equal(t, p.URL, "rtmp://rtmp.example.com/live/stream-key?video=maxbps&audio=maxbps")
 		return "rtmp://example.com/live/funky-stream", nil
 	})
 	require.Equal(t, rr.Result().StatusCode, 200)

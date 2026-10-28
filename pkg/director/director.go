@@ -68,7 +68,6 @@ func (d *Director) Start(ctx context.Context) error {
 			ss, ok := d.streamSessions[not.Segment.RepoDID]
 			if !ok {
 				ss = &StreamSession{
-					lp:          nil,
 					repoDID:     not.Segment.RepoDID,
 					mm:          d.mm,
 					mod:         d.mod,

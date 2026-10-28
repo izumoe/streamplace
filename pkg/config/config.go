@@ -7,10 +7,10 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -22,7 +22,6 @@ import (
 	"math/rand/v2"
 
 	"github.com/lestrrat-go/jwx/v2/jwk"
-	"github.com/livepeer/go-livepeer/cmd/livepeer/starter"
 	"github.com/lmittmann/tint"
 	slogGorm "github.com/orandin/slog-gorm"
 	urfavecli "github.com/urfave/cli/v3"
@@ -114,9 +113,8 @@ type CLI struct {
 	NoFirehose                  bool
 	PrintChat                   bool
 	Color                       string
-	LivepeerGatewayURL          string
+	TranscoderURL               string
 	TranscodeRenditions         string
-	LivepeerGateway             bool
 	WHIPTest                    string
 	Thumbnail                   bool
 	ExternalSigning             bool
@@ -138,14 +136,12 @@ type CLI struct {
 	AndroidCertFingerprint      string
 	Labelers                    []string
 	AtprotoDID                  string
-	LivepeerHelp                bool
 	PLCURL                      string
 	ContentFilters              *ContentFilters
 	ModerationDir               string
 	DefaultRecommendedStreamers []string
 	SQLLogging                  bool
 	SentryDSN                   string
-	LivepeerDebug               bool
 	Tickets                     []string
 	IrohTopic                   string
 	DID                         string
@@ -300,9 +296,6 @@ const (
 	ReplicatorWebsocket string = "websocket"
 	ReplicatorIroh      string = "iroh"
 )
-
-var LivepeerFlagSet *flag.FlagSet
-var LivepeerConfig starter.LivepeerConfig
 
 func (cli *CLI) NewCommand(name string) *urfavecli.Command {
 	cmd := &urfavecli.Command{
@@ -549,23 +542,16 @@ func (cli *CLI) NewCommand(name string) *urfavecli.Command {
 				Sources:     urfavecli.EnvVars("SP_DEV_PUBLIC_OAUTH"),
 			},
 			&urfavecli.StringFlag{
-				Name:        "livepeer-gateway-url",
-				Usage:       "URL of the Livepeer Gateway to use for transcoding",
-				Destination: &cli.LivepeerGatewayURL,
-				Sources:     urfavecli.EnvVars("SP_LIVEPEER_GATEWAY_URL"),
+				Name:        "transcoder-url",
+				Usage:       "HTTP endpoint of the live rendition transcoder (for example http://127.0.0.1:8935/transcode)",
+				Destination: &cli.TranscoderURL,
+				Sources:     urfavecli.EnvVars("SP_TRANSCODER_URL"),
 			},
 			&urfavecli.StringFlag{
 				Name:        "transcode-renditions",
 				Usage:       "the renditions to transcode, comma-separated names from the ladder (1080p,720p,360p,240p,160p); only those smaller than the source are made. Default: the whole ladder",
 				Destination: &cli.TranscodeRenditions,
 				Sources:     urfavecli.EnvVars("SP_TRANSCODE_RENDITIONS"),
-			},
-			&urfavecli.BoolFlag{
-				Name:        "livepeer-gateway",
-				Usage:       "enable embedded Livepeer Gateway",
-				Value:       false,
-				Destination: &cli.LivepeerGateway,
-				Sources:     urfavecli.EnvVars("SP_LIVEPEER_GATEWAY"),
 			},
 			&urfavecli.BoolFlag{
 				Name:        "wide-open",
@@ -859,13 +845,6 @@ func (cli *CLI) NewCommand(name string) *urfavecli.Command {
 				},
 				Sources: urfavecli.EnvVars("SP_DEFAULT_RECOMMENDED_STREAMERS"),
 			},
-			&urfavecli.BoolFlag{
-				Name:        "livepeer-help",
-				Usage:       "print help for livepeer flags and exit",
-				Value:       false,
-				Destination: &cli.LivepeerHelp,
-				Sources:     urfavecli.EnvVars("SP_LIVEPEER_HELP"),
-			},
 			&urfavecli.StringFlag{
 				Name:        "plc-url",
 				Usage:       "url of the plc directory",
@@ -913,13 +892,6 @@ func (cli *CLI) NewCommand(name string) *urfavecli.Command {
 				Usage:       "Client secret for authenticating with the games.gamesgamesgamesgames API",
 				Destination: &cli.GamesAPIClientSecret,
 				Sources:     urfavecli.EnvVars("SP_GAMES_API_CLIENT_SECRET"),
-			},
-			&urfavecli.BoolFlag{
-				Name:        "livepeer-debug",
-				Usage:       "log livepeer segments to $SP_DATA_DIR/livepeer-debug",
-				Value:       false,
-				Destination: &cli.LivepeerDebug,
-				Sources:     urfavecli.EnvVars("SP_LIVEPEER_DEBUG"),
 			},
 			&urfavecli.StringFlag{
 				Name:        "segment-debug-dir",
@@ -1339,20 +1311,6 @@ func (cli *CLI) NewCommand(name string) *urfavecli.Command {
 
 	}
 
-	LivepeerFlagSet = flag.NewFlagSet("livepeer", flag.ContinueOnError)
-	LivepeerConfig = starter.NewLivepeerConfig(LivepeerFlagSet)
-	LivepeerFlagSet.VisitAll(func(f *flag.Flag) {
-		adapted := LivepeerFlags.CamelToSnake[f.Name]
-		cmd.Flags = append(cmd.Flags, &urfavecli.StringFlag{
-			Name:    fmt.Sprintf("livepeer.%s", adapted),
-			Usage:   f.Usage,
-			Sources: urfavecli.EnvVars(fmt.Sprintf("SP_LIVEPEER_%s", adapted)),
-			Action: func(ctx context.Context, cmd *urfavecli.Command, s string) error {
-				return LivepeerFlagSet.Set(f.Name, s)
-			},
-		})
-	})
-
 	return cmd
 }
 
@@ -1487,8 +1445,11 @@ func (cli *CLI) CheckConfig() error {
 	if cli.DuplicateMistTest && (!cli.Secure || cli.RTMPServerAddon == "") {
 		errs = append(errs, fmt.Errorf("--duplicate-mist-test requires --secure and --rtmp-server-addon pointing to Mist"))
 	}
-	if cli.LivepeerGateway && cli.LivepeerGatewayURL != "" {
-		errs = append(errs, fmt.Errorf("defining both livepeer-gateway and livepeer-gateway-url doesn't make sense. do you want an embedded gateway or an external one?"))
+	if cli.TranscoderURL != "" {
+		u, err := url.Parse(cli.TranscoderURL)
+		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.Fragment != "" {
+			errs = append(errs, fmt.Errorf("--transcoder-url must be an absolute HTTP(S) endpoint"))
+		}
 	}
 	if _, err := renditions.Ladder(cli.TranscodeRenditions); err != nil {
 		errs = append(errs, fmt.Errorf("--transcode-renditions: %w", err))
@@ -1524,11 +1485,6 @@ func (cli *CLI) CheckConfig() error {
 // callers that only want to know whether the configuration is sound can call
 // CheckConfig instead.
 func (cli *CLI) PrepareConfig() error {
-	if cli.LivepeerGateway {
-		log.MonkeypatchStderr()
-		// Livepeer gateway configuration will be handled in the caller
-		cli.LivepeerGatewayURL = "http://127.0.0.1:8935"
-	}
 	for _, dest := range cli.dataDirFlags {
 		*dest = strings.Replace(*dest, SPDataDir, cli.DataDir, 1)
 	}

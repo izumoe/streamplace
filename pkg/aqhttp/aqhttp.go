@@ -16,7 +16,7 @@ var UserAgent string = "streamplace/unknown"
 var Client http.Client
 
 // TrustedClient is an HTTP client without SSRF protection.
-// Use this only for trusted infrastructure endpoints (e.g., livepeer.com)
+// Use this only for operator-configured infrastructure endpoints
 // where the validation overhead is problematic.
 var TrustedClient http.Client
 

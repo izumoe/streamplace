@@ -272,7 +272,7 @@ func (a *StreamplaceAPI) HandleWebsocket(ctx context.Context) httprouter.Handle 
 			}
 			initialBurst <- spSeg
 			names := a.MediaManager.LiveRenditionNames(repoDID)
-			if len(names) == 0 && a.CLI.LivepeerGatewayURL != "" {
+			if len(names) == 0 && a.CLI.TranscoderURL != "" {
 				// This node transcodes but hasn't a rendition in its window
 				// yet: the profiles it is about to produce.
 				videoRenditions, err := renditions.GenerateRenditionsFrom(spSeg, a.CLI.RenditionLadder())

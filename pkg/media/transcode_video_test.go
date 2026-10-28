@@ -22,8 +22,8 @@ import (
 	"stream.place/streamplace/pkg/muxl"
 )
 
-// A stand-in for the transcoder: the fixture re-encoded at a smaller size,
-// fragmented, one keyframe per second — the shape Livepeer hands back.
+// The fixture re-encoded at a smaller size and fragmented with one keyframe
+// per second, so minting must sign each resulting GoP.
 func renditionMP4(t *testing.T, w, h int) []byte {
 	t.Helper()
 	if _, err := exec.LookPath("ffmpeg"); err != nil {

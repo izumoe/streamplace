@@ -26,7 +26,6 @@ import (
 	"stream.place/streamplace/pkg/comatproto"
 	"stream.place/streamplace/pkg/config"
 	"stream.place/streamplace/pkg/constants"
-	"stream.place/streamplace/pkg/livepeer"
 	"stream.place/streamplace/pkg/localdb"
 	"stream.place/streamplace/pkg/log"
 	"stream.place/streamplace/pkg/media"
@@ -38,6 +37,7 @@ import (
 	"stream.place/streamplace/pkg/spmetrics"
 	"stream.place/streamplace/pkg/statedb"
 	"stream.place/streamplace/pkg/thumbnail"
+	"stream.place/streamplace/pkg/transcoder"
 )
 
 type StreamSession struct {
@@ -49,7 +49,7 @@ type StreamSession struct {
 	cli                    *config.CLI
 	bus                    *bus.Bus
 	op                     *oatproxy.OATProxy
-	lp                     *livepeer.LivepeerSession
+	transcodeSlots         chan struct{}
 	repoDID                string
 	segmentChan            chan struct{}
 	lastStatus             time.Time
@@ -102,9 +102,10 @@ func exceedsMaxBitrate(dataLen int, durationNS int64, maxBitrate int) (int, bool
 
 func (ss *StreamSession) Start(ctx context.Context, notif *media.NewSegmentNotification) error {
 	ctx, cancel := context.WithCancel(ctx)
+	ss.transcodeSlots = make(chan struct{}, 2)
 	spmetrics.StreamSessions.WithLabelValues(notif.Segment.RepoDID).Inc()
 	ss.g, ctx = errgroup.WithContext(ctx)
-	sid := livepeer.RandomTrailer(8)
+	sid := config.RandomTrailer(8)
 	ctx = log.WithLogValues(ctx, "sid", sid, "streamer", notif.Segment.RepoDID)
 	ss.ctx = ctx
 	log.Log(ctx, "starting stream session")
@@ -115,7 +116,7 @@ func (ss *StreamSession) Start(ctx context.Context, notif *media.NewSegmentNotif
 	}
 	var allRenditions renditions.Renditions
 
-	if ss.cli.LivepeerGatewayURL != "" {
+	if ss.cli.TranscoderURL != "" {
 		allRenditions, err = renditions.GenerateRenditionsFrom(spseg, ss.cli.RenditionLadder())
 	} else {
 		allRenditions = []renditions.Rendition{}
@@ -358,7 +359,7 @@ func (ss *StreamSession) NewSegment(ctx context.Context, notif *media.NewSegment
 
 	// Transcoding is the ingest node's job, like recording: a node that
 	// merely syndicates the stream receives the renditions with it.
-	if ss.cli.LivepeerGatewayURL != "" && notif.Local {
+	if ss.cli.TranscoderURL != "" && notif.Local {
 		// Claimed in arrival order: the renditions publish in it however
 		// the gateway's round trips finish.
 		renditionTurn := ss.renditions.turn()
@@ -897,9 +898,24 @@ func (ss *StreamSession) Transcode(ctx context.Context, spseg *placestream.Segme
 	// Released on every exit: a segment that is skipped or fails must not
 	// hold the ones behind it.
 	defer tn.release()
+	select {
+	case ss.transcodeSlots <- struct{}{}:
+		defer func() { <-ss.transcodeSlots }()
+	default:
+		spmetrics.TranscodeSkippedTotal.Inc()
+		return nil
+	}
+	rs, err := renditions.GenerateRenditionsFrom(spseg, ss.cli.RenditionLadder())
+	if err != nil {
+		return fmt.Errorf("failed to generated renditions: %w", err)
+	}
+
+	if len(rs) == 0 {
+		return nil
+	}
 	data := notif.Data
 	if len(notif.Muxl) > 0 {
-		// Hand the transcoder the Opus presentation: it muxes that audio
+		// Hand the transcoder the Opus presentation: it copies that audio
 		// back into every rendition, and the WebRTC packetizer the
 		// renditions feed needs Opus (an RTMP source's first audio is AAC).
 		if opus, err := media.PresentationWithOpus(ctx, notif.Muxl); err == nil {
@@ -908,29 +924,14 @@ func (ss *StreamSession) Transcode(ctx context.Context, spseg *placestream.Segme
 			log.Warn(ctx, "transcode: could not select opus audio, using the presentation as is", "error", err)
 		}
 	}
-	rs, err := renditions.GenerateRenditionsFrom(spseg, ss.cli.RenditionLadder())
-	if err != nil {
-		return fmt.Errorf("failed to generated renditions: %w", err)
-	}
 
-	if ss.lp == nil {
-		var err error
-		ss.lp, err = livepeer.NewLivepeerSession(ctx, ss.cli, spseg.Creator, ss.cli.LivepeerGatewayURL)
-		if err != nil {
-			return err
-		}
-
-	}
 	spmetrics.TranscodeAttemptsTotal.Inc()
-	segs, err := ss.lp.PostSegmentToGateway(ctx, data, spseg, rs)
-	if errors.Is(err, livepeer.ErrBacklog) {
+	started := time.Now()
+	segs, err := transcoder.Transcode(ctx, ss.cli.TranscoderURL, data, rs.ToProfiles())
+	spmetrics.TranscodeDuration.WithLabelValues(spseg.Creator).Observe(float64(time.Since(started).Milliseconds()))
+	if errors.Is(err, transcoder.ErrBusy) {
 		spmetrics.TranscodeSkippedTotal.Inc()
-		log.Debug(ctx, "transcode: skipped, transcoder is behind")
-		return nil
-	}
-	if errors.Is(err, livepeer.ErrNoKeyframe) {
-		spmetrics.TranscodeSkippedNoKeyframeTotal.Inc()
-		log.Warn(ctx, "transcode: skipped, segment does not start with an IDR", "segment", notif.Segment.ID)
+		log.Debug(ctx, "transcode: skipped, service is busy")
 		return nil
 	}
 	if err != nil {

@@ -32,7 +32,6 @@ type UserEndPayload struct {
 		"OUTPUT:DTSC" 		= inter-server replication (does cost us bandwidth, but not related to specific viewers).
 		"OUTPUT:EBML" 		= the Opus/AAC transcodes (ignore, internal-only traffic).
 		"OUTPUT:HTTPTS" 	= our recordings (ignore, internal/S3 traffic)
-		"OUTPUT:Livepeer" 	= transcodes (byte count is wrong from the looks of it...).
 		"OUTPUT:RTMP" 		= outgoing RTMP pushes (e.g. multistreaming).
 		"OUTPUT:TSSRT" 		= outgoing SRT pushes (e.g. multistreaming).
 	*/

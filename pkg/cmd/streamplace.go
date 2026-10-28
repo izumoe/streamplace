@@ -25,7 +25,6 @@ import (
 
 	"github.com/bluesky-social/indigo/carstore"
 	"github.com/ethereum/go-ethereum/common/hexutil"
-	"github.com/livepeer/go-livepeer/cmd/livepeer/starter"
 	"github.com/streamplace/oatproxy/pkg/oatproxy"
 	urfavecli "github.com/urfave/cli/v3"
 	"stream.place/streamplace/pkg/aqhttp"
@@ -89,7 +88,6 @@ func start(build *config.BuildFlags, platformJobs []jobFunc) error {
 		makeWhipCommand(build),
 		makeCombineCommand(build),
 		makeSplitCommand(build),
-		makeLivepeerCommand(build),
 		makeMigrateCommand(build),
 		makeMigrateStateCommand(),
 		makeSyncCommand(build),
@@ -186,20 +184,6 @@ func runMain(ctx context.Context, build *config.BuildFlags, platformJobs []jobFu
 	}
 
 	spmetrics.Version.WithLabelValues(build.Version).Inc()
-	if cli.LivepeerHelp {
-		lpFlags := flag.NewFlagSet("livepeer", flag.ContinueOnError)
-		_ = starter.NewLivepeerConfig(lpFlags)
-		lpFlags.VisitAll(func(f *flag.Flag) {
-			adapted := config.ToSnakeCase(f.Name)
-			fmt.Printf("  -%s\n", fmt.Sprintf("livepeer.%s", adapted))
-			usage := fmt.Sprintf("    	%s", f.Usage)
-			if f.DefValue != "" {
-				usage = fmt.Sprintf("%s (default %s)", usage, f.DefValue)
-			}
-			fmt.Printf("    	%s\n", usage)
-		})
-		return nil
-	}
 
 	aqhttp.UserAgent = fmt.Sprintf("streamplace/%s", build.Version)
 
@@ -684,29 +668,6 @@ func runMain(ctx context.Context, build *config.BuildFlags, platformJobs []jobFu
 	group.Go(func() error {
 		return replicator.Start(ctx, cli)
 	})
-
-	if cli.LivepeerGateway {
-		// make a file to make sure the directory exists
-		fd, err := cli.DataFileCreate([]string{"livepeer", "gateway", "empty"}, true)
-		if err != nil {
-			return err
-		}
-		fd.Close()
-		if err != nil {
-			return err
-		}
-		group.Go(func() error {
-			err = GoLivepeer(ctx, config.LivepeerFlagSet)
-			if err != nil {
-				return err
-			}
-			// livepeer returns nil on error, so we need to check if we're responsible
-			if ctx.Err() == nil {
-				return fmt.Errorf("livepeer exited")
-			}
-			return nil
-		})
-	}
 
 	group.Go(func() error {
 		return d.Start(ctx)
@@ -1343,16 +1304,6 @@ func makeSplitCommand(build *config.BuildFlags) *urfavecli.Command {
 		return Split(ctx, args.Get(0), args.Get(1))
 	}
 	return splitCmd
-}
-
-func makeLivepeerCommand(build *config.BuildFlags) *urfavecli.Command {
-	return &urfavecli.Command{
-		Name:  "livepeer",
-		Usage: "run livepeer gateway",
-		Action: func(ctx context.Context, cmd *urfavecli.Command) error {
-			return GoLivepeer(ctx, config.LivepeerFlagSet)
-		},
-	}
 }
 
 func makeMigrateCommand(build *config.BuildFlags) *urfavecli.Command {

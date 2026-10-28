@@ -381,6 +381,12 @@ dev: app-cached $(LEXICON_STAMP)
 	CGO_LDFLAGS="$(NATIVE_CGO_LDFLAGS)" \
 	LD_LIBRARY_PATH=$(BUILDDIR)/lib $(NATIVE_ENV) go build -tags mainnet -o $(BUILDDIR)/libstreamplace ./cmd/libstreamplace/...
 
+.PHONY: transcoder
+transcoder:
+	if [ ! -d $(BUILDDIR) ]; then $(MAKE) dev-setup-meson; fi
+	PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) \
+	go build -o $(BUILDDIR)/transcoder ./cmd/transcoder
+
 .PHONY: dev-setup-meson
 dev-setup-meson:
 	$(MAKE) dev-setup-meson-configure
