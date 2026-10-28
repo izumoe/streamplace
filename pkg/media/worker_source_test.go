@@ -16,7 +16,6 @@ import (
 	"stream.place/streamplace/pkg/config"
 	"stream.place/streamplace/pkg/crypto/signers"
 	"stream.place/streamplace/pkg/ingestframe"
-	"stream.place/streamplace/pkg/livehls"
 )
 
 func workerSourceForTest(t *testing.T) (string, []byte) {
@@ -55,7 +54,7 @@ func TestWorkerSourceFramePublishesBeforeCompletion(t *testing.T) {
 	mm := &MediaManager{
 		cli:         &config.CLI{BroadcasterHost: "node.test", AllowedStreams: []string{streamer}},
 		bus:         bus.NewBus(),
-		liveWindows: map[string]*livehls.Writer{},
+		liveWindows: map[string]*liveWindowState{},
 	}
 	playback := mm.bus.SubscribeSegment(ctx, streamer, PlaybackSourceRendition)
 	defer mm.bus.UnsubscribeSegment(ctx, streamer, PlaybackSourceRendition, playback)
@@ -84,7 +83,9 @@ func TestWorkerSourceFramePublishesBeforeCompletion(t *testing.T) {
 	require.NotEmpty(t, got.PacketizedData.Video)
 	require.NotEmpty(t, got.PacketizedData.Audio)
 	require.Empty(t, mm.BufferedSegments(streamer), "canonical distribution waits for completion")
-	require.Nil(t, mm.GetLiveWindow(streamer))
+	window, published := mm.GetLiveWindow(streamer)
+	require.Nil(t, window)
+	require.False(t, published)
 	require.False(t, mm.bus.HasSegments(streamer, PlaybackSourceRendition), "source-only end cannot leave a live playback cache")
 }
 
@@ -158,7 +159,7 @@ func TestWorkerCompletedSourceFrameDistributes(t *testing.T) {
 			mm := &MediaManager{
 				cli:         &config.CLI{BroadcasterHost: "node.test", AllowedStreams: []string{streamer}},
 				bus:         bus.NewBus(),
-				liveWindows: map[string]*livehls.Writer{},
+				liveWindows: map[string]*liveWindowState{},
 			}
 			if bitrateGuard {
 				mm.cli.MaximumLiveBitrate = 8_000_000

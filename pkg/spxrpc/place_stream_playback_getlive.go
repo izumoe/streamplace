@@ -71,7 +71,7 @@ func (s *Server) HandleGetLivePlaylist(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusForbidden, "StreamUnavailable")
 	}
 
-	w := s.mm.GetLiveWindow(did)
+	w, published := s.mm.GetLiveWindow(did)
 	if w == nil {
 		return echo.NewHTTPError(http.StatusNotFound, "StreamNotLive")
 	}
@@ -101,7 +101,7 @@ func (s *Server) HandleGetLivePlaylist(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	if !s.mm.LiveWindowPublished(did) {
+	if !published {
 		if !s.cli.WideOpen && ps.Scope != psession.ScopeOwner {
 			return echo.NewHTTPError(http.StatusNotFound, "StreamNotLive")
 		}
@@ -198,7 +198,7 @@ func (s *Server) serveLiveSegment(c echo.Context, streamer, track, segParam, sid
 		return echo.NewHTTPError(http.StatusBadRequest, "seg is required")
 	}
 
-	w := s.mm.GetLiveWindow(did)
+	w, published := s.mm.GetLiveWindow(did)
 	if w == nil {
 		return echo.NewHTTPError(http.StatusNotFound, "StreamNotLive")
 	}
@@ -211,7 +211,7 @@ func (s *Server) serveLiveSegment(c echo.Context, streamer, track, segParam, sid
 			return err
 		}
 	}
-	if !s.mm.LiveWindowPublished(did) && !s.cli.WideOpen && sess.Scope != psession.ScopeOwner {
+	if !published && !s.cli.WideOpen && sess.Scope != psession.ScopeOwner {
 		return echo.NewHTTPError(http.StatusNotFound, "StreamNotLive")
 	}
 

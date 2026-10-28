@@ -3,16 +3,20 @@ package media
 import (
 	"bytes"
 	"context"
+	"flag"
 	"fmt"
+	"log/slog"
 	"os"
+	"runtime"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 	"stream.place/streamplace/pkg/atproto"
 	"stream.place/streamplace/pkg/comatproto"
-	"stream.place/streamplace/pkg/livehls"
+	"stream.place/streamplace/pkg/config"
 	"stream.place/streamplace/pkg/model"
 	"stream.place/streamplace/pkg/muxl"
 )
@@ -74,7 +78,9 @@ func TestValidateReplicatedMP4BindsStreamer(t *testing.T) {
 	mm, _ := getStaticTestMediaManager(t)
 	err := mm.ValidateReplicatedMP4(ctx, bytes.NewReader(segment), "did:plc:different-streamer")
 	require.ErrorContains(t, err, "not did:plc:different-streamer")
-	require.Nil(t, mm.GetLiveWindow("did:plc:different-streamer"))
+	window, published := mm.GetLiveWindow("did:plc:different-streamer")
+	require.Nil(t, window)
+	require.False(t, published)
 	require.ErrorContains(t, mm.ValidateReplicatedMP4(ctx, bytes.NewReader(segment), ""), "no named streamer")
 }
 
@@ -112,21 +118,34 @@ func TestFeedLiveWindow(t *testing.T) {
 	require.NoError(t, <-errCh)
 	require.NotEmpty(t, m4s)
 
-	mm := &MediaManager{liveWindows: map[string]*livehls.Writer{}}
+	mm := &MediaManager{liveWindows: map[string]*liveWindowState{}}
 
 	// Pre-live (unpublished) segments are folded in for the streamer's own
 	// preview, and the window remembers that its latest segment is not
 	// public — the getLive* handlers keep it to holders of a playback token.
 	t0 := time.Now()
 	mm.feedLiveWindow(ctx, "did:test:streamer", m4s, t0, false)
-	require.NotNil(t, mm.GetLiveWindow("did:test:streamer"), "pre-live segments make a window")
-	require.False(t, mm.LiveWindowPublished("did:test:streamer"), "…but it is not public")
+	preLive, published := mm.GetLiveWindow("did:test:streamer")
+	require.NotNil(t, preLive, "pre-live segments make a window")
+	require.False(t, published, "…but it is not public")
+	t.Run("malformed publication preserves preview", func(t *testing.T) {
+		var logs logCapture
+		previousLogger := slog.Default()
+		slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+		t.Cleanup(func() { slog.SetDefault(previousLogger) })
+		previousVerbosity := flag.Lookup("v").Value.String()
+		require.NoError(t, flag.Set("v", "3"))
+		t.Cleanup(func() { require.NoError(t, flag.Set("v", previousVerbosity)) })
 
-	preLive := mm.GetLiveWindow("did:test:streamer")
+		mm.feedLiveWindow(ctx, "did:test:streamer", m4s[:len(m4s)-1], t0.Add(time.Second), true)
+		require.Equal(t, 1, strings.Count(logs.String(), "live-hls: window feed failed"))
+		current, published := mm.GetLiveWindow("did:test:streamer")
+		require.Same(t, preLive, current, "failed decode must preserve the valid preview")
+		require.False(t, published, "failed decode must not publish preview media")
+	})
 	mm.feedLiveWindow(ctx, "did:test:streamer", m4s, t0.Add(2*time.Second), true)
-	require.True(t, mm.LiveWindowPublished("did:test:streamer"))
-
-	w := mm.GetLiveWindow("did:test:streamer")
+	w, published := mm.GetLiveWindow("did:test:streamer")
+	require.True(t, published)
 	require.NotNil(t, w, "window created on feed")
 	require.NotSame(t, preLive, w, "going public starts the window over: the preview segments are not served to the public")
 	tids := w.TrackIDs()
@@ -136,7 +155,9 @@ func TestFeedLiveWindow(t *testing.T) {
 	}
 	// Once public, further segments extend the same window.
 	mm.feedLiveWindow(ctx, "did:test:streamer", m4s, t0.Add(4*time.Second), true)
-	require.Same(t, w, mm.GetLiveWindow("did:test:streamer"))
+	current, published := mm.GetLiveWindow("did:test:streamer")
+	require.Same(t, w, current)
+	require.True(t, published)
 	for _, tid := range tids {
 		require.NotEmpty(t, w.InitSegment(tid), "track %s has an init segment", tid)
 		tr := w.Track(tid)
@@ -156,14 +177,49 @@ func TestFeedLiveWindow(t *testing.T) {
 	// into a preview under its viewers.
 	segs := len(w.Track(tids[0]).Segments)
 	mm.feedLiveWindow(ctx, "did:test:streamer", m4s, t0.Add(time.Second), false)
-	require.Same(t, w, mm.GetLiveWindow("did:test:streamer"), "a late pre-live segment does not touch the public window")
-	require.True(t, mm.LiveWindowPublished("did:test:streamer"), "…and does not make it a preview")
+	current, published = mm.GetLiveWindow("did:test:streamer")
+	require.Same(t, w, current, "a late pre-live segment does not touch the public window")
+	require.True(t, published, "…and does not make it a preview")
 	require.Len(t, w.Track(tids[0]).Segments, segs, "…nor does it add to it")
 
 	// A pre-live segment newer than the window is the stream going back to
 	// preview (the streamer ended it but is still sending), and does flip it.
 	mm.feedLiveWindow(ctx, "did:test:streamer", m4s, t0.Add(6*time.Second), false)
-	require.False(t, mm.LiveWindowPublished("did:test:streamer"), "a newer pre-live segment takes the stream back to preview")
+	current, published = mm.GetLiveWindow("did:test:streamer")
+	require.False(t, published, "a newer pre-live segment takes the stream back to preview")
+	require.NotSame(t, w, current)
+}
+
+func TestFeedLiveWindowSurvivesConcurrentReads(t *testing.T) {
+	segments := allSignedBareSegments(t, t.Context(), newBareSegmentSigner(t), getFixture("h264-opus-frag.mp4"))
+	require.NotEmpty(t, segments)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	manager := NewOffline(&config.CLI{})
+	for i := range 10 {
+		did := fmt.Sprintf("did:test:window-%d", i)
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			manager.feedLiveWindow(ctx, did, segments[0], time.Now(), true)
+		}()
+	read:
+		for {
+			select {
+			case <-done:
+				break read
+			case <-ctx.Done():
+				t.Fatal("live window feed did not finish")
+			default:
+				manager.GetLiveWindow(did)
+				runtime.Gosched()
+			}
+		}
+		window, published := manager.GetLiveWindow(did)
+		require.NotNil(t, window, "playback reads must not discard an in-progress feed")
+		require.True(t, published)
+		require.Contains(t, window.MasterPlaylist(func(id string) string { return id + ".m3u8" }), "opus")
+	}
 }
 
 // seedBanLabel writes an active ban label for did into the model.
