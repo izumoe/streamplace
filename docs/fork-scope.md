@@ -27,6 +27,16 @@ and verification, moderation, live discovery, ingest supervision, live media bus
 and MoQ distribution together for now. VOD, notifications and native update
 hosting remain bundled in this pass.
 
+Live latency work retains verified early source playback and adds connection-time
+WebRTC subscription, persistent track pacing and a single 400 ms WHIP keyframe
+requester. Muxl initializes before readiness; stalled worker socket writes use
+the existing reconnect buffer after a five-second deadline. HLS keeps each
+stream's writer and publication status together, with distinct writers across
+preview/public transitions. The browser retains live audio ordering and adds a
+200 ms scheduling reserve through its existing MoQ sync mechanism. See
+[measurement and limits](moq.md#measuring-live-latency). Enhanced RTMP remains
+the next ingest migration.
+
 This is a source and startup audit, not usage research. Technical coupling is
 visible in the repository; demand for optional features is unknown. No binary
 size or build-time improvement has been measured for the candidates below.
@@ -58,8 +68,11 @@ The fork removes implementations and their dependency graphs rather than
 keeping disabled startup paths. Shared GStreamer I/O and bus handling serve both
 the node and the finite encoder job; there is no second native wrapper layer.
 The existing stream allowlist replaces beta policy without adding another
-authorization mechanism. Future splits should reuse task callbacks and blob
-store boundaries when a deployment actually needs them.
+authorization mechanism. The latency changes reuse the shared Muxl engine,
+worker reconnect buffer, track timers and MoQ sync signal. They replace three
+parallel HLS maps with one stream state and remove the duplicate PLI sender.
+Future splits should reuse task callbacks and blob store boundaries when a
+deployment actually needs them.
 
 The Docker workflow supports isolated sibling checkouts with unique basenames.
 Use that layout: equal worktree basenames can collide on container names, and a

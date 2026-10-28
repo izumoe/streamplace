@@ -2,7 +2,7 @@ import type * as Watch from "@moq/watch";
 import { useEffect, useImperativeHandle, useRef, type RefObject } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  getMoqBatchDuration,
+  getMoqPlaybackFloor,
   getMoqPlaybackSource,
   STALL_TIMEOUT_MS,
 } from "./moq-source";
@@ -192,11 +192,13 @@ export function MoQPlayer(props: MoQPlayerProps) {
             controls.muted.set(true);
             return;
           }
-          const duration = getMoqBatchDuration(catalog);
-          if (duration === undefined) return unavailable();
-          publicationJitter.set(Watch.Net.Time.Milli(duration));
+          const floor = getMoqPlaybackFloor(catalog, publicationJitter.peek());
+          if (floor === undefined) return unavailable();
+          const requiredDelay = Watch.Net.Time.Milli(floor);
+          publicationJitter.set(requiredDelay);
           // Signals propagate asynchronously; wait for the SDK to size its buffer.
-          const ready = effect.get(currentPlayer.sync.out.delay) >= duration;
+          const ready =
+            effect.get(currentPlayer.sync.out.delay) >= requiredDelay;
           controlsRef.current = ready ? controls : null;
           controls.muted.set(!ready || propsRef.current.muted);
           if (ready) {

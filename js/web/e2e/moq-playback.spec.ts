@@ -6,9 +6,10 @@ import {
   type TestInfo,
 } from "@playwright/test";
 
+import { observeAudioOutput } from "../../e2e-web/flows/audio-observer";
+
 declare global {
   interface Window {
-    moqAudioAnalysers?: AnalyserNode[];
     loseMoqConnection?: () => Promise<void>;
   }
 }
@@ -111,23 +112,7 @@ test("MoQ plays real video and audio, pauses, and releases resources on transpor
     })
     .toBe(`playback/${process.env.ACCOUNT_DID}`);
 
-  // Observe actual samples on the speaker route through a native analyser.
-  // The original connect() still carries every signal to the real destination.
-  await page.addInitScript(() => {
-    window.moqAudioAnalysers = [];
-    const connect = AudioNode.prototype.connect;
-    Object.defineProperty(AudioNode.prototype, "connect", {
-      value: function (this: AudioNode, ...args: unknown[]) {
-        if (args[0] instanceof AudioDestinationNode) {
-          const analyser = new AnalyserNode(this.context);
-          window.moqAudioAnalysers!.push(analyser);
-          Reflect.apply(connect, this, [analyser]);
-          return Reflect.apply(connect, analyser, args);
-        }
-        return Reflect.apply(connect, this, args);
-      },
-    });
-  });
+  await page.addInitScript(observeAudioOutput);
 
   const player = await openLivePlayer(page);
   await expect(player).toHaveAttribute("data-playback-transport", "moq");
@@ -144,6 +129,69 @@ test("MoQ plays real video and audio, pauses, and releases resources on transpor
   await player.hover();
   await player.locator('button[title="Unmute"]').click();
   await expectAudioPlaying(page, testInfo);
+
+  // The harness publisher keeps running while only the receiver's thread stalls.
+  const audioDuringStall = await page.evaluate(async () => {
+    const audible = () =>
+      window.moqAudioAnalysers!.some((analyser) => {
+        const samples = new Float32Array(analyser.fftSize);
+        analyser.getFloatTimeDomainData(samples);
+        return (
+          analyser.context.state === "running" &&
+          samples.some((sample) => Math.abs(sample) > 0.0001)
+        );
+      });
+    const deadline = performance.now() + 2000;
+    let buffer: NonNullable<Window["moqAudioBuffers"]>[number] | undefined;
+    let headroomMs: number | undefined;
+    do {
+      buffer = window.moqAudioBuffers!.find(
+        (output) =>
+          output.context.state === "running" &&
+          !output.stalled &&
+          output.end !== undefined &&
+          output.positions.length > 0,
+      );
+      headroomMs = buffer
+        ? (buffer.end! - buffer.positions.at(-1)!.timestamp) / 1000
+        : undefined;
+      if (headroomMs !== undefined && headroomMs <= 150) break;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    } while (performance.now() < deadline);
+    if (!buffer) throw new Error("No active native MoQ audio buffer");
+    const positionCount = buffer.positions.length;
+    const before = audible();
+    const start = performance.now();
+    while (performance.now() - start < 200) {
+      // Native audio keeps rendering through actual main-thread pressure.
+    }
+    const after = audible();
+    const blockedMs = performance.now() - start;
+    // Deliver the worklet's native cursor reports queued during the stall.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    return {
+      before,
+      after,
+      blockedMs,
+      headroomMs,
+      positions: buffer.positions.slice(positionCount),
+    };
+  });
+  await testInfo.attach("native-audio-main-thread-stall", {
+    body: JSON.stringify(audioDuringStall),
+    contentType: "application/json",
+  });
+  expect(audioDuringStall.before).toBe(true);
+  expect(audioDuringStall.after).toBe(true);
+  expect(audioDuringStall.positions.length).toBeGreaterThan(5);
+  expect(
+    audioDuringStall.positions.every(
+      (position, index, positions) =>
+        !position.stalled &&
+        (index === 0 || position.timestamp > positions[index - 1].timestamp),
+    ),
+    "the native audio cursor advances throughout receiver pressure",
+  ).toBe(true);
 
   await player.hover();
   await player.locator('button[title="Pause"]').click();

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  getMoqBatchDuration,
+  getMoqPlaybackFloor,
   getMoqPlaybackSource,
   supportsMoqPlayback,
 } from "./moq-source";
@@ -11,28 +11,68 @@ const FINGERPRINT = "ab".repeat(32);
 
 afterEach(() => vi.unstubAllGlobals());
 
-describe("getMoqBatchDuration", () => {
-  it.each([1, 1001, 9999])(
-    "uses the signed batch duration of %s milliseconds",
+describe("MoQ playback floor", () => {
+  it.each([1, 1001, 9799])(
+    "reserves receiver scheduling time for a %s millisecond batch",
     (batchDurationMs) => {
-      expect(getMoqBatchDuration({ streamplace: { batchDurationMs } })).toBe(
-        batchDurationMs,
+      expect(getMoqPlaybackFloor({ streamplace: { batchDurationMs } })).toBe(
+        batchDurationMs + 200,
       );
     },
   );
+
+  it("consumes the allocated reserve before increasing the playback floor", () => {
+    let floor: number | undefined;
+    const floors = [362, 375, 562, 563].map((batchDurationMs) => {
+      floor = getMoqPlaybackFloor({ streamplace: { batchDurationMs } }, floor);
+      return floor;
+    });
+    expect(floors).toEqual([562, 562, 562, 763]);
+  });
+
+  it("starts with a fresh reserve for a new broadcast", () => {
+    expect(getMoqPlaybackFloor({ streamplace: { batchDurationMs: 400 } })).toBe(
+      600,
+    );
+    expect(getMoqPlaybackFloor({ streamplace: { batchDurationMs: 100 } })).toBe(
+      300,
+    );
+  });
+
+  it("keeps valid allocations within the playback budget", () => {
+    expect(
+      getMoqPlaybackFloor({ streamplace: { batchDurationMs: 9999 } }, 9999),
+    ).toBe(9999);
+    expect(
+      getMoqPlaybackFloor({ streamplace: { batchDurationMs: 9800 } }, 9799),
+    ).toBeUndefined();
+    expect(
+      getMoqPlaybackFloor({ streamplace: { batchDurationMs: 10_000 } }, 9999),
+    ).toBeUndefined();
+    expect(getMoqPlaybackFloor({}, 9999)).toBeUndefined();
+  });
 
   it.each([
     {},
     { streamplace: null },
     { streamplace: "timing" },
     { streamplace: {} },
-    ...[0, -1, 0.5, 10_000, Number.MAX_SAFE_INTEGER, Infinity, NaN, "1000"].map(
-      (batchDurationMs) => ({ streamplace: { batchDurationMs } }),
-    ),
+    ...[
+      0,
+      -1,
+      0.5,
+      9800,
+      9999,
+      10_000,
+      Number.MAX_SAFE_INTEGER,
+      Infinity,
+      NaN,
+      "1000",
+    ].map((batchDurationMs) => ({ streamplace: { batchDurationMs } })),
   ])(
     "refuses timing that cannot fit the playback progress budget: %j",
     (catalog) => {
-      expect(getMoqBatchDuration(catalog)).toBeUndefined();
+      expect(getMoqPlaybackFloor(catalog)).toBeUndefined();
     },
   );
 });

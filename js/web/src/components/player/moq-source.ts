@@ -1,6 +1,10 @@
 export const STALL_TIMEOUT_MS = 10_000;
+const PLAYBACK_SCHEDULING_RESERVE_MS = 200;
 
-export function getMoqBatchDuration(catalog: Record<string, unknown>) {
+export function getMoqPlaybackFloor(
+  catalog: Record<string, unknown>,
+  current?: number,
+) {
   const timing = catalog.streamplace;
   if (typeof timing !== "object" || timing === null) return;
   const duration = (timing as Record<string, unknown>).batchDurationMs;
@@ -11,7 +15,12 @@ export function getMoqBatchDuration(catalog: Record<string, unknown>) {
     duration >= STALL_TIMEOUT_MS
   )
     return;
-  return duration;
+  // Keep playing through small cadence changes that fit the allocated reserve.
+  const floor =
+    current !== undefined && duration <= current
+      ? current
+      : duration + PLAYBACK_SCHEDULING_RESERVE_MS;
+  return floor < STALL_TIMEOUT_MS ? floor : undefined;
 }
 
 export function supportsMoqPlayback(): boolean {
