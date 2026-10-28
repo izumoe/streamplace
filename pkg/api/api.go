@@ -207,7 +207,6 @@ func (a *StreamplaceAPI) Handler(ctx context.Context) (http.Handler, error) {
 	addFunc(router, "GET", "/app-updates", a.HandleAppUpdates(ctx))
 	// new ones
 	addFunc(apiRouter, "GET", "/api/manifest", a.HandleAppUpdates(ctx))
-	addHandle(apiRouter, "GET", "/api/desktop-updates/:platform/:architecture/:version/:buildTime/:file", a.HandleDesktopUpdates(ctx))
 	addHandle(apiRouter, "POST", "/api/webrtc/:stream", a.MistProxyHandler(ctx, "/webrtc/%s"))
 	addHandle(apiRouter, "OPTIONS", "/api/webrtc/:stream", a.MistProxyHandler(ctx, "/webrtc/%s"))
 	addHandle(apiRouter, "DELETE", "/api/webrtc/:stream", a.MistProxyHandler(ctx, "/webrtc/%s"))
@@ -411,6 +410,10 @@ func (a *StreamplaceAPI) notFoundLinkingHandler(ctx context.Context, linker *lin
 
 	fileHandler := a.FileHandler(ctx, http.FileServer(fsys))
 	defaultHandler := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if strings.HasPrefix(req.URL.Path, "/api/") {
+			apierrors.WriteHTTPNotFound(w, "API route not found", nil)
+			return
+		}
 		f := strings.TrimPrefix(req.URL.Path, "/")
 		// under docs we need the index.html suffix due to astro rendering
 		if strings.HasPrefix(req.URL.Path, "/docs") && strings.HasSuffix(req.URL.Path, "/") {

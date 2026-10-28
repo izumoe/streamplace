@@ -3,12 +3,12 @@
 This directory is the build-time source of truth for Streamplace's visual
 identity. Everything else — the Expo app icon and splash screen (and from
 those, every iOS and Android icon format via `expo prebuild`), favicons, the
-Web Push fallback icon, OG link banner, desktop ICO/ICNS icons, docs logos,
+Web Push fallback icon, OG link banner, docs logos,
 the downloadable SVGs on `/brand`, and the logo components rendered in the app itself — is generated
 from these files by `js/brand/generate.mjs` and gitignored.
 
 Run the generator with `pnpm run brand` from the repo root. It also runs
-automatically on `pnpm install` and before app, docs, and desktop builds.
+automatically on `pnpm install` and before app and docs builds.
 
 Web Push uses `/notification-icon`, which serves the node's runtime `mainLogo`
 branding asset with its declared image MIME type. Production and other branded

@@ -22,18 +22,18 @@ func TestRegexStreamplace(t *testing.T) {
 		expectedGroups []string
 	}{
 		// Test cases for the 're' regex
-		{"streamplace-v1.2.3-abcdef-foo-bar.txt", true, []string{"", "v1.2.3", "-abcdef", "foo", "bar", "", "txt"}},
-		{"streamplace-v1.0.0-123456-hello-world.csv", true, []string{"", "v1.0.0", "-123456", "hello", "world", "", "csv"}},
-		{"streamplace-v2.5.1-abc123-done-done.xml", true, []string{"", "v2.5.1", "-abc123", "done", "done", "", "xml"}},
-		{"streamplace-v3.2.1-xyz-abc.json", true, []string{"", "v3.2.1", "", "xyz", "abc", "", "json"}},
-		{"streamplace-v3.2.1-nohash-xyz.json", true, []string{"", "v3.2.1", "", "nohash", "xyz", "", "json"}},
-		{"streamplace-v10.2.10-abc123-linux-amd64.json", true, []string{"", "v10.2.10", "-abc123", "linux", "amd64", "", "json"}},
-		{"streamplace-v10.2.10-darwin-arm64.json", true, []string{"", "v10.2.10", "", "darwin", "arm64", "", "json"}},
-		{"streamplace-desktop-v3.2.1-nohash-xyz.json", true, []string{"-desktop", "v3.2.1", "", "nohash", "xyz", "", "json"}},
-		{"streamplace-desktop-v10.2.10-abc123-linux-amd64.json", true, []string{"-desktop", "v10.2.10", "-abc123", "linux", "amd64", "", "json"}},
-		{"streamplace-desktop-v10.2.10-darwin-arm64.json", true, []string{"-desktop", "v10.2.10", "", "darwin", "arm64", "", "json"}},
-		{"streamplace-desktop-v10.2.10-darwin-arm64.json", true, []string{"-desktop", "v10.2.10", "", "darwin", "arm64", "", "json"}},
-		{"streamplace-desktop-v0.1.3-5742a5a4-windows-amd64.1cbc2208decb3e55c7aea7320258aa36e3297f18.nupkg", true, []string{"-desktop", "v0.1.3", "-5742a5a4", "windows", "amd64", "1cbc2208decb3e55c7aea7320258aa36e3297f18", "nupkg"}},
+		{"streamplace-v1.2.3-abcdef-foo-bar.txt", true, []string{"v1.2.3", "-abcdef", "foo", "bar", "txt"}},
+		{"streamplace-v1.0.0-123456-hello-world.csv", true, []string{"v1.0.0", "-123456", "hello", "world", "csv"}},
+		{"streamplace-v2.5.1-abc123-done-done.xml", true, []string{"v2.5.1", "-abc123", "done", "done", "xml"}},
+		{"streamplace-v3.2.1-xyz-abc.json", true, []string{"v3.2.1", "", "xyz", "abc", "json"}},
+		{"streamplace-v3.2.1-nohash-xyz.json", true, []string{"v3.2.1", "", "nohash", "xyz", "json"}},
+		{"streamplace-v10.2.10-abc123-linux-amd64.json", true, []string{"v10.2.10", "-abc123", "linux", "amd64", "json"}},
+		{"streamplace-v10.2.10-darwin-arm64.json", true, []string{"v10.2.10", "", "darwin", "arm64", "json"}},
+		{"streamplace-desktop-v3.2.1-nohash-xyz.json", false, nil},
+		{"streamplace-desktop-v10.2.10-abc123-linux-amd64.json", false, nil},
+		{"streamplace-desktop-v10.2.10-darwin-arm64.json", false, nil},
+		{"streamplace-desktop-v10.2.10-darwin-arm64.json", false, nil},
+		{"streamplace-desktop-v0.1.3-5742a5a4-windows-amd64.1cbc2208decb3e55c7aea7320258aa36e3297f18.nupkg", false, nil},
 
 		// Test cases where the regex should not match
 		{"streamplace-123-abc.txt", false, nil},
@@ -63,12 +63,12 @@ func TestRegexInput(t *testing.T) {
 		expectedGroups []string
 	}{
 		// Test cases for the 'inputRe' regex
-		{"streamplace-foo-bar.txt", true, []string{"", "foo", "bar", "txt"}},
-		{"streamplace-abc-def.csv", true, []string{"", "abc", "def", "csv"}},
-		{"streamplace-x-y.xml", true, []string{"", "x", "y", "xml"}},
-		{"streamplace-hello-world.json", true, []string{"", "hello", "world", "json"}},
-		{"streamplace-desktop-x-y.xml", true, []string{"-desktop", "x", "y", "xml"}},
-		{"streamplace-desktop-hello-world.json", true, []string{"-desktop", "hello", "world", "json"}},
+		{"streamplace-foo-bar.txt", true, []string{"foo", "bar", "txt"}},
+		{"streamplace-abc-def.csv", true, []string{"abc", "def", "csv"}},
+		{"streamplace-x-y.xml", true, []string{"x", "y", "xml"}},
+		{"streamplace-hello-world.json", true, []string{"hello", "world", "json"}},
+		{"streamplace-desktop-x-y.xml", false, nil},
+		{"streamplace-desktop-hello-world.json", false, nil},
 
 		// Test cases where the regex should not match
 		{"streamplace-foo.txt", false, nil},
@@ -137,32 +137,45 @@ func TestDownloadRedirects(t *testing.T) {
 			out: "v0.1.3-51aab8b5/streamplace-v0.1.3-51aab8b5-windows-amd64.zip",
 		},
 		{
-			in:  "streamplace-desktop-windows-amd64.exe",
-			out: "v0.1.3-51aab8b5/streamplace-desktop-v0.1.3-51aab8b5-windows-amd64.exe",
+			in:  "streamplace-ios-release.xcarchive.tar.gz",
+			out: "v0.1.3-51aab8b5/streamplace-v0.1.3-51aab8b5-ios-release.xcarchive.tar.gz",
 		},
 		{
-			in:  "streamplace-desktop-darwin-amd64.dmg",
-			out: "v0.1.3-51aab8b5/streamplace-desktop-v0.1.3-51aab8b5-darwin-amd64.dmg",
+			in:  "streamplace-android-release.apk",
+			out: "v0.1.3-51aab8b5/streamplace-v0.1.3-51aab8b5-android-release.apk",
 		},
 		{
-			in:  "streamplace-desktop-darwin-arm64.dmg",
-			out: "v0.1.3-51aab8b5/streamplace-desktop-v0.1.3-51aab8b5-darwin-arm64.dmg",
+			in:  "streamplace-android-debug.apk",
+			out: "v0.1.3-51aab8b5/streamplace-v0.1.3-51aab8b5-android-debug.apk",
 		},
 		{
-			in:  "streamplace-desktop-darwin-amd64.zip",
-			out: "v0.1.3-51aab8b5/streamplace-desktop-v0.1.3-51aab8b5-darwin-amd64.zip",
+			in:  "streamplace-android-release.aab",
+			out: "v0.1.3-51aab8b5/streamplace-v0.1.3-51aab8b5-android-release.aab",
 		},
 		{
-			in:  "streamplace-desktop-darwin-arm64.zip",
-			out: "v0.1.3-51aab8b5/streamplace-desktop-v0.1.3-51aab8b5-darwin-arm64.zip",
+			in:  "streamplace-android-debug.aab",
+			out: "v0.1.3-51aab8b5/streamplace-v0.1.3-51aab8b5-android-debug.aab",
 		},
 		{
-			in:  "streamplace-desktop-linux-amd64.AppImage",
-			out: "v0.1.3-51aab8b5/streamplace-desktop-v0.1.3-51aab8b5-linux-amd64.AppImage",
+			in: "streamplace-desktop-windows-amd64.exe",
 		},
 		{
-			in:  "streamplace-desktop-linux-arm64.AppImage",
-			out: "v0.1.3-51aab8b5/streamplace-desktop-v0.1.3-51aab8b5-linux-arm64.AppImage",
+			in: "streamplace-desktop-darwin-amd64.dmg",
+		},
+		{
+			in: "streamplace-desktop-darwin-arm64.dmg",
+		},
+		{
+			in: "streamplace-desktop-darwin-amd64.zip",
+		},
+		{
+			in: "streamplace-desktop-darwin-arm64.zip",
+		},
+		{
+			in: "streamplace-desktop-linux-amd64.AppImage",
+		},
+		{
+			in: "streamplace-desktop-linux-arm64.AppImage",
 		},
 	}
 
@@ -181,6 +194,11 @@ func TestDownloadRedirects(t *testing.T) {
 			handler(rr, req, httprouter.Params{})
 
 			result := rr.Result()
+			if tt.out == "" {
+				require.Equal(t, http.StatusBadRequest, result.StatusCode)
+				require.Empty(t, result.Header.Get("Location"))
+				return
+			}
 			require.Equal(t, http.StatusTemporaryRedirect, result.StatusCode, "handler returned wrong status code")
 
 			redirectURL, err := result.Location()

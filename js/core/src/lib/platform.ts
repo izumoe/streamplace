@@ -12,13 +12,11 @@ export type CorePlatform =
   | "macos"
   | "windows"
   | "linux"
-  | "electron"
   | "node"
   | "unknown";
 
 export function getPlatform(): CorePlatform {
   if (typeof navigator === "undefined" && typeof process !== "undefined") {
-    if ((process as any).versions?.electron) return "electron";
     if ((process as any).versions?.node) return "node";
   }
 

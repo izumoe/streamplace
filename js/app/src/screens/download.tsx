@@ -1,11 +1,7 @@
-import { Button, Text, useTheme, View } from "@streamplace/components";
+import { Text, useTheme, View } from "@streamplace/components";
 import { LogoMark } from "components/brand/logo";
-import { MonitorDown } from "lucide-react-native";
-import { Linking, ScrollView } from "react-native";
+import { ScrollView } from "react-native";
 import GetApps from "../../components/get-apps";
-
-const RELEASES_URL =
-  "https://git.stream.place/streamplace/streamplace/-/releases";
 
 function SectionLabel({ children }: { children: string }) {
   const { theme } = useTheme();
@@ -74,8 +70,7 @@ export default function DownloadScreen() {
                 maxWidth: 420,
               }}
             >
-              Watch, stream, and manage your channel from anywhere — on mobile,
-              desktop, or the web.
+              Watch, stream, and manage your channel on mobile or the web.
             </Text>
           </View>
         </View>
@@ -84,43 +79,6 @@ export default function DownloadScreen() {
         <View style={card}>
           <SectionLabel>Mobile</SectionLabel>
           <GetApps />
-        </View>
-
-        {/* Desktop */}
-        <View style={card}>
-          <SectionLabel>Desktop</SectionLabel>
-          <View
-            style={{
-              width: 56,
-              height: 56,
-              borderRadius: 14,
-              alignItems: "center",
-              justifyContent: "center",
-              backgroundColor: c.surface2,
-              borderWidth: 1,
-              borderColor: c.borderSubtle,
-            }}
-          >
-            <MonitorDown size={26} color={c.text2} />
-          </View>
-          <Text
-            style={{
-              color: c.text3,
-              fontSize: 14.5,
-              textAlign: "center",
-            }}
-          >
-            Windows · macOS · Linux
-          </Text>
-          <Button
-            width="min"
-            leftIcon={<MonitorDown size={16} />}
-            onPress={() => Linking.openURL(RELEASES_URL)}
-            // width="min" → alignSelf:flex-start; center it within this column.
-            style={{ alignSelf: "center" }}
-          >
-            Get the latest release
-          </Button>
         </View>
       </View>
     </ScrollView>

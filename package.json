@@ -22,7 +22,6 @@
     "app": "cd js/app && pnpm run",
     "web": "cd js/web && pnpm run",
     "components": "cd js/components && pnpm run",
-    "desktop": "cd js/desktop && pnpm run",
     "docs": "cd js/docs && pnpm run",
     "start": "pnpm run -r --stream --parallel start",
     "knip": "knip"

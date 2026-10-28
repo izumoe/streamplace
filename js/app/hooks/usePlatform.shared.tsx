@@ -7,7 +7,6 @@ export type IsPlatform = {
   isWebAndroid: boolean;
   isWebIOS: boolean;
 
-  isElectron: boolean;
   isBrowser: boolean;
 
   // don't rely on this! just for defaults

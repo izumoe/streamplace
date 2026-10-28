@@ -22,14 +22,9 @@ is `hack/all.sh`.
   static release build.
 - `linux-amd64`, `linux-arm64`, `windows-amd64`, `darwin-amd64`,
   `darwin-arm64`: the node build, `test-vod` (where the binary can run),
-  `desktop-$TARGET`, and `pkg-$TARGET`.
+  and `pkg-$TARGET`.
 - `android-debug` and `android-release`: `make ci-android-debug` and
   `make ci-android-release`.
-- `desktop-darwin`: `make desktop-darwin-linux` packages both architectures
-  with Electron Forge, signs each `.app` with `rcodesign` in the Forge
-  `postPackage` hook, and builds the DMG with `hack/make-dmg.sh` (hfsprogs +
-  libdmg-hfsplus). Without `DEVELOPER_CERTIFICATE_BASE64` the app is ad-hoc
-  signed; with `APPLE_CODESIGN_API_KEY` it is notarized and stapled.
 - `build-ios`: `make ios` on a macOS machine. This is the only job that cannot
   run on Linux, because it needs Xcode. GitLab's `build-ios` job is commented
   out until a macOS runner exists; build it locally and upload by hand.
@@ -40,9 +35,8 @@ by accident.
 
 ## Building and signing separately
 
-The macOS artifacts need the Developer ID certificate after they are compiled:
-both the Go binary and every Mach-O inside the Electron app gain a signature.
-To keep the certificate off the build machine:
+The macOS node binaries need the Developer ID certificate after they are
+compiled. To keep the certificate off the build machine:
 
 ```sh
 # Big machine (builder container):
@@ -52,30 +46,26 @@ make build-signable
 make sign SIGN_INPUT=dist/streamplace-<version>-sign-input.tar.gz
 ```
 
-`build-signable` compiles the two darwin binaries with `SKIP_SIGN=1`, packages
-both Electron `.app` bundles with `STREAMPLACE_SKIP_SIGNING=1`, and writes
+`build-signable` compiles the two darwin binaries with `SKIP_SIGN=1` and writes
 `dist/streamplace-<version>-sign-input.tar.gz` plus a `.sha256`. The tarball
-contains the unsigned binaries, unsigned app bundles, `VERSION`, `COMMIT`, a
-`SHA256SUMS` file, and a `SYMLINKS` listing. The build machine does not need
-any Apple credentials.
+contains the unsigned binaries, `VERSION`, `COMMIT`, a `SHA256SUMS` file, and a
+`SYMLINKS` listing. The build machine does not need any Apple credentials.
 
 `build-signable` needs the pinned builder container (Go, Node/pnpm, Meson,
 Rust, osxcross) and nothing else: no prior `make dev`, no Apple credentials,
-and no macOS. `sign` is the opposite: it needs `rcodesign`, `zip`, and the
-host DMG tool (`hdiutil`, or hfsprogs/libdmg-hfsplus on Linux), but not the
-build toolchain.
+and no macOS. `sign` needs `rcodesign` and `zip` for optional notarization,
+but not the build toolchain.
 
-`sign` verifies `SHA256SUMS` and `SYMLINKS`, signs each binary and app with
-`rcodesign`, optionally notarizes and staples, and writes the release artifacts
+`sign` verifies `SHA256SUMS` and `SYMLINKS`, signs each binary with `rcodesign`,
+optionally submits it for notarization, and writes the release artifacts
 to `bin/`:
 
 - `streamplace-<version>-darwin-{amd64,arm64}.tar.gz`
-- `streamplace-desktop-<version>-darwin-{amd64,arm64}.{zip,dmg}`
 - `streamplace-<version>-SHA256SUMS`
 
-Without `SIGN_INPUT`, `make sign` signs the in-place `build-darwin-*` and
-`js/desktop/out` trees (that mode needs Go to compute the version). The signing
-machine needs the checkout for `hack/` and `js/desktop/entitlements.plist`.
+Without `SIGN_INPUT`, `make sign` signs the in-place `build-darwin-*` binaries
+(that mode needs Go to compute the version). The signing machine needs the
+checkout for the signing scripts under `hack/` and `util/`.
 
 Signing offline is supported with `SIGN_OFFLINE=1`. Note that Apple notarization
 requires a secure timestamp from Apple's timestamp server, so an offline
@@ -86,7 +76,7 @@ set `APPLE_CODESIGN_API_KEY` to notarize in the same pass.
 Relevant environment:
 
 - `DEVELOPER_CERTIFICATE_BASE64`, `DEVELOPER_CERTIFICATE_PASSWORD` — required
-  for a real signature; `ALLOW_ADHOC=1` permits an ad-hoc build instead.
+  for a real signature; `ALLOW_ADHOC=1` permits unsigned artifacts instead.
 - `APPLE_CODESIGN_API_KEY` — App Store Connect API key JSON, enables
   notarization (`SIGN_NOTARIZE=auto` by default).
 - `SIGN_NOTARIZE=0|1|auto` — override notarization.

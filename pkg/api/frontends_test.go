@@ -44,7 +44,7 @@ func TestBundledWebFrontend(t *testing.T) {
 
 	for _, cookie := range []string{"", "sp_web_beta=0", "sp_web_beta=1", "sp_web_beta=garbage"} {
 		t.Run(cookie, func(t *testing.T) {
-			for _, path := range []string{"/", "/settings/account"} {
+			for _, path := range []string{"/", "/settings/account", "/embed/did:plc:test", "/chat-popout/did:plc:test"} {
 				req := httptest.NewRequest(http.MethodGet, path, nil)
 				req.Header.Set("Cookie", cookie)
 				rec := httptest.NewRecorder()
@@ -63,7 +63,13 @@ func TestBundledWebFrontend(t *testing.T) {
 		require.Equal(t, asset, rec.Body.Bytes())
 	})
 
-	for _, path := range []string{"/assets/missing.js", "/_expo/static/js/web/old-hash.js"} {
+	for _, path := range []string{
+		"/assets/missing.js",
+		"/_expo/static/js/web/old-hash.js",
+		"/api/desktop-updates/darwin/amd64/v1.0.0/0/RELEASES.json",
+		"/api/desktop-updates/windows/amd64/v1.0.0/invalid/RELEASES",
+		"/api/unknown",
+	} {
 		t.Run(path, func(t *testing.T) {
 			rec := httptest.NewRecorder()
 			handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))

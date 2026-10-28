@@ -4,7 +4,7 @@
 #
 #   make build-signable
 #
-# Produces unsigned darwin binaries and unsigned Electron .app bundles, then
+# Produces unsigned darwin binaries, then
 # packs them into dist/streamplace-<version>-sign-input.tar.gz. Carry that file
 # (and this checkout at the recorded commit) to the machine with the Developer
 # ID certificate, then run `make sign SIGN_INPUT=...` there.
@@ -36,29 +36,14 @@ for arch in amd64 arm64; do
   run make "darwin-$arch" SKIP_SIGN=1
 done
 
-step "desktop app bundles (unsigned)"
-for arch in amd64 arm64; do
-  case "$arch" in
-    amd64) forge_arch=x64 ;;
-    arm64) forge_arch=arm64 ;;
-  esac
-  run bash -c "cd '$REPO/js/desktop' && PATH='$REPO/hack/linux-bin:'\$PATH STREAMPLACE_SKIP_SIGNING=1 pnpm run package --platform darwin --arch '$forge_arch'"
-done
-
 step "assemble $OUT"
 VERSION="$(run go run ./pkg/config/git/git.go -v)"
 COMMIT="$(run git rev-parse HEAD)"
 rm -rf "$OUT"
 mkdir -p "$OUT"
 for arch in amd64 arm64; do
-  case "$arch" in
-    amd64) forge_arch=x64 ;;
-    arm64) forge_arch=arm64 ;;
-  esac
   mkdir -p "$OUT/darwin-$arch"
   cp "build-darwin-$arch/streamplace" "$OUT/darwin-$arch/streamplace"
-  cp -a "js/desktop/out/Streamplace-darwin-$forge_arch/Streamplace.app" \
-    "$OUT/darwin-$arch/Streamplace.app"
 done
 printf '%s\n' "$VERSION" >"$OUT/VERSION"
 printf '%s\n' "$COMMIT" >"$OUT/COMMIT"

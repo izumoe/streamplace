@@ -26,7 +26,7 @@ variables:
   script:
     - rm -rf /usr/x86_64-w64-mingw32/include/d3dcompiler.h /usr/share/mingw-w64/include/d3dcompiler.h /usr/lib/gcc/x86_64-w64-mingw32/10-posix/libssp.dll.a /usr/lib/gcc/x86_64-w64-mingw32/10-posix/libssp-0.dll /usr/lib/gcc/x86_64-w64-mingw32/10-win32/libssp-0.dll /usr/lib/gcc/x86_64-w64-mingw32/10-win32/libssp.dll.a
     - git fetch --unshallow || echo 'already unshallow'
-    - bash -c "make version && make $TARGET && make test-vod && make desktop-$TARGET && make pkg-$TARGET && make ci-upload-node-$TARGET -j$(nproc)"
+    - bash -c "make version && make $TARGET && make test-vod && make pkg-$TARGET && make ci-upload-node-$TARGET -j$(nproc)"
   artifacts:
     reports:
       dotenv: .ci/build.env
@@ -148,42 +148,6 @@ build-android-release:
 #   variables:
 #     COMMAND: make ci-ios -j16
 
-# Runs on the Linux builder image. The darwin binaries arrive as package
-# registry artifacts from build-darwin-*, and the Electron app is packaged and
-# signed with rcodesign in the Forge postPackage hook. No macOS runner needed.
-build-desktop-darwin:
-  stage: build
-  interruptible: true
-  image: "$DOCKER_REPO:builder-$DOCKERFILE_HASH"
-  timeout: 2 hours
-  variables:
-    NODE_OPTIONS: "--max_old_space_size=4096"
-  needs:
-    - build-darwin-amd64
-    - build-darwin-arm64
-  script:
-    - git fetch --unshallow || echo 'already unshallow'
-    - make ci-desktop-darwin -j$(nproc)
-  artifacts:
-    reports:
-      dotenv: .ci/build.env
-
-# windows-selftest:
-#   interruptible: true
-#   stage: build
-#   # for the moment...
-#   tags:
-#     - windows
-#   timeout: 2 hours
-#   needs:
-#     - job: build-windows-amd64
-#       artifacts: true
-#   variables:
-#     MSYSTEM: "MINGW32"
-#     CHERE_INVOKING: "yes"
-#   script:
-#     - C:\msys64\usr\bin\bash -lc "bash -x ./util/windows-selftest.sh $STREAMPLACE_DESKTOP_URL_WINDOWS_AMD64"
-
 .release-template:
   stage: build
   interruptible: true
@@ -197,7 +161,6 @@ build-desktop-darwin:
     - build-darwin-arm64
     - build-android-debug
     - build-android-release
-    - build-desktop-darwin
     # - build-ios  # no macOS runner yet; see the commented job above
     - test
   rules:

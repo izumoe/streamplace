@@ -18,7 +18,6 @@ export default function usePlatform(): IsPlatform {
     const parser = UAParser.UAParser;
     ua = parser(navigator.userAgent);
   }
-  const electron = typeof window["SP_ELECTRON"] !== "undefined";
   return {
     topSafeHeight,
     isNative: false,
@@ -27,8 +26,7 @@ export default function usePlatform(): IsPlatform {
     isWeb: true,
     isWebAndroid: /Android/.test(ua),
     isWebIOS: /iPhone|iPad|iPod/.test(ua),
-    isElectron: electron,
-    isBrowser: !electron,
+    isBrowser: true,
     isSafari: ua.browser.name.includes("Safari"),
     isFirefox: ua.browser.name === "Firefox",
     isChrome: ua.browser.name === "Chrome",

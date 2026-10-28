@@ -15,8 +15,8 @@ import (
 )
 
 var (
-	re      = regexp.MustCompile(`^streamplace(-desktop)?-(v[0-9]+\.[0-9]+\.[0-9]+)(-[0-9a-f]+)?-([0-9a-z]+)-([0-9a-z]+)\.(?:([0-9a-f]+)\.)?(.+)$`)
-	inputRe = regexp.MustCompile(`^streamplace(-desktop)?-([0-9a-z]+)-([0-9a-z]+)\.(.+)$`)
+	re      = regexp.MustCompile(`^streamplace-(v[0-9]+\.[0-9]+\.[0-9]+)(-[0-9a-f]+)?-([0-9a-z]+)-([0-9a-z]+)\.(.+)$`)
+	inputRe = regexp.MustCompile(`^streamplace-([0-9a-z]+)-([0-9a-z]+)\.(.+)$`)
 )
 
 func queryGitlabReal(url string) (io.ReadCloser, error) {
@@ -51,7 +51,7 @@ func (a *StreamplaceAPI) HandleAppDownload(ctx context.Context) httprouter.Handl
 			return
 		}
 
-		inputDesktop, inputPlatform, inputArch, inputExt := inputPieces[1], inputPieces[2], inputPieces[3], inputPieces[4]
+		inputPlatform, inputArch, inputExt := inputPieces[1], inputPieces[2], inputPieces[3]
 		files, err := a.getGitlabPackage(branch)
 		if err != nil {
 			apierrors.WriteHTTPBadRequest(w, fmt.Sprintf("could not get gitlab package %s", file), err)
@@ -60,14 +60,14 @@ func (a *StreamplaceAPI) HandleAppDownload(ctx context.Context) httprouter.Handl
 
 		var foundFile *GitlabFile
 		for _, f := range files {
-			if f.Desktop == inputDesktop && f.Platform == inputPlatform && f.Architecture == inputArch && f.Extension == inputExt {
+			if f.Platform == inputPlatform && f.Architecture == inputArch && f.Extension == inputExt {
 				foundFile = &f
 				break
 			}
 		}
 
 		if foundFile == nil {
-			apierrors.WriteHTTPNotFound(w, fmt.Sprintf("could not find a file for desktop=%s platform=%s arch=%s ext=%s", inputDesktop, inputPlatform, inputArch, inputExt), nil)
+			apierrors.WriteHTTPNotFound(w, fmt.Sprintf("could not find a file for platform=%s arch=%s ext=%s", inputPlatform, inputArch, inputExt), nil)
 			return
 		}
 
@@ -79,14 +79,11 @@ type GitlabFile struct {
 	GitLabURL    string
 	Branch       string
 	Filename     string
-	Desktop      string
 	Version      string
 	Hash         string
 	Platform     string
 	Architecture string
-	SHA1         string
 	Extension    string
-	Size         int
 }
 
 func (f GitlabFile) FullVer() string {
@@ -142,23 +139,16 @@ func (a *StreamplaceAPI) getGitlabPackage(branch string) ([]GitlabFile, error) {
 			// log.Log(ctx, "could not parse filename %s", "filename", filename)
 			continue
 		}
-		size, ok := f["size"].(float64)
-		if !ok {
-			continue
-		}
-		desktop, ver, hash, platform, arch, sha1, ext := pieces[1], pieces[2], pieces[3], pieces[4], pieces[5], pieces[6], pieces[7]
+		ver, hash, platform, arch, ext := pieces[1], pieces[2], pieces[3], pieces[4], pieces[5]
 		out = append(out, GitlabFile{
 			GitLabURL:    a.CLI.GitLabURL,
 			Branch:       branch,
 			Filename:     filename,
-			Desktop:      desktop,
 			Version:      ver,
 			Hash:         hash,
 			Platform:     platform,
 			Architecture: arch,
-			SHA1:         sha1,
 			Extension:    ext,
-			Size:         int(size),
 		})
 	}
 	return out, nil

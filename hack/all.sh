@@ -6,9 +6,8 @@
 #   make all
 #
 # This mirrors the jobs in .gitlab-ci.yml: the test job, every cross-compiled
-# node target (with its desktop package), both Android APKs, the macOS desktop
-# app, and iOS. Artifacts land in bin/ as the CI jobs leave them; the iOS
-# archive stays on the macOS machine that builds it.
+# node target, both Android APKs, and iOS. Artifacts land in bin/ as the CI
+# jobs leave them; the iOS archive stays on the macOS machine that builds it.
 #
 # The tag-only release/upload jobs (npm, GitLab release, deb, Homebrew) are
 # deliberately not run: they publish and need CI credentials.
@@ -69,7 +68,7 @@ if [ "$(tree_state)" != "$LEXICON_STATE" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# node jobs: build the target, then its desktop package and distro package
+# node jobs: build the target, then its distro package
 # ---------------------------------------------------------------------------
 target() {
   local target="$1"
@@ -80,7 +79,6 @@ target() {
   if [ "$target" = "linux-amd64" ]; then
     run make test-vod
   fi
-  run make "desktop-$target"
   run make "pkg-$target"
 }
 
@@ -103,12 +101,6 @@ run make android-debug
 
 step "android-release"
 run make android-release
-
-# ---------------------------------------------------------------------------
-# macOS desktop app (packages and signs with rcodesign on Linux)
-# ---------------------------------------------------------------------------
-step "desktop-darwin"
-run make desktop-darwin-linux
 
 # ---------------------------------------------------------------------------
 # iOS: requires Xcode, so it stays on macOS

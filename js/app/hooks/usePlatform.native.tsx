@@ -9,7 +9,6 @@ export default function usePlatform(): IsPlatform {
     isIOS: Platform.OS === "ios",
     isAndroid: Platform.OS === "android",
     isWeb: false,
-    isElectron: false,
     isBrowser: false,
     isSafari: false,
     isChrome: false,

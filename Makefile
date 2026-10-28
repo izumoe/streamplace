@@ -8,7 +8,6 @@ default: streamplace
 SKIP_SIGN?=0
 VERSION?=$(shell go run ./pkg/config/git/git.go -v)
 VERSION_NO_V=$(subst v,,$(VERSION))
-VERSION_ELECTRON=$(subst -,-z,$(subst v,,$(VERSION)))
 UUID?=$(shell go run ./pkg/config/uuid/uuid.go)
 BRANCH?=$(shell go run ./pkg/config/git/git.go --branch)
 
@@ -564,31 +563,6 @@ sign:
 ci: version install app node-all-platforms ci-upload-node
 
 
-# The darwin binaries are cross-compiled by build-darwin-* and downloaded here.
-# The Electron app is packaged and signed on Linux by the Forge postPackage
-# hook (hack/rcodesign-app.sh); no macOS keychain or util/mac-codesign.sh is
-# involved. The self-test only runs when this target is invoked on macOS, since
-# a darwin binary cannot execute on the Linux builder.
-.PHONY: ci-desktop-darwin
-ci-desktop-darwin: version install
-	for arch in amd64 arm64; do \
-		curl -v --fail-with-body -O "$$CI_API_V4_URL/projects/$$CI_PROJECT_ID/packages/generic/$(BRANCH)/$(VERSION)/streamplace-$(VERSION)-darwin-$$arch.tar.gz" || exit 1 \
-		&& tar -xzvf streamplace-$(VERSION)-darwin-$$arch.tar.gz \
-		&& if [ "$$(uname -s)" = "Darwin" ]; then \
-			./streamplace --version \
-			&& ./streamplace self-test; \
-		fi \
-		&& mkdir -p build-darwin-$$arch \
-		&& mv ./streamplace ./build-darwin-$$arch/streamplace; \
-	done \
-	&& $(MAKE) desktop-darwin \
-	&& for arch in amd64 arm64; do \
-		export file=streamplace-desktop-$(VERSION)-darwin-$$arch.zip \
-		&& $(MAKE) ci-upload-file upload_file=$$file \
-		&& export file=streamplace-desktop-$(VERSION)-darwin-$$arch.dmg \
-		&& $(MAKE) ci-upload-file upload_file=$$file; \
-	done
-
 .PHONY: ci-test
 ci-test: app
 	meson setup $(BUILDDIR) $(OPTS)
@@ -607,10 +581,6 @@ ci-npm-release: install
 .build/bundletool.jar:
 	mkdir -p .build \
 	&& curl -L -o ./.build/bundletool.jar https://github.com/google/bundletool/releases/download/1.17.0/bundletool-all-1.17.0.jar
-
-.PHONY: selftest-macos
-selftest-macos:
-	js/desktop/out/Streamplace-darwin-arm64/Streamplace.app/Contents/MacOS/Streamplace -- --self-test
 
 #    _____ _____   ____   _____ _____
 #   / ____|  __ \ / __ \ / ____/ ____|
@@ -641,37 +611,6 @@ node-all-platforms: app
 	$(MAKE) linux-arm64
 	$(MAKE) windows-amd64
 	$(MAKE) windows-amd64-startup-test
-	$(MAKE) desktop-linux
-	$(MAKE) desktop-windows-amd64
-
-.PHONY: desktop-linux
-desktop-linux:
-	$(MAKE) desktop-linux-amd64
-	$(MAKE) desktop-linux-arm64
-
-.PHONY: desktop-linux-amd64
-desktop-linux-amd64:
-	cd js/desktop \
-	&& pnpm run make --platform linux --arch x64 \
-	&& cd - \
-	&& mv "js/desktop/out/make/AppImage/x64/Streamplace-$(VERSION_ELECTRON)-x64.AppImage" ./bin/streamplace-desktop-$(VERSION)-linux-amd64.AppImage
-
-.PHONY: desktop-linux-arm64
-desktop-linux-arm64:
-	cd js/desktop \
-	&& pnpm run make --platform linux --arch arm64 \
-	&& cd - \
-	&& mv "js/desktop/out/make/AppImage/arm64/Streamplace-$(VERSION_ELECTRON)-arm64.AppImage" ./bin/streamplace-desktop-$(VERSION)-linux-arm64.AppImage
-
-.PHONY: desktop-windows-amd64
-desktop-windows-amd64:
-	cd js/desktop \
-	&& pnpm run make --platform win32 --arch x64 \
-	&& cd - \
-	&& export SUM=$$(cat ./js/desktop/out/make/squirrel.windows/x64/streamplace_desktop-$(VERSION_ELECTRON)-full.nupkg | openssl sha1 | awk '{ print $$2 }') \
-	&& echo $$SUM > ./bin/streamplace-desktop-$(VERSION)-windows-amd64.nupkg.sha1 \
-	&& mv "js/desktop/out/make/squirrel.windows/x64/streamplace_desktop-$(VERSION_ELECTRON)-full.nupkg" ./bin/streamplace-desktop-$(VERSION)-windows-amd64.$$SUM.nupkg \
-	&& mv "js/desktop/out/make/squirrel.windows/x64/Streamplace-$(VERSION_ELECTRON) Setup.exe" ./bin/streamplace-desktop-$(VERSION)-windows-amd64.exe
 
 .PHONY: streamplace
 streamplace: app-cached meson-setup-static
@@ -758,40 +697,6 @@ darwin-arm64:
 .PHONY: windows-amd64-startup-test
 windows-amd64-startup-test:
 	bash -c 'set -euo pipefail && unbuffer wine64 ./build-windows-amd64/streamplace.exe self-test | cat'
-
-.PHONY: desktop-darwin-amd64
-desktop-darwin-amd64:
-	echo "TODO"
-
-.PHONY: desktop-darwin-arm64
-desktop-darwin-arm64:
-	echo "TODO"
-
-# On macOS Forge signs and notarizes with the platform tools. Elsewhere the
-# postPackage hook signs with rcodesign and hack/make-dmg.sh builds the DMG.
-.PHONY: desktop-darwin
-desktop-darwin:
-	@if [ "$$(uname -s)" = "Darwin" ]; then \
-		$(MAKE) desktop-darwin-macos; \
-	else \
-		$(MAKE) desktop-darwin-linux; \
-	fi
-
-.PHONY: desktop-darwin-linux
-desktop-darwin-linux:
-	bash hack/desktop-darwin-linux.sh
-
-.PHONY: desktop-darwin-macos
-desktop-darwin-macos:
-	export DEBUG="electron-osx-sign*" \
-	&& cd js/desktop \
-	&& pnpm run make --platform darwin --arch arm64 \
-	&& pnpm run make --platform darwin --arch x64 \
-	&& cd - \
-	&& mv js/desktop/out/make/Streamplace-$(VERSION_ELECTRON)-x64.dmg ./bin/streamplace-desktop-$(VERSION)-darwin-amd64.dmg \
-	&& mv js/desktop/out/make/Streamplace-$(VERSION_ELECTRON)-arm64.dmg ./bin/streamplace-desktop-$(VERSION)-darwin-arm64.dmg \
-	&& mv js/desktop/out/make/zip/darwin/x64/Streamplace-darwin-x64-$(VERSION_ELECTRON).zip ./bin/streamplace-desktop-$(VERSION)-darwin-amd64.zip \
-	&& mv js/desktop/out/make/zip/darwin/arm64/Streamplace-darwin-arm64-$(VERSION_ELECTRON).zip ./bin/streamplace-desktop-$(VERSION)-darwin-arm64.zip
 
 # link your local version of mist for dev
 .PHONY: link-mist
@@ -1001,13 +906,11 @@ ci-upload: ci-upload-node ci-upload-android
 .PHONY: ci-upload-node-linux-amd64
 ci-upload-node-linux-amd64:
 	$(MAKE) ci-upload-file upload_file=streamplace-$(VERSION)-linux-amd64.tar.gz \
-	&& $(MAKE) ci-upload-file upload_file=streamplace-desktop-$(VERSION)-linux-amd64.AppImage \
 	&& $(MAKE) ci-upload-file upload_file=streamplace-$(VERSION)-linux-amd64.deb
 
 .PHONY: ci-upload-node-linux-arm64
 ci-upload-node-linux-arm64:
 	$(MAKE) ci-upload-file upload_file=streamplace-$(VERSION)-linux-arm64.tar.gz \
-	&& $(MAKE) ci-upload-file upload_file=streamplace-desktop-$(VERSION)-linux-arm64.AppImage \
 	&& $(MAKE) ci-upload-file upload_file=streamplace-$(VERSION)-linux-arm64.deb
 
 .PHONY: ci-upload-node-darwin-arm64
@@ -1022,23 +925,13 @@ ci-upload-node-darwin-amd64:
 
 .PHONY: ci-upload-node-windows-amd64
 ci-upload-node-windows-amd64:
-	export file=streamplace-$(VERSION)-windows-amd64.zip \
-	&& $(MAKE) ci-upload-file upload_file=$$file; \
-	export file=streamplace-desktop-$(VERSION)-windows-amd64.exe \
-	&& $(MAKE) ci-upload-file upload_file=$$file; \
-	export SUM=$$(cat bin/streamplace-desktop-$(VERSION)-windows-amd64.nupkg.sha1) \
-	&& export file=streamplace-desktop-$(VERSION)-windows-amd64.$$SUM.nupkg \
-	&& $(MAKE) ci-upload-file upload_file=$$file;
+	$(MAKE) ci-upload-file upload_file=streamplace-$(VERSION)-windows-amd64.zip
 
 .PHONY: ci-upload-node-macos
 ci-upload-node-macos: node-all-platforms-macos
 	for GOOS in darwin; do \
 		for GOARCH in amd64 arm64; do \
 			export file=streamplace-$(VERSION)-$$GOOS-$$GOARCH.tar.gz \
-			&& $(MAKE) ci-upload-file upload_file=$$file; \
-			export file=streamplace-desktop-$(VERSION)-$$GOOS-$$GOARCH.dmg \
-			&& $(MAKE) ci-upload-file upload_file=$$file; \
-			export file=streamplace-desktop-$(VERSION)-$$GOOS-$$GOARCH.zip \
 			&& $(MAKE) ci-upload-file upload_file=$$file; \
 		done \
 	done;

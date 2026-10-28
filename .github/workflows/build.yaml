@@ -20,7 +20,7 @@ jobs:
           - name: linux-arm64
             cmd: "make linux-arm64"
           - name: windows-amd64
-            cmd: "make windows-amd64 && make desktop-windows-amd64"
+            cmd: "make windows-amd64"
           # The e2e build of the release APK (see `make android-e2e`), which
           # android-e2e runs. Shipped releases are built by GitLab.
           - name: android
@@ -285,30 +285,6 @@ jobs:
             ~/.maestro/tests/
           retention-days: 7
           if-no-files-found: warn
-
-  # windows-selftest:
-  #   name: windows-selftest
-  #   runs-on: windows-latest
-  #   needs: linux
-  #   steps:
-  #     - name: Download bin artifacts
-  #       uses: actions/download-artifact@v4
-  #       with:
-  #         name: windows-bin-${{ github.event.pull_request.head.sha }}
-  #         path: ./bin/
-
-  #     - name: Run Windows executable
-  #       shell: bash
-  #       run: |
-  #         set -euo pipefail
-  #         set -x AQD_NO_UPDATE=true
-  #         set -x STREAMPLACE_TEST_SERIES=true
-  #         echo "running $PWD/bin/*.exe"
-  #         ./bin/*.exe
-  #         powershell -Command "Stop-Process -Name Streamplace"
-  #         cd "$LOCALAPPDATA/streamplace_desktop"
-  #         cd app-*
-  #         ./Streamplace.exe -- --self-test
 
   darwin:
     name: ${{ matrix.name }}

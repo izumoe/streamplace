@@ -4,7 +4,7 @@
 // Reads a flat directory of brand inputs (see brand/README.md for the
 // contract) and generates every derived brand asset in the repo: the Expo
 // icon/splash/adaptive-icon/favicon PNGs (Expo prebuild derives all native
-// iOS/Android formats from those), the OG link banner, desktop ICO/ICNS,
+// iOS/Android formats from those), the OG link banner, browser ICO,
 // docs logos, the downloadable /brand SVGs, and a TypeScript module the
 // app's logo components render from. Every output is gitignored; the brand
 // directory is the only source of truth.
@@ -208,22 +208,6 @@ function buildIco(pngs) {
   return Buffer.concat([header, ...entries, ...blobs]);
 }
 
-// ICNS: typed chunks of embedded PNGs.
-function buildIcns(chunks) {
-  const body = Buffer.concat(
-    chunks.map(({ type, buf }) => {
-      const h = Buffer.alloc(8);
-      h.write(type, 0, 4, "ascii");
-      h.writeUInt32BE(8 + buf.length, 4);
-      return Buffer.concat([h, buf]);
-    }),
-  );
-  const h = Buffer.alloc(8);
-  h.write("icns", 0, 4, "ascii");
-  h.writeUInt32BE(8 + body.length, 4);
-  return Buffer.concat([h, body]);
-}
-
 // ------------------------------------------------------------- compositions
 
 function tileSvgString() {
@@ -263,9 +247,8 @@ function lockupSvgString() {
 const outApp = join(repoRoot, "js/app/assets/generated");
 const outPublic = join(repoRoot, "js/app/public");
 const outPublicBrand = join(outPublic, "brand");
-const outDesktop = join(repoRoot, "js/desktop/assets/images");
 const outDocs = join(repoRoot, "js/docs/src/assets");
-for (const d of [outApp, outPublicBrand, outDesktop, outDocs]) {
+for (const d of [outApp, outPublicBrand, outDocs]) {
   mkdirSync(d, { recursive: true });
 }
 
@@ -363,39 +346,6 @@ write(
   withColor(wordmarkSvgString(), colors.ink),
 );
 write(join(outPublicBrand, `${slug}-lockup.svg`), lockupSvgString());
-
-// Desktop (Electron Forge): window/taskbar PNG plus ICO and ICNS.
-write(join(outDesktop, "streamplace-logo.png"), await iconPng(512));
-const icoSizes = [16, 24, 32, 48, 64, 128, 256];
-write(
-  join(outDesktop, "streamplace-logo.ico"),
-  buildIco(
-    await Promise.all(
-      icoSizes.map(async (size) => ({ size, buf: await iconPng(size) })),
-    ),
-  ),
-);
-const icnsTypes = [
-  ["ic11", 32],
-  ["ic12", 64],
-  ["ic07", 128],
-  ["ic08", 256],
-  ["ic13", 256],
-  ["ic09", 512],
-  ["ic14", 512],
-  ["ic10", 1024],
-];
-write(
-  join(outDesktop, "streamplace-logo.icns"),
-  buildIcns(
-    await Promise.all(
-      icnsTypes.map(async ([type, size]) => ({
-        type,
-        buf: await iconPng(size),
-      })),
-    ),
-  ),
-);
 
 // Docs (Starlight header logo, light/dark themes).
 const docsLight = await squarePng(markArt, 512, {
