@@ -84,14 +84,6 @@ test("keeps generated JSON readable during overlapping compilations", async (t) 
     ]);
   function assertOutputs() {
     for (const consumer of ["i18n", "app", "web"]) {
-      assert.deepEqual(
-        fs
-          .readdirSync(path.join(root, `js/${consumer}/public/locales`), {
-            recursive: true,
-          })
-          .sort(),
-        entries,
-      );
       for (const [file, messages] of expected) {
         const output = path.join(root, `js/${consumer}/public/locales`, file);
         assert.deepEqual(JSON.parse(fs.readFileSync(output, "utf8")), messages);
@@ -118,6 +110,18 @@ test("keeps generated JSON readable during overlapping compilations", async (t) 
   }
   if (readError) throw readError;
   assertOutputs();
+  // Directory iteration can miss entries replaced during the scan. Every
+  // expected path must remain readable above; check the listing once settled.
+  for (const consumer of ["i18n", "app", "web"]) {
+    assert.deepEqual(
+      fs
+        .readdirSync(path.join(root, `js/${consumer}/public/locales`), {
+          recursive: true,
+        })
+        .sort(),
+      entries,
+    );
+  }
 });
 
 test("reports output failures without leaving temporary files", async (t) => {
