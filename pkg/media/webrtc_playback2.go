@@ -57,7 +57,7 @@ func (mm *MediaManager) WebRTCPlayback2(ctx context.Context, user string, rendit
 		return nil, fmt.Errorf("failed to add audio track to peer connection: %w", err)
 	}
 
-	close := func() {
+	closePeerConnection := func() {
 		if cErr := peerConnection.Close(); cErr != nil {
 			log.Log(ctx, "cannot close peerConnection: %v\n", cErr)
 		}
@@ -65,20 +65,20 @@ func (mm *MediaManager) WebRTCPlayback2(ctx context.Context, user string, rendit
 
 	// Set the remote SessionDescription
 	if err = peerConnection.SetRemoteDescription(*offer); err != nil {
-		close()
+		closePeerConnection()
 		return nil, fmt.Errorf("failed to set remote description: %w", err)
 	}
 
 	// Create answer
 	answer, err := peerConnection.CreateAnswer(nil)
 	if err != nil {
-		close()
+		closePeerConnection()
 		return nil, fmt.Errorf("failed to create answer: %w", err)
 	}
 
 	// Sets the LocalDescription, and starts our UDP listeners
 	if err = peerConnection.SetLocalDescription(answer); err != nil {
-		close()
+		closePeerConnection()
 		return nil, fmt.Errorf("failed to set local description: %w", err)
 	}
 
@@ -95,6 +95,7 @@ func (mm *MediaManager) WebRTCPlayback2(ctx context.Context, user string, rendit
 	var viewerMu sync.Mutex
 	viewerCounted := false
 	viewerDone := false
+	connected := make(chan struct{})
 	markConnected := func() {
 		viewerMu.Lock()
 		defer viewerMu.Unlock()
@@ -103,6 +104,7 @@ func (mm *MediaManager) WebRTCPlayback2(ctx context.Context, user string, rendit
 		}
 		viewerCounted = true
 		mm.IncrementViewerCount(user, "webrtc")
+		close(connected)
 	}
 	markDone := func() {
 		viewerMu.Lock()
@@ -114,8 +116,19 @@ func (mm *MediaManager) WebRTCPlayback2(ctx context.Context, user string, rendit
 		}
 	}
 
+	ctx, cancel := context.WithCancel(ctx)
+	peerConnection.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
+		log.Log(ctx, "Peer Connection State has changed", "state", state.String())
+		if state == webrtc.PeerConnectionStateConnected {
+			markConnected()
+		}
+		if state == webrtc.PeerConnectionStateFailed || state == webrtc.PeerConnectionStateClosed || state == webrtc.PeerConnectionStateDisconnected {
+			log.Log(ctx, "Peer Connection has gone to failed, exiting")
+			cancel()
+		}
+	})
+
 	go func() {
-		ctx, cancel := context.WithCancel(ctx)
 		defer cancel()
 		defer markDone()
 
@@ -123,11 +136,18 @@ func (mm *MediaManager) WebRTCPlayback2(ctx context.Context, user string, rendit
 
 		packetQueue := make(chan *bus.PacketizedSegment, 1024)
 		go func() {
+			// Starting at connection time keeps finite cached media available
+			// until the tracks bind, then joins the newest cached GoP.
+			select {
+			case <-connected:
+			case <-ctx.Done():
+				return
+			}
 			busRendition := rendition
 			if audioOnly || rendition == "source" {
 				busRendition = PlaybackSourceRendition
 			}
-			segChan := mm.bus.SubscribeSegmentBuf(ctx, user, busRendition, 2)
+			segChan := mm.bus.SubscribeSegmentBuf(ctx, user, busRendition, 1)
 			defer mm.bus.UnsubscribeSegment(ctx, user, busRendition, segChan)
 			for {
 				select {
@@ -159,68 +179,53 @@ func (mm *MediaManager) WebRTCPlayback2(ctx context.Context, user string, rendit
 				}
 			}()
 
-			var scalar float64 = 1
-
+			var videoPacer, audioPacer samplePacer
 			for {
+				var packet *bus.PacketizedSegment
 				select {
 				case <-ctx.Done():
 					return
-				case packet := <-packetQueue:
-					queuedDuration := time.Duration(backlog.Add(-int64(packet.Duration)))
-					scalar = getPlaybackRate(queuedDuration)
-					log.Debug(ctx, "playback backlog", "backlog", queuedDuration, "scalar", scalar)
-					g, _ := errgroup.WithContext(ctx)
-					wroteAny := false
+				case packet = <-packetQueue:
+				default:
+					// Pause both clocks only while no media is available. A source
+					// stall must not become a burst of overdue samples on recovery.
+					started := time.Now()
+					select {
+					case <-ctx.Done():
+						return
+					case packet = <-packetQueue:
+					}
+					idle := time.Since(started)
+					videoPacer.pause(idle)
+					audioPacer.pause(idle)
+				}
 
-					if !audioOnly && len(packet.Video) > 0 {
-						wroteAny = true
-						g.Go(func() error {
-							return writeSamples(ctx, videoTrack, packet.Video, scalar)
-						})
-					} else if !audioOnly {
-						log.Warn(ctx, "no video samples to write")
+				queuedDuration := time.Duration(backlog.Add(-int64(packet.Duration)))
+				scalar := getPlaybackRate(queuedDuration)
+				log.Debug(ctx, "playback backlog", "backlog", queuedDuration, "scalar", scalar)
+				g, groupCtx := errgroup.WithContext(ctx)
+
+				if !audioOnly && len(packet.Video) > 0 {
+					g.Go(func() error {
+						return videoPacer.writeSamples(groupCtx, videoTrack, packet.Video, scalar, 0)
+					})
+				} else if !audioOnly {
+					videoPacer.deadline = time.Time{}
+					log.Warn(ctx, "no video samples to write")
+				}
+				if len(packet.Audio) > 0 {
+					g.Go(func() error {
+						return audioPacer.writeAudioSamples(groupCtx, audioTrack, packet, scalar)
+					})
+				} else {
+					audioPacer.deadline = time.Time{}
+					log.Warn(ctx, "no audio samples to write")
+				}
+				if err := g.Wait(); err != nil {
+					if ctx.Err() == nil || !errors.Is(err, io.ErrClosedPipe) {
+						log.Error(ctx, "failed to write samples", "error", err)
 					}
-					// The audio path deliberately keeps the original
-					// uniform-duration ticker instead of writeSamples: Opus
-					// packets are a constant 20ms, so the uniform split is
-					// exact, and this path is proven in production — audio
-					// timing regressions are immediately audible as garbling.
-					// Video is the track that needs per-sample durations (its
-					// spacing goes non-uniform when an encoder sheds frames).
-					var audioDur time.Duration
-					if len(packet.Audio) > 0 {
-						audioDur = packet.Duration / time.Duration(len(packet.Audio))
-					}
-					if audioDur > 0 {
-						wroteAny = true
-						g.Go(func() error {
-							ticker := time.NewTicker(time.Duration(float64(audioDur) * (1 / scalar)))
-							defer ticker.Stop()
-							for _, audio := range packet.Audio {
-								err := audioTrack.WriteSample(media.Sample{Data: audio.Data, Duration: audioDur})
-								if err != nil {
-									return fmt.Errorf("failed to write audio sample: %w", err)
-								}
-								select {
-								case <-ctx.Done():
-									return nil
-								case <-ticker.C:
-									continue
-								}
-							}
-							return nil
-						})
-					} else {
-						log.Warn(ctx, "no audio samples to write")
-					}
-					if wroteAny {
-						if err := g.Wait(); err != nil {
-							if ctx.Err() == nil || !errors.Is(err, io.ErrClosedPipe) {
-								log.Error(ctx, "failed to write samples", "error", err)
-							}
-							cancel()
-						}
-					}
+					cancel()
 				}
 			}
 		}()
@@ -251,24 +256,6 @@ func (mm *MediaManager) WebRTCPlayback2(ctx context.Context, user string, rendit
 			log.Log(ctx, "Connection State has changed", "state", connectionState.String())
 		})
 
-		// Set the handler for Peer connection state
-		// This will notify you when the peer has connected/disconnected
-		peerConnection.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
-			log.Log(ctx, "Peer Connection State has changed", "state", s.String())
-
-			if s == webrtc.PeerConnectionStateConnected {
-				markConnected()
-			}
-
-			if s == webrtc.PeerConnectionStateFailed || s == webrtc.PeerConnectionStateClosed || s == webrtc.PeerConnectionStateDisconnected {
-				// Wait until PeerConnection has had no network activity for 30 seconds or another failure. It may be reconnected using an ICE Restart.
-				// Use webrtc.PeerConnectionStateDisconnected if you are interested in detecting faster timeout.
-				// Note that the PeerConnection may come back from PeerConnectionStateDisconnected.
-				log.Log(ctx, "Peer Connection has gone to failed, exiting")
-				cancel()
-			}
-		})
-
 		<-ctx.Done()
 
 		log.Warn(ctx, "exiting playback")
@@ -280,6 +267,29 @@ func (mm *MediaManager) WebRTCPlayback2(ctx context.Context, user string, rendit
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+}
+
+type samplePacer struct {
+	deadline time.Time
+	timer    *time.Timer
+}
+
+func (p *samplePacer) pause(idle time.Duration) {
+	if !p.deadline.IsZero() {
+		p.deadline = p.deadline.Add(idle)
+	}
+}
+
+// Split the audio span uniformly so timestamp gaps do not expand its RTP clock.
+func (p *samplePacer) writeAudioSamples(ctx context.Context, track *webrtc.TrackLocalStaticSample, packet *bus.PacketizedSegment, scalar float64) error {
+	if len(packet.Audio) == 0 {
+		return nil
+	}
+	duration := packet.Duration / time.Duration(len(packet.Audio))
+	if duration <= 0 {
+		return nil
+	}
+	return p.writeSamples(ctx, track, packet.Audio, scalar, duration)
 }
 
 // writeSamples writes one track's samples paced by their real durations —
@@ -295,29 +305,33 @@ func (mm *MediaManager) WebRTCPlayback2(ctx context.Context, user string, rendit
 // — enough to starve the receiver's jitter buffer). Sleeping until the
 // scheduled deadline instead absorbs overshoot in the next iteration, like a
 // ticker does.
-func writeSamples(ctx context.Context, track *webrtc.TrackLocalStaticSample, samples []bus.PacketizedSample, scalar float64) error {
-	start := time.Now()
-	var scheduled time.Duration
-	var timer *time.Timer
+func (p *samplePacer) writeSamples(ctx context.Context, track *webrtc.TrackLocalStaticSample, samples []bus.PacketizedSample, scalar float64, uniformDuration time.Duration) error {
+	if p.deadline.IsZero() {
+		p.deadline = time.Now()
+	}
 	for _, s := range samples {
-		if err := track.WriteSample(media.Sample{Data: s.Data, Duration: s.Duration}); err != nil {
+		duration := s.Duration
+		if uniformDuration > 0 {
+			duration = uniformDuration
+		}
+		if err := track.WriteSample(media.Sample{Data: s.Data, Duration: duration}); err != nil {
 			return fmt.Errorf("failed to write sample: %w", err)
 		}
-		scheduled += time.Duration(float64(s.Duration) / scalar)
-		wait := scheduled - time.Since(start)
+		p.deadline = p.deadline.Add(time.Duration(float64(duration) / scalar))
+		wait := time.Until(p.deadline)
 		if wait <= 0 {
 			continue
 		}
-		if timer == nil {
-			timer = time.NewTimer(wait)
+		if p.timer == nil {
+			p.timer = time.NewTimer(wait)
 		} else {
-			timer.Reset(wait)
+			p.timer.Reset(wait)
 		}
 		select {
 		case <-ctx.Done():
-			timer.Stop()
+			p.timer.Stop()
 			return nil
-		case <-timer.C:
+		case <-p.timer.C:
 		}
 	}
 	return nil

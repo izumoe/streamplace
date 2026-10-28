@@ -3,6 +3,7 @@ package media
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log/slog"
 	"net"
 	"os"
@@ -14,6 +15,7 @@ import (
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
+	"golang.org/x/sync/errgroup"
 	"stream.place/streamplace/pkg/bus"
 	"stream.place/streamplace/pkg/config"
 	"stream.place/streamplace/pkg/gstinit"
@@ -95,9 +97,9 @@ func loopbackPlaybackManager() *MediaManager {
 	}
 }
 
-func startBackloggedPlayback(tb testing.TB, ctx context.Context, mm *MediaManager, user, rendition string, packet *bus.PacketizedSegment) *webrtc.PeerConnection {
+func createPlaybackReceiver(tb testing.TB, ctx context.Context, api *webrtc.API, rendition string) *webrtc.PeerConnection {
 	tb.Helper()
-	client, err := mm.webrtcAPI.NewPeerConnection(webrtc.Configuration{})
+	client, err := api.NewPeerConnection(webrtc.Configuration{})
 	require.NoError(tb, err)
 	started := false
 	defer func() {
@@ -114,17 +116,35 @@ func startBackloggedPlayback(tb testing.TB, ctx context.Context, mm *MediaManage
 	offer, err := client.CreateOffer(nil)
 	require.NoError(tb, err)
 	require.NoError(tb, client.SetLocalDescription(offer))
+	select {
+	case <-webrtc.GatheringCompletePromise(client):
+	case <-ctx.Done():
+		tb.Fatal("receiver ICE gathering timed out")
+	}
+	started = true
+	return client
+}
+
+func startBackloggedPlayback(tb testing.TB, ctx context.Context, mm *MediaManager, user, rendition string, packet *bus.PacketizedSegment) *webrtc.PeerConnection {
+	tb.Helper()
+	client := createPlaybackReceiver(tb, ctx, mm.webrtcAPI, rendition)
+	started := false
+	defer func() {
+		if !started {
+			client.Close()
+		}
+	}()
 
 	seg := &bus.Seg{Published: true, PacketizedData: packet}
 	for range 2 {
 		mm.bus.PublishSegment(ctx, user, PlaybackSourceRendition, seg)
 	}
-	answer, err := mm.WebRTCPlayback2(ctx, user, rendition, &offer, "")
+	answer, err := mm.WebRTCPlayback2(ctx, user, rendition, client.LocalDescription(), "")
 	require.NoError(tb, err)
 	require.NotNil(tb, answer)
+	require.NoError(tb, client.SetRemoteDescription(*answer))
 
-	// The real session starts its reader and pacer while the caller still
-	// holds the answer. A viewer abandoning the handshake must cancel cleanly.
+	// Flood a connected reader while its sender is pacing actual samples.
 	subscriptions := spmetrics.SegmentSubscriptionsOpen.WithLabelValues(user, PlaybackSourceRendition)
 	var metric dto.Metric
 	require.Eventually(tb, func() bool { return subscriptions.Write(&metric) == nil && metric.GetGauge().GetValue() == 1 }, time.Second, time.Millisecond)
@@ -166,7 +186,8 @@ func TestWriteSamplesPacing(t *testing.T) {
 				defer cancel()
 				done := make(chan error, 1)
 				start := time.Now()
-				go func() { done <- writeSamples(ctx, track, samples, testCase.scalar) }()
+				var pacer samplePacer
+				go func() { done <- pacer.writeSamples(ctx, track, samples, testCase.scalar, 0) }()
 				synctest.Wait()
 				if testCase.elapsed > 0 {
 					time.Sleep(testCase.elapsed - time.Nanosecond)
@@ -207,7 +228,8 @@ func TestWriteSamplesCancelsDuringWait(t *testing.T) {
 		defer cancel()
 		done := make(chan error, 1)
 		start := time.Now()
-		go func() { done <- writeSamples(ctx, track, samples, 1) }()
+		var pacer samplePacer
+		go func() { done <- pacer.writeSamples(ctx, track, samples, 1, 0) }()
 		synctest.Wait()
 		time.Sleep(45 * time.Millisecond)
 		synctest.Wait()
@@ -229,6 +251,94 @@ func TestWriteSamplesCancelsDuringWait(t *testing.T) {
 	})
 }
 
+func TestWriteAudioSamplesUsesSegmentDuration(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		track, err := webrtc.NewTrackLocalStaticSample(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus, ClockRate: 48000}, "audio", "stream")
+		require.NoError(t, err)
+		packet := &bus.PacketizedSegment{
+			Duration: 40 * time.Millisecond,
+			Audio: []bus.PacketizedSample{
+				{Duration: 100 * time.Millisecond},
+				{Duration: 20 * time.Millisecond},
+			},
+		}
+		for _, scalar := range []float64{1, 1.5} {
+			var pacer samplePacer
+			started := time.Now()
+			for range 100 {
+				require.NoError(t, pacer.writeAudioSamples(t.Context(), track, packet, scalar))
+			}
+			require.Equal(t, 200*time.Duration(float64(20*time.Millisecond)/scalar), time.Since(started), "source timestamp gaps must not expand audio scheduling across GoPs")
+		}
+		packet.Duration = 0
+		started := time.Now()
+		var pacer samplePacer
+		require.NoError(t, pacer.writeAudioSamples(t.Context(), track, packet, 1))
+		require.Zero(t, time.Since(started), "missing segment duration must not start audio pacing")
+	})
+}
+
+func TestPlaybackPreservesTrackClocksAcrossSegments(t *testing.T) {
+	var fixture *bus.PacketizedSegment
+	withNoGSTLeaks(t, func() { fixture = playbackPacketFixture(t) })
+	require.NotEmpty(t, fixture.Video)
+	for _, scalar := range []float64{1, 1.5} {
+		t.Run(fmt.Sprint(scalar), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				video, err := webrtc.NewTrackLocalStaticSample(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264, ClockRate: 90000}, "video", "stream")
+				require.NoError(t, err)
+				audio, err := webrtc.NewTrackLocalStaticSample(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus, ClockRate: 48000}, "audio", "stream")
+				require.NoError(t, err)
+				var videoPacer, audioPacer samplePacer
+				var expected time.Duration
+				started := time.Now()
+				for range 100 {
+					for _, span := range []time.Duration{396 * time.Millisecond, 404 * time.Millisecond} {
+						packet := &bus.PacketizedSegment{
+							Duration: 400 * time.Millisecond,
+							Video:    []bus.PacketizedSample{{Data: fixture.Video[0].Data, Duration: span}},
+						}
+						for range 20 {
+							packet.Audio = append(packet.Audio, bus.PacketizedSample{Data: fixture.Audio[0].Data, Duration: 20 * time.Millisecond})
+						}
+						expected += time.Duration(float64(span) / scalar)
+						group, ctx := errgroup.WithContext(t.Context())
+						group.Go(func() error { return videoPacer.writeSamples(ctx, video, packet.Video, scalar, 0) })
+						group.Go(func() error { return audioPacer.writeAudioSamples(ctx, audio, packet, scalar) })
+						require.NoError(t, group.Wait())
+					}
+				}
+				require.Equal(t, expected, time.Since(started), "alternating audio tails must not restart the video schedule at each GoP")
+			})
+		})
+	}
+}
+
+func TestPlaybackPacingResumesAfterIdle(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		track, err := webrtc.NewTrackLocalStaticSample(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus, ClockRate: 48000}, "audio", "stream")
+		require.NoError(t, err)
+		var pacer samplePacer
+		pacer.pause(time.Second)
+		samples := []bus.PacketizedSample{{Duration: 20 * time.Millisecond}, {Duration: 20 * time.Millisecond}}
+		require.NoError(t, pacer.writeSamples(t.Context(), track, samples, 1, 0))
+		idleStarted := time.Now()
+		time.Sleep(5 * time.Second)
+		pacer.pause(time.Since(idleStarted))
+		resumed := time.Now()
+		require.NoError(t, pacer.writeSamples(t.Context(), track, samples, 1, 0))
+		require.Equal(t, 40*time.Millisecond, time.Since(resumed), "a source stall must not turn the next GoP into overdue samples")
+		resumed = time.Now()
+		require.NoError(t, pacer.writeSamples(t.Context(), track, samples, 2, 0))
+		require.Equal(t, 20*time.Millisecond, time.Since(resumed), "new samples use the current backlog scalar")
+
+		var nextSession samplePacer
+		resumed = time.Now()
+		require.NoError(t, nextSession.writeSamples(t.Context(), track, samples, 1, 0))
+		require.Equal(t, 40*time.Millisecond, time.Since(resumed), "a new playback session owns a fresh clock")
+	})
+}
+
 func BenchmarkWriteSamplesVideo(b *testing.B) {
 	packet := playbackPacketFixture(b)
 	require.NotEmpty(b, packet.Video)
@@ -236,8 +346,9 @@ func BenchmarkWriteSamplesVideo(b *testing.B) {
 	require.NoError(b, err)
 	ctx := b.Context()
 	b.ReportAllocs()
+	var pacer samplePacer
 	for b.Loop() {
-		if err := writeSamples(ctx, track, packet.Video, 1); err != nil {
+		if err := pacer.writeSamples(ctx, track, packet.Video, 1, 0); err != nil {
 			b.Fatal(err)
 		}
 	}
