@@ -14,6 +14,7 @@ import (
 	app "github.com/go-gst/go-gst/pkg/gstapp"
 	"go.opentelemetry.io/otel"
 	"stream.place/streamplace/pkg/constants"
+	"stream.place/streamplace/pkg/gstpipeline"
 	"stream.place/streamplace/pkg/localdb"
 	"stream.place/streamplace/pkg/log"
 )
@@ -68,7 +69,7 @@ func ParseSegmentMediaData(ctx context.Context, mp4bs []byte) (*localdb.SegmentM
 		return nil, fmt.Errorf("error creating SegmentMetadata pipeline: appsrc not found")
 	}
 	appsrc.(app.AppSrc).SetCallbacks(&app.AppSrcCallbacks{
-		NeedData: ReaderNeedDataIncremental(ctx, bytes.NewReader(mp4bs)),
+		NeedData: gstpipeline.ReaderNeedDataIncremental(ctx, bytes.NewReader(mp4bs)),
 	})
 
 	foundSomeAudio := false
@@ -231,7 +232,7 @@ func ParseSegmentMediaData(ctx context.Context, mp4bs []byte) (*localdb.SegmentM
 	})
 
 	go func() {
-		if err := HandleBusMessages(ctx, pipeline); err != nil {
+		if err := gstpipeline.HandleBusMessages(ctx, pipeline); err != nil {
 			log.Log(ctx, "pipeline error", "error", err)
 		}
 		cancel()

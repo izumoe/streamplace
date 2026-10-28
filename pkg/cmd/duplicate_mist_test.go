@@ -28,7 +28,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"stream.place/streamplace/pkg/config"
 	"stream.place/streamplace/pkg/gstinit"
-	"stream.place/streamplace/pkg/media"
+	"stream.place/streamplace/pkg/gstpipeline"
 	"stream.place/streamplace/pkg/rtmps"
 )
 
@@ -322,7 +322,7 @@ func TestDuplicateMistEndToEnd(t *testing.T) {
 	pipeline := element.(gst.Pipeline)
 	defer pipeline.SetState(gst.StateNull)
 	busDone := make(chan error, 1)
-	go func() { busDone <- media.HandleBusMessages(ctx, pipeline) }()
+	go func() { busDone <- gstpipeline.HandleBusMessages(ctx, pipeline) }()
 	require.NotEqual(t, gst.StateChangeFailure, pipeline.SetState(gst.StatePlaying))
 	select {
 	case err := <-busDone:

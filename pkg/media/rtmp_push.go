@@ -14,6 +14,7 @@ import (
 	"github.com/go-gst/go-gst/pkg/gst"
 	app "github.com/go-gst/go-gst/pkg/gstapp"
 	"stream.place/streamplace/pkg/constants"
+	"stream.place/streamplace/pkg/gstpipeline"
 	"stream.place/streamplace/pkg/log"
 	"stream.place/streamplace/pkg/muxl"
 	"stream.place/streamplace/pkg/placestream"
@@ -202,7 +203,7 @@ func (mm *MediaManager) runRTMPPushPipeline(ctx context.Context, source io.Reade
 		return fmt.Errorf("failed to get appsrc element from pipeline")
 	}
 	muxlSrc.(app.AppSrc).SetCallbacks(&app.AppSrcCallbacks{
-		NeedData: ReaderNeedDataIncremental(ctx, source),
+		NeedData: gstpipeline.ReaderNeedDataIncremental(ctx, source),
 	})
 
 	videoQueue := pipeline.GetByName("videoqueue")
@@ -239,7 +240,7 @@ func (mm *MediaManager) runRTMPPushPipeline(ctx context.Context, source io.Reade
 
 	errCh := make(chan error)
 	go func() {
-		err := HandleBusMessages(ctx, pipeline)
+		err := gstpipeline.HandleBusMessages(ctx, pipeline)
 		log.Log(ctx, "RTMP push pipeline error", "error", err)
 		errCh <- err
 	}()

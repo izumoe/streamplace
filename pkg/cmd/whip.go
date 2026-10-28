@@ -15,8 +15,8 @@ import (
 	"golang.org/x/sync/errgroup"
 	"stream.place/streamplace/pkg/crypto/spkey"
 	"stream.place/streamplace/pkg/gstinit"
+	"stream.place/streamplace/pkg/gstpipeline"
 	"stream.place/streamplace/pkg/log"
-	"stream.place/streamplace/pkg/media"
 )
 
 func WHIP(ctx context.Context, streamKey string, count int, viewers int, duration time.Duration, file string, endpoint string, freezeAfter time.Duration, retry time.Duration) error {
@@ -293,7 +293,7 @@ func (w *WHIPClient) WHIP(ctx context.Context) (retErr error) {
 	}
 
 	go func() {
-		if err := media.HandleBusMessages(ctx, pipeline); err != nil {
+		if err := gstpipeline.HandleBusMessages(ctx, pipeline); err != nil {
 			log.Log(ctx, "pipeline error", "error", err)
 		}
 		cancel()

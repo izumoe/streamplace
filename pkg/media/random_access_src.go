@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-gst/go-gst/pkg/gst"
 	app "github.com/go-gst/go-gst/pkg/gstapp"
+	"stream.place/streamplace/pkg/gstpipeline"
 	"stream.place/streamplace/pkg/log"
 )
 
@@ -141,7 +142,7 @@ func RandomAccessSrcBin(ctx context.Context, name string, src io.ReaderAt, size 
 			trace(pos, n)
 			read, err := src.ReadAt(buf, pos)
 			if read > 0 {
-				gbuf, copyErr := newBufferFromBytes(buf[:read])
+				gbuf, copyErr := gstpipeline.NewBufferFromBytes(buf[:read])
 				if copyErr != nil {
 					self.PostMessage(gst.NewMessageError(self, "copy input", copyErr))
 					eos = true

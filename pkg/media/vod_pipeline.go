@@ -16,6 +16,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
+	"stream.place/streamplace/pkg/gstpipeline"
 	"stream.place/streamplace/pkg/log"
 )
 
@@ -251,7 +252,7 @@ func RunVODPipeline(ctx context.Context, src io.ReaderAt, size int64, out io.Wri
 	}
 
 	appsink.(app.AppSink).SetCallbacks(&app.AppSinkCallbacks{
-		NewSample: WriterNewSample(ctx, prog),
+		NewSample: gstpipeline.WriterNewSample(ctx, prog),
 	})
 
 	// padErr captures the first wiring error from pad-added so we can
@@ -344,7 +345,7 @@ func RunVODPipeline(ctx context.Context, src io.ReaderAt, size int64, out io.Wri
 	defer parsebin.HandlerDisconnect(handlerID)
 
 	busErr := make(chan error, 1)
-	go func() { busErr <- HandleBusMessages(ctx, pipeline) }()
+	go func() { busErr <- gstpipeline.HandleBusMessages(ctx, pipeline) }()
 
 	if pipeline.SetState(gst.StatePlaying) == gst.StateChangeFailure {
 		err := fmt.Errorf("set playing: state change failed")

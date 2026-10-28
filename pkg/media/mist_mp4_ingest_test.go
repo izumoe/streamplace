@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"stream.place/streamplace/pkg/crypto/signers"
 	"stream.place/streamplace/pkg/gstinit"
+	"stream.place/streamplace/pkg/gstpipeline"
 	"stream.place/streamplace/pkg/ingestframe"
 	"stream.place/streamplace/pkg/muxl"
 	"stream.place/streamplace/test/remote"
@@ -95,11 +96,11 @@ func runSynthPipeline(t *testing.T, ctx context.Context, desc string) []byte {
 	require.NotNil(t, sinkEle)
 	var buf bytes.Buffer
 	sinkEle.(app.AppSink).SetCallbacks(&app.AppSinkCallbacks{
-		NewSample: WriterNewSample(ctx, &buf),
+		NewSample: gstpipeline.WriterNewSample(ctx, &buf),
 	})
 
 	busErr := make(chan error, 1)
-	go func() { busErr <- HandleBusMessages(ctx, pipeline) }()
+	go func() { busErr <- gstpipeline.HandleBusMessages(ctx, pipeline) }()
 	require.NotEqual(t, gst.StateChangeFailure, pipeline.SetState(gst.StatePlaying))
 	defer func() { pipeline.SetState(gst.StateNull) }()
 	require.NoError(t, <-busErr, "synthesize test stream")
@@ -170,7 +171,7 @@ func videoPTSDTSOffsets(t *testing.T, ctx context.Context, segment []byte) []tim
 	srcEle := pipeline.GetByName("src")
 	require.NotNil(t, srcEle)
 	srcEle.(app.AppSrc).SetCallbacks(&app.AppSrcCallbacks{
-		NeedData: ReaderNeedDataIncremental(ctx, bytes.NewReader(flat.Bytes())),
+		NeedData: gstpipeline.ReaderNeedDataIncremental(ctx, bytes.NewReader(flat.Bytes())),
 	})
 
 	sinkEle := pipeline.GetByName("sink")
@@ -192,7 +193,7 @@ func videoPTSDTSOffsets(t *testing.T, ctx context.Context, segment []byte) []tim
 	})
 
 	busErr := make(chan error, 1)
-	go func() { busErr <- HandleBusMessages(ctx, pipeline) }()
+	go func() { busErr <- gstpipeline.HandleBusMessages(ctx, pipeline) }()
 	require.NotEqual(t, gst.StateChangeFailure, pipeline.SetState(gst.StatePlaying))
 	defer func() { pipeline.SetState(gst.StateNull) }()
 	require.NoError(t, <-busErr, "demux flat-wrapped segment")

@@ -11,6 +11,7 @@ import (
 	"github.com/bluenviron/gortmplib"
 	"github.com/go-gst/go-gst/pkg/gst"
 	"stream.place/streamplace/pkg/config"
+	"stream.place/streamplace/pkg/gstpipeline"
 	"stream.place/streamplace/pkg/log"
 	"stream.place/streamplace/pkg/muxl"
 )
@@ -141,7 +142,7 @@ func newRTMPIngestPipeline(rtmpURL string, signer gst.Element) (gst.Pipeline, er
 func runRTMPIngestPipeline(ctx context.Context, pipeline gst.Pipeline) error {
 	busErr := make(chan error, 1)
 	go func() {
-		busErr <- HandleBusMessages(ctx, pipeline)
+		busErr <- gstpipeline.HandleBusMessages(ctx, pipeline)
 	}()
 
 	if ret := pipeline.SetState(gst.StatePlaying); ret == gst.StateChangeFailure {

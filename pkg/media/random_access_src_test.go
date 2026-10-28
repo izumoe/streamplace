@@ -11,6 +11,7 @@ import (
 	"github.com/go-gst/go-gst/pkg/gst"
 	app "github.com/go-gst/go-gst/pkg/gstapp"
 	"github.com/stretchr/testify/require"
+	"stream.place/streamplace/pkg/gstpipeline"
 	"stream.place/streamplace/pkg/log"
 )
 
@@ -49,11 +50,11 @@ func TestRandomAccessSrcBin_Passthrough(t *testing.T) {
 		out := &bytes.Buffer{}
 		sink := sinkEle.(app.AppSink)
 		sink.SetCallbacks(&app.AppSinkCallbacks{
-			NewSample: WriterNewSample(ctx, out),
+			NewSample: gstpipeline.WriterNewSample(ctx, out),
 		})
 
 		errCh := make(chan error, 1)
-		go func() { errCh <- HandleBusMessages(ctx, pipeline) }()
+		go func() { errCh <- gstpipeline.HandleBusMessages(ctx, pipeline) }()
 
 		require.NotEqual(t, gst.StateChangeFailure, pipeline.SetState(gst.StatePlaying))
 		require.NoError(t, <-errCh)
@@ -102,11 +103,11 @@ func TestRandomAccessSrcBin_Seek(t *testing.T) {
 			out := &bytes.Buffer{}
 			sink := sinkEle.(app.AppSink)
 			sink.SetCallbacks(&app.AppSinkCallbacks{
-				NewSample: WriterNewSample(ctx, out),
+				NewSample: gstpipeline.WriterNewSample(ctx, out),
 			})
 
 			errCh := make(chan error, 1)
-			go func() { errCh <- HandleBusMessages(ctx, pipeline) }()
+			go func() { errCh <- gstpipeline.HandleBusMessages(ctx, pipeline) }()
 			require.NotEqual(t, gst.StateChangeFailure, pipeline.SetState(gst.StatePaused))
 
 			// Issue a byte-format seek into the desired range.

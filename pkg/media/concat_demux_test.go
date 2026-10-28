@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sync/errgroup"
 	"stream.place/streamplace/pkg/bus"
+	"stream.place/streamplace/pkg/gstpipeline"
 	"stream.place/streamplace/pkg/log"
 )
 
@@ -40,7 +41,7 @@ func innerTestConcatDemuxBin(t *testing.T) error {
 
 	errCh := make(chan error)
 	go func() {
-		err := HandleBusMessages(ctx, pipeline)
+		err := gstpipeline.HandleBusMessages(ctx, pipeline)
 		errCh <- err
 	}()
 
@@ -129,12 +130,12 @@ func innerTestConcatDemuxBin(t *testing.T) error {
 
 	videoappsink := videoAppSink.(app.AppSink)
 	videoappsink.SetCallbacks(&app.AppSinkCallbacks{
-		NewSample: WriterNewSample(ctx, &videoBuf),
+		NewSample: gstpipeline.WriterNewSample(ctx, &videoBuf),
 	})
 
 	audioappsink := audioAppSink.(app.AppSink)
 	audioappsink.SetCallbacks(&app.AppSinkCallbacks{
-		NewSample: WriterNewSample(ctx, &audioBuf),
+		NewSample: gstpipeline.WriterNewSample(ctx, &audioBuf),
 	})
 
 	// Start the pipeline

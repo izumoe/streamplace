@@ -9,6 +9,7 @@ import (
 	"github.com/go-gst/go-gst/pkg/gst"
 	app "github.com/go-gst/go-gst/pkg/gstapp"
 	"golang.org/x/sync/errgroup"
+	"stream.place/streamplace/pkg/gstpipeline"
 	"stream.place/streamplace/pkg/log"
 )
 
@@ -106,7 +107,7 @@ func MP4ToMPEGTSVideoMP4Audio(ctx context.Context, input io.Reader, videoOutput 
 
 	// Set up source callbacks
 	appsrc.(app.AppSrc).SetCallbacks(&app.AppSrcCallbacks{
-		NeedData: ReaderNeedDataIncremental(ctx, input),
+		NeedData: gstpipeline.ReaderNeedDataIncremental(ctx, input),
 		EnoughData: func(self app.AppSrc) {
 			// Nothing to do here
 		},
@@ -117,7 +118,7 @@ func MP4ToMPEGTSVideoMP4Audio(ctx context.Context, input io.Reader, videoOutput 
 
 	// Set up sink callbacks
 	videoappsink.(app.AppSink).SetCallbacks(&app.AppSinkCallbacks{
-		NewSample: WriterNewSample(ctx, videoOutput),
+		NewSample: gstpipeline.WriterNewSample(ctx, videoOutput),
 		NewPreroll: func(self app.AppSink) gst.FlowReturn {
 			return gst.FlowOK
 		},
@@ -125,7 +126,7 @@ func MP4ToMPEGTSVideoMP4Audio(ctx context.Context, input io.Reader, videoOutput 
 
 	// Set up sink callbacks
 	audioappsink.(app.AppSink).SetCallbacks(&app.AppSinkCallbacks{
-		NewSample: WriterNewSample(ctx, audioOutput),
+		NewSample: gstpipeline.WriterNewSample(ctx, audioOutput),
 		NewPreroll: func(self app.AppSink) gst.FlowReturn {
 			return gst.FlowOK
 		},
@@ -137,7 +138,7 @@ func MP4ToMPEGTSVideoMP4Audio(ctx context.Context, input io.Reader, videoOutput 
 	// Handle bus messages in a separate goroutine
 	g, ctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
-		err = HandleBusMessages(ctx, pipeline)
+		err = gstpipeline.HandleBusMessages(ctx, pipeline)
 		cancel()
 		return err
 	})
@@ -246,7 +247,7 @@ func MPEGTSVideoMP4AudioToMP4(ctx context.Context, videoInput io.Reader, audioIn
 
 	// Set up source callbacks
 	videoappsrc.(app.AppSrc).SetCallbacks(&app.AppSrcCallbacks{
-		NeedData: ReaderNeedDataIncremental(ctx, videoInput),
+		NeedData: gstpipeline.ReaderNeedDataIncremental(ctx, videoInput),
 		EnoughData: func(self app.AppSrc) {
 			// Nothing to do here
 		},
@@ -256,7 +257,7 @@ func MPEGTSVideoMP4AudioToMP4(ctx context.Context, videoInput io.Reader, audioIn
 	})
 
 	audioappsrc.(app.AppSrc).SetCallbacks(&app.AppSrcCallbacks{
-		NeedData: ReaderNeedDataIncremental(ctx, audioInput),
+		NeedData: gstpipeline.ReaderNeedDataIncremental(ctx, audioInput),
 		EnoughData: func(self app.AppSrc) {
 			// Nothing to do here
 		},
@@ -316,7 +317,7 @@ func MPEGTSVideoMP4AudioToMP4(ctx context.Context, videoInput io.Reader, audioIn
 
 	errCh := make(chan error)
 	go func() {
-		err = HandleBusMessages(ctx, pipeline)
+		err = gstpipeline.HandleBusMessages(ctx, pipeline)
 		cancel()
 		errCh <- err
 	}()

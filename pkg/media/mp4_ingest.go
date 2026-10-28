@@ -14,6 +14,7 @@ import (
 	app "github.com/go-gst/go-gst/pkg/gstapp"
 	"stream.place/streamplace/pkg/aqtime"
 	"stream.place/streamplace/pkg/constants"
+	"stream.place/streamplace/pkg/gstpipeline"
 	"stream.place/streamplace/pkg/log"
 )
 
@@ -46,7 +47,7 @@ func (mm *MediaManager) MP4Ingest(ctx context.Context, input io.Reader, ms Media
 
 	busErr := make(chan error)
 	go func() {
-		busErr <- HandleBusMessages(ctx, pipeline)
+		busErr <- gstpipeline.HandleBusMessages(ctx, pipeline)
 	}()
 
 	go mm.HandleKeyRevocation(ctx, ms, pipeline)
@@ -138,7 +139,7 @@ func buildMP4IngestPipeline(ctx context.Context, input io.Reader, signerElem gst
 		return nil, fmt.Errorf("streamsrc element not found")
 	}
 	srcele.(app.AppSrc).SetCallbacks(&app.AppSrcCallbacks{
-		NeedData: ReaderNeedDataIncremental(ctx, input),
+		NeedData: gstpipeline.ReaderNeedDataIncremental(ctx, input),
 	})
 	parseEle := pipeline.GetByName("videoout")
 	if parseEle == nil {

@@ -11,6 +11,7 @@ import (
 	"github.com/go-gst/go-gst/pkg/gst"
 	"stream.place/streamplace/pkg/config"
 	"stream.place/streamplace/pkg/gstinit"
+	"stream.place/streamplace/pkg/gstpipeline"
 	"stream.place/streamplace/pkg/log"
 	"stream.place/streamplace/pkg/muxl"
 	"stream.place/streamplace/pkg/s3"
@@ -270,7 +271,7 @@ func RunMP4IngestWorker(ctx context.Context, cfg IngestWorkerConfig, stdin io.Re
 
 	busErr := make(chan error, 1)
 	go func() {
-		busErr <- HandleBusMessages(ctx, pipeline)
+		busErr <- gstpipeline.HandleBusMessages(ctx, pipeline)
 	}()
 
 	if pipeline.SetState(gst.StatePlaying) == gst.StateChangeFailure {

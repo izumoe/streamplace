@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v4"
+	"stream.place/streamplace/pkg/gstpipeline"
 	"stream.place/streamplace/pkg/log"
 	"stream.place/streamplace/pkg/rtcrec"
 )
@@ -141,7 +142,7 @@ func (mm *MediaManager) webRTCIngestPipeline(ctx context.Context, cancel context
 	go func() {
 		busErrorChan := make(chan error)
 		go func() {
-			err := HandleBusMessages(ctx, pipeline)
+			err := gstpipeline.HandleBusMessages(ctx, pipeline)
 			if err != nil {
 				log.Log(ctx, "pipeline error", "error", err)
 			}
@@ -250,7 +251,7 @@ func (mm *MediaManager) webRTCIngestPipeline(ctx context.Context, cancel context
 						log.Debug(ctx, "got video data", "len", len(buf[:i]))
 					}
 
-					gbuf, bufErr := newBufferFromBytes(buf[:i])
+					gbuf, bufErr := gstpipeline.NewBufferFromBytes(buf[:i])
 					if bufErr != nil {
 						log.Log(ctx, "failed to build buffer", "error", bufErr)
 						cancel()
@@ -292,7 +293,7 @@ func (mm *MediaManager) webRTCIngestPipeline(ctx context.Context, cancel context
 						log.Debug(ctx, "got audio data", "len", len(buf[:i]))
 					}
 
-					gbuf, bufErr := newBufferFromBytes(buf[:i])
+					gbuf, bufErr := gstpipeline.NewBufferFromBytes(buf[:i])
 					if bufErr != nil {
 						log.Log(ctx, "failed to build buffer", "error", bufErr)
 						cancel()

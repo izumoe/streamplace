@@ -13,6 +13,7 @@ import (
 	app "github.com/go-gst/go-gst/pkg/gstapp"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sync/errgroup"
+	"stream.place/streamplace/pkg/gstpipeline"
 	"stream.place/streamplace/pkg/log"
 )
 
@@ -84,7 +85,7 @@ func writerNewSampleInner(ctx context.Context, i int, w io.Writer) error {
 
 	var busErr error
 	go func() {
-		busErr = HandleBusMessages(ctx, pipeline)
+		busErr = gstpipeline.HandleBusMessages(ctx, pipeline)
 		cancel()
 	}()
 
@@ -101,7 +102,7 @@ func writerNewSampleInner(ctx context.Context, i int, w io.Writer) error {
 
 	sink := appSink.(app.AppSink)
 	sink.SetCallbacks(&app.AppSinkCallbacks{
-		NewSample: WriterNewSample(ctx, w),
+		NewSample: gstpipeline.WriterNewSample(ctx, w),
 	})
 
 	if !fileSrc.Link(appSink) {

@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sync/errgroup"
 	"stream.place/streamplace/pkg/gstinit"
+	"stream.place/streamplace/pkg/gstpipeline"
 	"stream.place/streamplace/pkg/log"
 )
 
@@ -64,7 +65,7 @@ func testBusHandlerCleanupInner(ctx context.Context, i int) error {
 
 	busDone := make(chan struct{})
 	go func() {
-		_ = HandleBusMessages(ctx, pipeline)
+		_ = gstpipeline.HandleBusMessages(ctx, pipeline)
 		busDone <- struct{}{}
 		cancel()
 	}()
@@ -110,7 +111,7 @@ func testBusHandlerCleanupInner(ctx context.Context, i int) error {
 
 	sink := appSink.(app.AppSink)
 	sink.SetCallbacks(&app.AppSinkCallbacks{
-		NewSample: WriterNewSample(ctx, nil),
+		NewSample: gstpipeline.WriterNewSample(ctx, nil),
 	})
 
 	return fmt.Errorf("test error")
@@ -157,7 +158,7 @@ func TestBusHandlerTagMessages(t *testing.T) {
 				}
 				require.True(t, bus.Post(eosMessage.Copy()))
 				seen := make([]gst.MessageType, 0, tagCount+1)
-				err := HandleBusMessagesCustom(ctx, pipeline, func(msg *gst.Message) {
+				err := gstpipeline.HandleBusMessagesCustom(ctx, pipeline, func(msg *gst.Message) {
 					seen = append(seen, msg.Type())
 				})
 				require.NoError(t, err)
@@ -204,7 +205,7 @@ func BenchmarkBusMessageHandling(b *testing.B) {
 		if !bus.Post(eosMessage.Copy()) {
 			b.Fatal("failed to post EOS message")
 		}
-		if err := HandleBusMessages(context.Background(), pipeline); err != nil {
+		if err := gstpipeline.HandleBusMessages(context.Background(), pipeline); err != nil {
 			b.Fatal(err)
 		}
 	}

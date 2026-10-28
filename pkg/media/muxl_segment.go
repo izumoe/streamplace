@@ -10,6 +10,7 @@ import (
 	"github.com/go-gst/go-gst/pkg/gst"
 	app "github.com/go-gst/go-gst/pkg/gstapp"
 	"stream.place/streamplace/pkg/config"
+	"stream.place/streamplace/pkg/gstpipeline"
 	"stream.place/streamplace/pkg/log"
 	"stream.place/streamplace/pkg/muxl"
 )
@@ -141,7 +142,7 @@ func muxlSignSegmentElem(ctx context.Context, cli *config.CLI, signStream SignSe
 	}()
 
 	appsink.(app.AppSink).SetCallbacks(&app.AppSinkCallbacks{
-		NewSample: WriterNewSample(ctx, w),
+		NewSample: gstpipeline.WriterNewSample(ctx, w),
 	})
 
 	return bin, done, nil

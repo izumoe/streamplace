@@ -13,6 +13,7 @@ import (
 	"stream.place/streamplace/pkg/bus"
 	"stream.place/streamplace/pkg/config"
 	"stream.place/streamplace/pkg/constants"
+	"stream.place/streamplace/pkg/gstpipeline"
 	"stream.place/streamplace/pkg/log"
 	"stream.place/streamplace/pkg/muxl"
 )
@@ -240,7 +241,7 @@ func Packetize(ctx context.Context, cli *config.CLI, seg *bus.Seg) (*bus.Packeti
 
 	busErr := make(chan error)
 	go func() {
-		err := HandleBusMessages(ctx, pipeline)
+		err := gstpipeline.HandleBusMessages(ctx, pipeline)
 		if err != nil {
 			log.Log(ctx, "pipeline error", "error", err)
 		}

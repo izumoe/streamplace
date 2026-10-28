@@ -17,6 +17,7 @@ import (
 	"github.com/skip2/go-qrcode"
 	"golang.org/x/sync/errgroup"
 	"stream.place/streamplace/pkg/aqtime"
+	"stream.place/streamplace/pkg/gstpipeline"
 	"stream.place/streamplace/pkg/log"
 	"stream.place/streamplace/test"
 )
@@ -33,18 +34,6 @@ func SafePipe() (*os.File, *os.File, func(), error) {
 		runtime.KeepAlive(r.Fd())
 		runtime.KeepAlive(w.Fd())
 	}, nil
-}
-
-// newBufferFromBytes copies bs into a freshly allocated buffer.
-func newBufferFromBytes(bs []byte) (*gst.Buffer, error) {
-	buffer := gst.NewBufferAllocate(nil, uint(len(bs)), nil)
-	info, ok := buffer.Map(gst.MapWrite)
-	if !ok {
-		return nil, fmt.Errorf("failed to map buffer for writing")
-	}
-	defer info.Unmap()
-	copy(info.Data(), bs)
-	return buffer, nil
 }
 
 // copyBufferData returns a copy of the buffer's contents that stays valid
@@ -111,7 +100,7 @@ func SelfTest(ctx context.Context) error {
 
 	srcele.(app.AppSrc).SetCallbacks(&app.AppSrcCallbacks{
 		NeedData: func(self app.AppSrc, _ uint) {
-			buffer, err := newBufferFromBytes(bs)
+			buffer, err := gstpipeline.NewBufferFromBytes(bs)
 			if err != nil {
 				log.Error(ctx, "failed to build buffer", "error", err)
 				cancel()
@@ -126,7 +115,7 @@ func SelfTest(ctx context.Context) error {
 	output := &bytes.Buffer{}
 
 	sinkele.(app.AppSink).SetCallbacks(&app.AppSinkCallbacks{
-		NewSample: WriterNewSample(ctx, output),
+		NewSample: gstpipeline.WriterNewSample(ctx, output),
 		EOS: func(sink app.AppSink) {
 			log.Debug(ctx, "EOSFunc")
 			cancel()
@@ -134,7 +123,7 @@ func SelfTest(ctx context.Context) error {
 	})
 
 	go func() {
-		if err := HandleBusMessages(ctx, pipeline); err != nil {
+		if err := gstpipeline.HandleBusMessages(ctx, pipeline); err != nil {
 			log.Debug(ctx, "handle bus messages failed", "error", err)
 		}
 		cancel()
@@ -231,7 +220,7 @@ func (mm *MediaManager) TestSource(ctx context.Context, ms MediaSigner) error {
 			if err != nil {
 				panic(err)
 			}
-			buffer, err := newBufferFromBytes(png)
+			buffer, err := gstpipeline.NewBufferFromBytes(png)
 			if err != nil {
 				panic(err)
 			}
@@ -254,7 +243,7 @@ func (mm *MediaManager) TestSource(ctx context.Context, ms MediaSigner) error {
 			if err != nil {
 				panic(err)
 			}
-			buffer, err := newBufferFromBytes(png)
+			buffer, err := gstpipeline.NewBufferFromBytes(png)
 			if err != nil {
 				panic(err)
 			}
@@ -272,7 +261,7 @@ func (mm *MediaManager) TestSource(ctx context.Context, ms MediaSigner) error {
 	}()
 
 	go func() {
-		if err := HandleBusMessages(ctx, pipeline); err != nil {
+		if err := gstpipeline.HandleBusMessages(ctx, pipeline); err != nil {
 			log.Log(ctx, "pipeline error", "error", err)
 		}
 		cancel()

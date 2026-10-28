@@ -31,6 +31,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"stream.place/streamplace/pkg/config"
 	"stream.place/streamplace/pkg/crypto/signers"
+	"stream.place/streamplace/pkg/gstpipeline"
 	"stream.place/streamplace/pkg/ingestframe"
 	"stream.place/streamplace/pkg/media"
 	"stream.place/streamplace/pkg/model"
@@ -160,13 +161,13 @@ func TestCreateReportRouting(t *testing.T) {
 				}()
 				source := pipeline.GetByName("source")
 				require.NotNil(t, source)
-				source.(app.AppSrc).SetCallbacks(&app.AppSrcCallbacks{NeedData: media.ReaderNeedDataIncremental(ctx, bytes.NewReader(fixture))})
+				source.(app.AppSrc).SetCallbacks(&app.AppSrcCallbacks{NeedData: gstpipeline.ReaderNeedDataIncremental(ctx, bytes.NewReader(fixture))})
 				sink := pipeline.GetByName("sink")
 				require.NotNil(t, sink)
 				var mp4 bytes.Buffer
-				sink.(app.AppSink).SetCallbacks(&app.AppSinkCallbacks{NewSample: media.WriterNewSample(ctx, &mp4)})
+				sink.(app.AppSink).SetCallbacks(&app.AppSinkCallbacks{NewSample: gstpipeline.WriterNewSample(ctx, &mp4)})
 				busErr := make(chan error, 1)
-				go func() { busErr <- media.HandleBusMessages(ctx, pipeline) }()
+				go func() { busErr <- gstpipeline.HandleBusMessages(ctx, pipeline) }()
 				require.NotEqual(t, gst.StateChangeFailure, pipeline.SetState(gst.StatePlaying))
 				require.NoError(t, <-busErr)
 				var frames bytes.Buffer

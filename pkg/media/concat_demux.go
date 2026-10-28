@@ -11,6 +11,7 @@ import (
 	app "github.com/go-gst/go-gst/pkg/gstapp"
 	"stream.place/streamplace/pkg/bus"
 	"stream.place/streamplace/pkg/constants"
+	"stream.place/streamplace/pkg/gstpipeline"
 	"stream.place/streamplace/pkg/log"
 )
 
@@ -245,7 +246,7 @@ func ConcatDemuxBin(ctx context.Context, seg *bus.Seg, doH264Parse bool) (gst.Bi
 
 	src := appSrc.(app.AppSrc)
 	src.SetCallbacks(&app.AppSrcCallbacks{
-		NeedData: ReaderNeedDataIncremental(ctx, bytes.NewReader(seg.Data)),
+		NeedData: gstpipeline.ReaderNeedDataIncremental(ctx, bytes.NewReader(seg.Data)),
 	})
 
 	return bin, nil

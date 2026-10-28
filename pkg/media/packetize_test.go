@@ -20,6 +20,7 @@ import (
 	"stream.place/streamplace/pkg/bus"
 	"stream.place/streamplace/pkg/config"
 	"stream.place/streamplace/pkg/gstinit"
+	"stream.place/streamplace/pkg/gstpipeline"
 	"stream.place/streamplace/pkg/muxl"
 	"stream.place/streamplace/test/remote"
 )
@@ -324,7 +325,7 @@ func makeTrailingCaptionSEIFlatMP4(t *testing.T, ctx context.Context, frames, se
 		},
 	})
 	busErr := make(chan error, 1)
-	go func() { busErr <- HandleBusMessages(ctx, encPipeline) }()
+	go func() { busErr <- gstpipeline.HandleBusMessages(ctx, encPipeline) }()
 	require.NotEqual(t, gst.StateChangeFailure, encPipeline.SetState(gst.StatePlaying))
 	require.NoError(t, <-busErr)
 	require.NotEqual(t, gst.StateChangeFailure, encPipeline.SetState(gst.StateNull))
@@ -391,10 +392,10 @@ func makeTrailingCaptionSEIFlatMP4(t *testing.T, ctx context.Context, frames, se
 	require.NotNil(t, outSinkEle)
 	var out bytes.Buffer
 	outSinkEle.(app.AppSink).SetCallbacks(&app.AppSinkCallbacks{
-		NewSample: WriterNewSample(ctx, &out),
+		NewSample: gstpipeline.WriterNewSample(ctx, &out),
 	})
 	busErr2 := make(chan error, 1)
-	go func() { busErr2 <- HandleBusMessages(ctx, muxPipeline) }()
+	go func() { busErr2 <- gstpipeline.HandleBusMessages(ctx, muxPipeline) }()
 	require.NotEqual(t, gst.StateChangeFailure, muxPipeline.SetState(gst.StatePlaying))
 	require.NoError(t, <-busErr2)
 	require.NotEqual(t, gst.StateChangeFailure, muxPipeline.SetState(gst.StateNull))

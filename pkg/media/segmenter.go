@@ -15,6 +15,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"stream.place/streamplace/pkg/config"
+	"stream.place/streamplace/pkg/gstpipeline"
 	"stream.place/streamplace/pkg/log"
 	"stream.place/streamplace/pkg/spmetrics"
 )
@@ -93,7 +94,7 @@ func SegmentElem(ctx context.Context, cli *config.CLI, streamer string, doH264Pa
 		}
 
 		appsink.SetCallbacks(&app.AppSinkCallbacks{
-			NewSample: WriterNewSample(ctx, buf),
+			NewSample: gstpipeline.WriterNewSample(ctx, buf),
 			EOS: func(sink app.AppSink) {
 				// ctx, span := otel.Tracer("signer").Start(ctx, "SegmentAndSignElem", trace.WithAttributes(
 				// 	attribute.String("streamer", ms.Streamer()),
@@ -221,7 +222,7 @@ func SegmentUnsigned(ctx context.Context, cli *config.CLI, streamer string, inpu
 		return fmt.Errorf("appsrc element not found")
 	}
 	srcele.(app.AppSrc).SetCallbacks(&app.AppSrcCallbacks{
-		NeedData: ReaderNeedDataIncremental(ctx, input),
+		NeedData: gstpipeline.ReaderNeedDataIncremental(ctx, input),
 	})
 	videoParseEle := pipeline.GetByName("videoparse")
 	if videoParseEle == nil {
@@ -255,7 +256,7 @@ func SegmentUnsigned(ctx context.Context, cli *config.CLI, streamer string, inpu
 
 	busErr := make(chan error)
 	go func() {
-		err := HandleBusMessages(ctx, pipeline)
+		err := gstpipeline.HandleBusMessages(ctx, pipeline)
 		cancel()
 		busErr <- err
 	}()

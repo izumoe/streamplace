@@ -1,4 +1,4 @@
-package media
+package gstpipeline
 
 import (
 	"context"
@@ -31,7 +31,7 @@ func ReaderNeedData(ctx context.Context, input io.Reader) func(self app.AppSrc, 
 			return
 		}
 		wrote = true
-		buffer, err := newBufferFromBytes(bsCopy)
+		buffer, err := NewBufferFromBytes(bsCopy)
 		if err != nil {
 			self.PostMessage(gst.NewMessageError(self, "error copying input", err))
 			return
@@ -68,7 +68,7 @@ func ReaderNeedDataIncremental(ctx context.Context, input io.Reader) func(self a
 			if uint(read) < length {
 				toPush = bs[:read]
 			}
-			buffer, err := newBufferFromBytes(toPush)
+			buffer, err := NewBufferFromBytes(toPush)
 			if err != nil {
 				self.PostMessage(gst.NewMessageError(self, "error copying input", err))
 				return

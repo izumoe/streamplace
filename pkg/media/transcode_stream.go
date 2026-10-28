@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-gst/go-gst/pkg/gst"
 	app "github.com/go-gst/go-gst/pkg/gstapp"
+	"stream.place/streamplace/pkg/gstpipeline"
 	"stream.place/streamplace/pkg/log"
 	"stream.place/streamplace/pkg/muxl"
 )
@@ -327,7 +328,7 @@ func (t *streamTranscoder) run(feedR *io.PipeReader) error {
 		return fmt.Errorf("stream transcode: src element not found")
 	}
 	srcEle.(app.AppSrc).SetCallbacks(&app.AppSrcCallbacks{
-		NeedData: ReaderNeedDataIncremental(ctx, feedR),
+		NeedData: gstpipeline.ReaderNeedDataIncremental(ctx, feedR),
 	})
 
 	// appsink output → io.Pipe → muxl streaming segmenter.
@@ -337,7 +338,7 @@ func (t *streamTranscoder) run(feedR *io.PipeReader) error {
 		return fmt.Errorf("stream transcode: sink element not found")
 	}
 	sink.(app.AppSink).SetCallbacks(&app.AppSinkCallbacks{
-		NewSample: WriterNewSample(ctx, muxW),
+		NewSample: gstpipeline.WriterNewSample(ctx, muxW),
 	})
 
 	eventCh := make(chan *muxl.MuxlEvent, 16)
@@ -349,7 +350,7 @@ func (t *streamTranscoder) run(feedR *io.PipeReader) error {
 
 	busErr := make(chan error, 1)
 	go func() {
-		err := HandleBusMessages(ctx, pipeline)
+		err := gstpipeline.HandleBusMessages(ctx, pipeline)
 		muxW.CloseWithError(err) // EOF/err to the muxl reader so it flushes + ends
 		busErr <- err
 	}()

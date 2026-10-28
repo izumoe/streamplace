@@ -12,6 +12,7 @@ import (
 	"github.com/go-gst/go-gst/pkg/gst"
 	app "github.com/go-gst/go-gst/pkg/gstapp"
 	"stream.place/streamplace/pkg/bus"
+	"stream.place/streamplace/pkg/gstpipeline"
 	"stream.place/streamplace/pkg/log"
 )
 
@@ -91,7 +92,7 @@ func thumbnailFromMP4(ctx context.Context, flat []byte, w io.Writer, format stri
 		return fmt.Errorf("thumbnail: get appsrc: element not found")
 	}
 	srcEle.(app.AppSrc).SetCallbacks(&app.AppSrcCallbacks{
-		NeedData: ReaderNeedDataIncremental(ctx, bytes.NewReader(flat)),
+		NeedData: gstpipeline.ReaderNeedDataIncremental(ctx, bytes.NewReader(flat)),
 	})
 
 	appsink := pipeline.GetByName("appsink")
@@ -100,7 +101,7 @@ func thumbnailFromMP4(ctx context.Context, flat []byte, w io.Writer, format stri
 	}
 
 	errCh := make(chan error, 1)
-	go func() { errCh <- HandleBusMessages(ctx, pipeline) }()
+	go func() { errCh <- gstpipeline.HandleBusMessages(ctx, pipeline) }()
 
 	thumbCh := make(chan struct{})
 	var once sync.Once
@@ -131,8 +132,8 @@ func thumbnailFromMP4(ctx context.Context, flat []byte, w io.Writer, format stri
 
 	select {
 	case <-thumbCh:
-		// Got the frame; wind the pipeline down so HandleBusMessages returns.
-		pipeline.PostMessage(gst.NewMessageError(pipeline, ErrPipelineDone.Error(), ErrPipelineDone))
+		// Got the frame; wind the pipeline down so gstpipeline.HandleBusMessages returns.
+		pipeline.PostMessage(gst.NewMessageError(pipeline, gstpipeline.ErrPipelineDone.Error(), gstpipeline.ErrPipelineDone))
 		<-errCh //nolint:errcheck // the pipeline was told to stop
 		return nil
 	case err := <-errCh:
@@ -240,7 +241,7 @@ func Thumbnail(ctx context.Context, r io.Reader, w io.Writer, format string) err
 
 	errCh := make(chan error)
 	go func() {
-		err := HandleBusMessages(ctx, pipeline)
+		err := gstpipeline.HandleBusMessages(ctx, pipeline)
 		errCh <- err
 		close(errCh)
 	}()
@@ -283,7 +284,7 @@ func Thumbnail(ctx context.Context, r io.Reader, w io.Writer, format string) err
 
 	<-thumbCh
 	// signals the pipeline to clean up cleanly
-	pipeline.PostMessage(gst.NewMessageError(pipeline, ErrPipelineDone.Error(), ErrPipelineDone))
+	pipeline.PostMessage(gst.NewMessageError(pipeline, gstpipeline.ErrPipelineDone.Error(), gstpipeline.ErrPipelineDone))
 
 	busErr := <-errCh
 
