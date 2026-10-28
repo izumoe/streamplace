@@ -12,7 +12,6 @@ import {
   Select,
   Text,
   Tooltip,
-  useBetaStatus,
   useTheme,
   View,
   zero,
@@ -30,7 +29,6 @@ import ActivityPicker from "components/activity-picker";
 import AQLink from "components/aqlink";
 import { EmptyState, EmptyStateTile } from "components/empty-state";
 import Loading from "components/loading/loading";
-import BetaAccessGate from "components/upload/beta-access-gate";
 import { Image } from "expo-image";
 import {
   AlertCircle,
@@ -110,8 +108,6 @@ const DEFAULT_METADATA: MetadataState = {
   license: "place.stream.metadata.contentRights#all-rights-reserved",
 };
 
-const BETA_FEATURE = "vod";
-
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 function humanBytes(n: number): string {
@@ -175,7 +171,7 @@ function inputStyle(theme: any) {
   };
 }
 
-// ── login / beta gate (shared by all upload routes) ──────────────────────────
+// ── login gate (shared by all upload routes) ─────────────────────────────────
 
 function useUploadGate() {
   const agent = usePDSAgent();
@@ -183,28 +179,12 @@ function useUploadGate() {
   const userProfile = useUserProfile();
   const openLoginModal = useStore((state) => state.openLoginModal);
   const route = useRoute();
-  const {
-    status: betaStatus,
-    loading: betaLoading,
-    markRequested,
-  } = useBetaStatus(BETA_FEATURE);
-
   if (!isReady) return { state: "loading" as const };
   if (!userProfile) {
     return {
       state: "login" as const,
       openLoginModal,
       route,
-    };
-  }
-  if (agent?.did && betaStatus === null && betaLoading) {
-    return { state: "loading" as const };
-  }
-  if (betaStatus === "none" || betaStatus === "requested") {
-    return {
-      state: "beta" as const,
-      betaStatus,
-      markRequested,
     };
   }
   return { state: "ok" as const, agent };
@@ -258,15 +238,6 @@ function UploadGate({ children }: { children: React.ReactNode }) {
           </Button>
         </View>
       </View>
-    );
-  }
-  if (gate.state === "beta") {
-    return (
-      <BetaAccessGate
-        feature={BETA_FEATURE}
-        status={gate.betaStatus}
-        onRequested={gate.markRequested}
-      />
     );
   }
   return <>{children}</>;

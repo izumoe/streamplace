@@ -12,39 +12,18 @@ import (
 // (keys are liveRecPrefix + <did>/ + <timestamp>.m4s).
 const liveRecPrefix = "live-rec/"
 
-// vodInviteFeature is the place.stream.beta.invite `feature` value that grants
-// VOD access. Mirrors spxrpc's vodInviteFeature (that const is unexported in
-// another package); the two must stay in sync.
-const vodInviteFeature = "vod"
-
 // shouldRecordLivestream reports whether this node should archive repoDID's
 // livestream into a VOD. Both conditions are required:
 //
-//   - The user is in the VOD beta — an indexed place.stream.beta.invite with
-//     feature=vod from the trusted issuer (--beta-invite-did). This mirrors the
-//     upload gate (spxrpc.betaFeatureGranted): when no issuer is configured
-//     (self-hosted / dev) we fall back to cli.StreamIsAllowed, the same
-//     allowlist livestreaming itself uses.
+//   - The operator permits this account to stream via cli.StreamIsAllowed.
 //   - The user has not turned recording off via the livestreamRecording server
-//     setting. This defaults ON for beta users (most want their streams kept) —
-//     the opposite of debugRecording — so only an explicit `false` opts out.
+//     setting. Only an explicit `false` opts out.
 //
 // Evaluated once at stream start (like debugRecording in media.shouldRecord); a
 // mid-stream settings change takes effect on the streamer's next session. On
 // any lookup error we fail closed (do not record).
 func (ss *StreamSession) shouldRecordLivestream(ctx context.Context, repoDID string) bool {
-	inBeta := false
-	if ss.cli.BetaInviteDID != "" {
-		has, err := ss.mod.HasBetaInvite(ctx, ss.cli.BetaInviteDID, repoDID, vodInviteFeature)
-		if err != nil {
-			log.Error(ctx, "live recording: failed to check VOD beta invite", "error", err, "repoDID", repoDID)
-			return false
-		}
-		inBeta = has
-	} else {
-		inBeta = ss.cli.StreamIsAllowed(repoDID) == nil
-	}
-	if !inBeta {
+	if ss.cli.StreamIsAllowed(repoDID) != nil {
 		return false
 	}
 
@@ -54,7 +33,7 @@ func (ss *StreamSession) shouldRecordLivestream(ctx context.Context, repoDID str
 		return false
 	}
 	if settings == nil {
-		// No settings record at all: default on for beta users.
+		// No settings record: recording defaults on for allowed accounts.
 		return true
 	}
 	spsettings, err := settings.ToStreamplaceServerSettings()
@@ -78,7 +57,7 @@ func (ss *StreamSession) maybeStartS3Upload(ctx context.Context, repoDID string)
 		// Info, not Debug: this fires once per stream session, and it's the
 		// answer to "why does this streamer have no recording?" — a question
 		// that once cost a production debugging session at Debug level.
-		log.Log(ctx, "live recording disabled for streamer (not in VOD beta, or recording turned off in settings)", "repoDID", repoDID)
+		log.Log(ctx, "live recording disabled for streamer (account not allowed, or recording turned off in settings)", "repoDID", repoDID)
 		return
 	}
 	cfg := ss.cli.S3Config()

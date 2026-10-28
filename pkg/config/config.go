@@ -189,7 +189,6 @@ type CLI struct {
 	GamesAPIURL                 string
 	GamesAPIClientKey           string
 	GamesAPIClientSecret        string
-	BetaInviteDID               string
 	ViewLogFlushInterval        time.Duration
 	ViewCountAggregateInterval  time.Duration
 	ViewCountAggregateLag       time.Duration
@@ -1263,12 +1262,6 @@ func (cli *CLI) NewCommand(name string) *urfavecli.Command {
 				Value:       5 * time.Minute,
 				Destination: &cli.LiveCDNTokenTTL,
 				Sources:     urfavecli.EnvVars("SP_LIVE_CDN_TOKEN_TTL"),
-			},
-			&urfavecli.StringFlag{
-				Name:        "beta-invite-did",
-				Usage:       "DID of the atproto account whose place.stream.beta.invite records this node trusts. When set, uploading VODs requires an invite from that account; when empty, falls back to the --allowed-streams allowlist used by livestreaming.",
-				Destination: &cli.BetaInviteDID,
-				Sources:     urfavecli.EnvVars("SP_BETA_INVITE_DID"),
 			},
 			&urfavecli.DurationFlag{
 				Name:        "view-log-flush-interval",

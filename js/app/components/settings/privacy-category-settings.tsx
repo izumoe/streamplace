@@ -1,10 +1,4 @@
-import {
-  MenuContainer,
-  MenuGroup,
-  useBetaStatus,
-  View,
-  zero,
-} from "@streamplace/components";
+import { MenuContainer, MenuGroup, View, zero } from "@streamplace/components";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ScrollView } from "react-native";
@@ -30,10 +24,6 @@ export function PrivacyCategorySettings() {
   const livestreamRecordingOn = serverSettings?.livestreamRecording !== false;
   // Opt-in: only an explicit `true` turns it on.
   const autoPublishVodsOn = serverSettings?.autoPublishVods === true;
-  // The livestream-recording and automatic VOD publishing toggles are only
-  // meaningful for accounts in the VOD beta — the node won't record anyone
-  // else regardless of these flags — so we only surface them to them.
-  const { status: vodBetaStatus } = useBetaStatus("vod");
 
   useEffect(() => {
     if (isReady) {
@@ -72,32 +62,28 @@ export function PrivacyCategorySettings() {
                   saveSetting({ debugRecording: value })
                 }
               />
-              {vodBetaStatus === "granted" && (
-                <>
-                  <SettingToggle
-                    title={t("livestream-recording-title", { host: u.host })}
-                    description={t("livestream-recording-description")}
-                    value={livestreamRecordingOn}
-                    disabled={saving}
-                    onValueChange={(value) =>
-                      saveSetting({ livestreamRecording: value })
-                    }
-                    testID="settings-livestream-recording"
-                  />
-                  <SettingToggle
-                    title={t("auto-publish-vods-title")}
-                    description={t("auto-publish-vods-description", {
-                      host: u.host,
-                    })}
-                    value={autoPublishVodsOn}
-                    disabled={saving}
-                    onValueChange={(value) =>
-                      saveSetting({ autoPublishVods: value })
-                    }
-                    testID="settings-auto-publish-vods"
-                  />
-                </>
-              )}
+              <SettingToggle
+                title={t("livestream-recording-title", { host: u.host })}
+                description={t("livestream-recording-description")}
+                value={livestreamRecordingOn}
+                disabled={saving}
+                onValueChange={(value) =>
+                  saveSetting({ livestreamRecording: value })
+                }
+                testID="settings-livestream-recording"
+              />
+              <SettingToggle
+                title={t("auto-publish-vods-title")}
+                description={t("auto-publish-vods-description", {
+                  host: u.host,
+                })}
+                value={autoPublishVodsOn}
+                disabled={saving}
+                onValueChange={(value) =>
+                  saveSetting({ autoPublishVods: value })
+                }
+                testID="settings-auto-publish-vods"
+              />
             </MenuGroup>
           </MenuContainer>
         </View>

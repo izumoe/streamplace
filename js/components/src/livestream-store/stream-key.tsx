@@ -49,18 +49,11 @@ export const useStreamKey = (): {
 
       let platform: string = getPlatform();
       if (
-        getPlatform() === "web" &&
+        platform === "web" &&
         typeof window !== "undefined" &&
         window.navigator
       ) {
-        if (window.navigator.userAgent.includes("streamplace-desktop")) {
-          platform = "Desktop";
-        } else {
-          platform = getBrowserName(window.navigator.userAgent);
-          if (platform !== "unknown") {
-            platform = platform;
-          }
-        }
+        platform = getBrowserName(window.navigator.userAgent);
       } else if (platform === "android") {
         platform = "Android";
       } else if (platform === "ios") {

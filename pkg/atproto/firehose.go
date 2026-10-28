@@ -745,20 +745,6 @@ func (atsync *ATProtoSynchronizer) handleIndexedOps(ctx context.Context, evt *in
 				}
 			}
 
-			if collection.String() == constants.PLACE_STREAM_BETA_INVITE {
-				log.Debug(ctx, "deleting beta invite", "uri", uri)
-				if err := atsync.Model.DeleteBetaInvite(ctx, uri); err != nil {
-					log.Error(ctx, "failed to delete beta invite", "err", err)
-				}
-			}
-
-			if collection.String() == constants.PLACE_STREAM_BETA_REQUEST {
-				log.Debug(ctx, "deleting beta request", "uri", uri)
-				if err := atsync.Model.DeleteBetaRequest(ctx, uri); err != nil {
-					log.Error(ctx, "failed to delete beta request", "err", err)
-				}
-			}
-
 			if collection.String() == constants.PLACE_STREAM_MEDIA_VIEW_COUNT {
 				log.Debug(ctx, "deleting media view count", "uri", uri)
 				if err := atsync.Model.DeleteMediaViewCount(ctx, uri); err != nil {

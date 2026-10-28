@@ -185,7 +185,7 @@ func TestAutoPublishVODSkips(t *testing.T) {
 	WithAllDatabases(t, func(state *StatefulDB) {
 		ctx := context.Background()
 
-		// No recording: the streamer was not recorded (not in the VOD beta,
+		// No recording: the streamer was not recorded (not allowed to stream,
 		// recording turned off, no S3 on this node).
 		did := "did:plc:unrecorded"
 		uri := endedLivestream(t, state, did)

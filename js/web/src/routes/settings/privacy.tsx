@@ -1,6 +1,5 @@
 import { Card, CardRow } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
-import { useBetaStatus } from "@/hooks/use-beta-status";
 import { useSession } from "@/lib/session";
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
@@ -31,11 +30,6 @@ function PrivacySettings() {
   const [error, setError] = useState<string | null>(null);
 
   const isAuthenticated = sessionState.status === "authenticated";
-
-  // The livestream-recording and automatic VOD publishing toggles are only
-  // meaningful for accounts in the VOD beta — the node won't record anyone
-  // else regardless of these flags — so we only surface them to them.
-  const { status: vodBetaStatus } = useBetaStatus("vod");
 
   useEffect(() => {
     if (isReady && isAuthenticated) getServerSettingsFromPDS();
@@ -103,7 +97,7 @@ function PrivacySettings() {
         </Card>
       )}
 
-      {vodBetaStatus === "granted" && (
+      {isAuthenticated && (
         <Card>
           <CardRow>
             <div className="flex items-center justify-between">

@@ -16,7 +16,6 @@ import {
   Text,
   Textarea,
   Tooltip,
-  useBetaStatus,
   useCreateStreamRecord,
   useEndLivestream,
   useLivestream,
@@ -294,7 +293,6 @@ function LivestreamPanel({ scrollable = true }: { scrollable?: boolean }) {
   const [endingLivestream, setEndingLivestream] = useState(false);
   const { t } = useTranslation("settings");
   const agent = useStore((state) => state.pdsAgent);
-  const { status: vodBetaStatus } = useBetaStatus("vod");
   const serverSettings = useServerSettings();
   const getServerSettingsFromPDS = useStore(
     (state) => state.getServerSettingsFromPDS,
@@ -307,10 +305,10 @@ function LivestreamPanel({ scrollable = true }: { scrollable?: boolean }) {
   const savingRef = useRef(false);
 
   useEffect(() => {
-    if (!agent || vodBetaStatus !== "granted") return;
+    if (!agent) return;
     setSettingsLoading(true);
     getServerSettingsFromPDS().finally(() => setSettingsLoading(false));
-  }, [agent, url, vodBetaStatus, getServerSettingsFromPDS]);
+  }, [agent, url, getServerSettingsFromPDS]);
 
   const setAutoPublishVods = async (autoPublishVods: boolean) => {
     if (!agent || settingsLoading || savingRef.current) return;
@@ -872,20 +870,18 @@ function LivestreamPanel({ scrollable = true }: { scrollable?: boolean }) {
                     label="End livestream automatically"
                   />
                 </Tooltip>
-                {vodBetaStatus === "granted" && (
-                  <Tooltip
-                    content={t("auto-publish-vods-stream-description")}
-                    position="top"
-                  >
-                    <Checkbox
-                      checked={serverSettings?.autoPublishVods === true}
-                      onCheckedChange={setAutoPublishVods}
-                      disabled={!agent || settingsLoading || saving}
-                      label={t("auto-publish-vods-stream-label")}
-                      testID="live-auto-publish-vods"
-                    />
-                  </Tooltip>
-                )}
+                <Tooltip
+                  content={t("auto-publish-vods-stream-description")}
+                  position="top"
+                >
+                  <Checkbox
+                    checked={serverSettings?.autoPublishVods === true}
+                    onCheckedChange={setAutoPublishVods}
+                    disabled={!agent || settingsLoading || saving}
+                    label={t("auto-publish-vods-stream-label")}
+                    testID="live-auto-publish-vods"
+                  />
+                </Tooltip>
               </View>
             </View>
 

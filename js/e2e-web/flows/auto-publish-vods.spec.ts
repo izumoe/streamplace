@@ -2,8 +2,8 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { loginThroughPds } from "./login";
 
 // Privacy settings persist to the account's real PDS record for this node.
-// The harness account has VOD beta access. Publishing itself is covered by
-// pkg/statedb and pkg/atproto; this checks saved consent and concurrent edits.
+// Publishing itself is covered by pkg/statedb and pkg/atproto; this checks
+// saved consent and concurrent edits.
 // Native form and settings: .maestro/logged-in/auto-publish-vods.yaml.
 const HTTPS_URL = process.env.SERVER_HTTPS_URL;
 
