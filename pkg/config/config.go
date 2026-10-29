@@ -595,6 +595,11 @@ func (cli *CLI) NewCommand(name string) *urfavecli.Command {
 				},
 				Sources: urfavecli.EnvVars("SP_REDIRECTS"),
 			},
+			&urfavecli.IntFlag{
+				Name:  "v",
+				Usage: "log verbosity level",
+				Value: 3,
+			},
 			&urfavecli.StringFlag{
 				Name:  "debug",
 				Usage: "modified log verbosity for specific functions or files in form func=ToHLS:3,file=gstreamer.go:4",

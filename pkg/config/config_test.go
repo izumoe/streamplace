@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"io"
 	"testing"
 	"time"
 
@@ -19,6 +20,28 @@ func flagRun(t *testing.T, args ...string) *CLI {
 	cmd.Action = func(context.Context, *urfavecli.Command) error { return nil }
 	require.NoError(t, cmd.Run(context.Background(), append([]string{"sync"}, args...)))
 	return cli
+}
+
+func TestVerbosityFlag(t *testing.T) {
+	for _, value := range []struct {
+		args []string
+		want int
+	}{{nil, 3}, {[]string{"-v", "0"}, 0}, {[]string{"-v", "4"}, 4}} {
+		command := (&CLI{}).NewCommand("streamplace")
+		command.Writer, command.ErrWriter = io.Discard, io.Discard
+		command.Action = func(_ context.Context, cmd *urfavecli.Command) error {
+			require.Equal(t, value.want, cmd.Int("v"))
+			return nil
+		}
+		require.NoError(t, command.Run(t.Context(), append([]string{"streamplace"}, value.args...)))
+	}
+	command := (&CLI{}).NewCommand("streamplace")
+	command.Writer, command.ErrWriter = io.Discard, io.Discard
+	command.Action = func(context.Context, *urfavecli.Command) error {
+		t.Fatal("invalid verbosity must not start the node")
+		return nil
+	}
+	require.Error(t, command.Run(t.Context(), []string{"streamplace", "-v", "invalid"}))
 }
 
 // TestSweepIntervalFlag: how often a node re-checks every repo it indexes is an

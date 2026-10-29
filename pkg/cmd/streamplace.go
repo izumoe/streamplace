@@ -95,12 +95,6 @@ func start(build *config.BuildFlags, platformJobs []jobFunc) error {
 		makeValidateConfigCommand(build),
 		makeE2eCommand(build),
 	}
-	// Add the verbosity flag
-	// app.Flags = append(app.Flags, &urfavecli.StringFlag{
-	// 	Name:  "v",
-	// 	Usage: "log verbosity level",
-	// 	Value: "3",
-	// })
 	app.Before = func(ctx context.Context, cmd *urfavecli.Command) (context.Context, error) {
 		// validate-config must run wherever the binary runs, media stack or
 		// not: diagnosing a crashloop with a broken gstreamer install is
@@ -155,8 +149,9 @@ func runMain(ctx context.Context, build *config.BuildFlags, platformJobs []jobFu
 	if err != nil {
 		return err
 	}
-	verbosity := cmd.String("v")
-	_ = vFlag.Value.Set(verbosity)
+	if err := vFlag.Value.Set(strconv.Itoa(cmd.Int("v"))); err != nil {
+		return fmt.Errorf("set log verbosity: %w", err)
+	}
 	log.SetColorLogger(cli.Color)
 	ctx = log.WithDebugValue(ctx, cli.Debug)
 
