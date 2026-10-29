@@ -1,0 +1,67 @@
+diff --git a/subprojects/gst-libav/ext/libav/gstavviddec.c b/subprojects/gst-libav/ext/libav/gstavviddec.c
+--- a/subprojects/gst-libav/ext/libav/gstavviddec.c
++++ b/subprojects/gst-libav/ext/libav/gstavviddec.c
+@@ -1413,14 +1413,12 @@
+ 
+ static void
+ gst_ffmpegviddec_update_par (GstFFMpegVidDec * ffmpegdec,
+-    GstVideoInfo * in_info, GstVideoInfo * out_info)
++    GstVideoInfo * in_info, GstVideoInfo * out_info, GstBufferFlags flags)
+ {
+   gboolean demuxer_par_set = FALSE;
+   gboolean decoder_par_set = FALSE;
+   gint demuxer_num = 1, demuxer_denom = 1;
+   gint decoder_num = 1, decoder_denom = 1;
+-  GstVideoCodecFrame *out_frame;
+-  GstFFMpegVidDecVideoFrame *out_dframe;
+ 
+   if (in_info->par_n && in_info->par_d) {
+     demuxer_num = in_info->par_n;
+@@ -1451,13 +1449,9 @@
+    * for HEVC interlaced content, possibly to work around decoders that don't
+    * support field-based interlacing. Add some defensive checks to check for
+    * a "common" aspect ratio. */
+-  out_dframe = ffmpegdec->picture->opaque;
+-  out_frame = out_dframe->frame;
+-
+   if (demuxer_num == 1 && demuxer_denom == 1 &&
+       decoder_num == 1 && decoder_denom == 2 &&
+-      GST_BUFFER_FLAG_IS_SET (out_frame->input_buffer,
+-          GST_VIDEO_BUFFER_FLAG_ONEFIELD) &&
++      (flags & GST_VIDEO_BUFFER_FLAG_ONEFIELD) &&
+       gst_video_is_common_aspect_ratio (ffmpegdec->pic_width,
+           ffmpegdec->pic_height, 1, 2) &&
+       !gst_video_is_common_aspect_ratio (ffmpegdec->pic_width,
+@@ -1736,7 +1730,7 @@
+   }
+ 
+   /* calculate and update par now */
+-  gst_ffmpegviddec_update_par (ffmpegdec, in_info, out_info);
++  gst_ffmpegviddec_update_par (ffmpegdec, in_info, out_info, flags);
+ 
+   GST_VIDEO_INFO_MULTIVIEW_MODE (out_info) = ffmpegdec->cur_multiview_mode;
+   GST_VIDEO_INFO_MULTIVIEW_FLAGS (out_info) = ffmpegdec->cur_multiview_flags;
+@@ -2147,6 +2141,11 @@
+ 
+   if (G_UNLIKELY (*ret != GST_FLOW_OK))
+     goto no_output;
++
++  /* Decoders with their own allocator do not call get_buffer2. A decoded
++   * picture with an output buffer is no longer decode-only. */
++  GST_VIDEO_CODEC_FRAME_FLAG_UNSET (output_frame,
++      GST_VIDEO_CODEC_FRAME_FLAG_DECODE_ONLY);
+ 
+   /* Mark corrupted frames as corrupted */
+   if (ffmpegdec->picture->flags & AV_FRAME_FLAG_CORRUPT)
+@@ -3023,7 +3022,10 @@
+     /* No decoders depending on external libraries (we don't build them, but
+      * people who build against an external ffmpeg might have them.
+      * We have native gstreamer plugins for all of those libraries anyway. */
+-    if (!strncmp (in_plugin->name, "lib", 3)) {
++    /* Streamplace bundles dav1d through FFmpeg. Register its software AV1
++     * decoder so decodebin can use the same native pipeline as other codecs. */
++    if (!strncmp (in_plugin->name, "lib", 3) &&
++        strcmp (in_plugin->name, "libdav1d")) {
+       GST_DEBUG
+           ("Not using external library decoder %s. Use the gstreamer-native ones instead.",
+           in_plugin->name);

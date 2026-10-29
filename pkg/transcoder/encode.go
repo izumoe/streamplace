@@ -41,7 +41,7 @@ func encode(ctx context.Context, source []byte, profiles []renditions.Profile) (
 	gstinit.InitGST()
 	lines := []string{
 		"appsrc name=src ! qtdemux name=demux",
-		"demux.video_0 ! " + constants.Queue2Big + " ! h264parse ! avdec_h264 ! tee name=video",
+		"demux.video_0 ! " + constants.Queue2Big + " ! decodebin ! tee name=video",
 		"demux.audio_0 ! " + constants.Queue2Big + " ! tee name=audio",
 	}
 	for i, profile := range profiles {

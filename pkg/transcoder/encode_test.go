@@ -72,6 +72,23 @@ func TestEncodePreservesBFrameTail(t *testing.T) {
 	require.Equal(t, before.audioHashes(), after.audioHashes())
 }
 
+func TestEncodeVideoCodecs(t *testing.T) {
+	// Live canonical presentations have no edit-list AAC preroll. Losslessly
+	// remux the fixture into that domain before comparing every encoded packet.
+	source := convertFixture(t, encodeFixture(t, "av1-aac-frag.mp4"), "-c", "copy")
+	before := probeEncoded(t, source)
+	require.Equal(t, "av1", before.Streams[0].CodecName)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	outputs, err := encode(ctx, source, []renditions.Profile{{Name: "compatible", Width: 160, Height: 120, Bitrate: 200_000, Profile: "high"}})
+	require.NoError(t, err)
+	require.Len(t, outputs, 1)
+	after := probeEncoded(t, outputs[0])
+	require.Equal(t, "h264", after.Streams[0].CodecName)
+	require.Equal(t, before.Streams[0].Packets, after.Streams[0].Packets, "compatibility encoding retains every source frame")
+	require.Equal(t, before.audioHashes(), after.audioHashes(), "compressed source audio stays unchanged")
+}
+
 func TestEncodeCancellation(t *testing.T) {
 	gstinit.InitGST()
 	source := encodeFixture(t, "5sec.mp4")

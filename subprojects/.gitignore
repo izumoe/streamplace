@@ -2,6 +2,7 @@
 !.gitignore
 !mistserver.wrap
 !FFmpeg.wrap
+!dav1d.wrap
 !c2pa_go.wrap
 !gstreamer-full.wrap
 !atproto.wrap
