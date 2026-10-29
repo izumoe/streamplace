@@ -58,6 +58,10 @@ func ReaderNeedDataIncremental(ctx context.Context, input io.Reader) func(self a
 		}
 		bs := make([]byte, length)
 		read, err := input.Read(bs)
+		if ctx.Err() != nil {
+			self.EndOfStream()
+			return
+		}
 		if err != nil && !errors.Is(err, io.EOF) {
 			log.Error(ctx, "error reading from input", "error", err)
 			self.PostMessage(gst.NewMessageError(self, "error reading from input", err))

@@ -26,6 +26,9 @@ func HandleBusMessagesCustom(ctx context.Context, pipeline gst.Pipeline, handler
 			return ctx.Err()
 		}
 		msg := bus.TimedPop(gst.ClockTime(time.Second))
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		if msg == nil {
 			continue
 		}

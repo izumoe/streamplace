@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -38,8 +39,13 @@ func (mm *MediaManager) RTMPPush(ctx context.Context, user string, rendition str
 	// fMP4 stream for the push pipeline. Tied to ctx so it tears down when the
 	// pipeline returns.
 	pr, pw := io.Pipe()
+	sourceCtx, sourceCancel := context.WithCancel(ctx)
+	defer sourceCancel()
+	sourceDone := make(chan error, 1)
 	go func() {
-		pw.CloseWithError(mm.writeRTMPSource(ctx, user, rendition, pw))
+		err := mm.writeRTMPSource(sourceCtx, user, rendition, pw)
+		_ = pw.CloseWithError(err)
+		sourceDone <- err
 	}()
 
 	// Status straight to the DB (in-process). The isolated worker reports the
@@ -50,7 +56,12 @@ func (mm *MediaManager) RTMPPush(ctx context.Context, user string, rendition str
 			log.Error(ctx, "failed to create multistream event", "error", err)
 		}
 	}
-	return mm.runRTMPPushPipeline(ctx, pr, rec.Url, report)
+	pipelineErr := mm.runRTMPPushPipeline(ctx, pr, rec.Url, report)
+	sourceCancel()
+	// Cancellation cannot interrupt an io.Pipe write; closing the reader does.
+	_ = pr.CloseWithError(context.Canceled)
+	sourceErr := <-sourceDone
+	return rtmpPushResult(ctx, pipelineErr, sourceErr)
 }
 
 // writeRTMPSource subscribes to the streamer's source segments, selects the AAC
@@ -118,6 +129,12 @@ func (mm *MediaManager) writeRTMPSource(ctx context.Context, user, rendition str
 func (mm *MediaManager) runRTMPPushPipeline(ctx context.Context, source io.Reader, targetURL string, report func(status, message string)) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	closer, _ := source.(io.Closer)
+	if closer != nil {
+		stopSource := context.AfterFunc(ctx, func() { _ = closer.Close() })
+		defer stopSource()
+		defer closer.Close()
+	}
 
 	pipelineSlice := []string{
 		"appsrc name=muxlsrc ! qtdemux name=demux",
@@ -251,6 +268,10 @@ func (mm *MediaManager) runRTMPPushPipeline(ctx context.Context, source io.Reade
 
 	defer func() {
 		log.Log(ctx, "shutting down RTMP push pipeline")
+		// StateNull waits for appsrc callbacks, including a blocked source read.
+		if closer != nil {
+			_ = closer.Close()
+		}
 		if ret := pipeline.SetState(gst.StateNull); ret == gst.StateChangeFailure {
 			log.Error(ctx, "failed to set pipeline state to null")
 		}
@@ -265,15 +286,14 @@ func (mm *MediaManager) RunTLSFForwarder(ctx context.Context, dest string) (stri
 		return "", fmt.Errorf("failed to parse destination URL: %w", err)
 	}
 	return mm.runForwarder(ctx, dest, func(destHost string) (net.Conn, error) {
-		return tls.Dial("tcp", destHost, &tls.Config{
-			ServerName: destURL.Hostname(),
-		})
+		dialer := tls.Dialer{Config: &tls.Config{ServerName: destURL.Hostname()}}
+		return dialer.DialContext(ctx, "tcp", destHost)
 	})
 }
 
 func (mm *MediaManager) RunTCPForwarder(ctx context.Context, dest string) (string, error) {
 	return mm.runForwarder(ctx, dest, func(destHost string) (net.Conn, error) {
-		return net.Dial("tcp", destHost)
+		return (&net.Dialer{}).DialContext(ctx, "tcp", destHost)
 	})
 }
 
@@ -299,12 +319,10 @@ func (mm *MediaManager) runForwarder(ctx context.Context, dest string, dial func
 
 	log.Debug(ctx, "RTMP forwarder listening", "localAddr", listener.Addr().String(), "destination", dest)
 
-	go func() {
-		<-ctx.Done()
-		listener.Close()
-	}()
+	stopListener := context.AfterFunc(ctx, func() { _ = listener.Close() })
 
 	go func() {
+		defer stopListener()
 		defer listener.Close()
 		if ctx.Err() != nil {
 			return
@@ -312,32 +330,26 @@ func (mm *MediaManager) runForwarder(ctx context.Context, dest string, dial func
 		// Accept incoming RTMP connection
 		clientConn, err := listener.Accept()
 		if err != nil {
-			log.Error(ctx, "failed to accept connection", "error", err)
+			if ctx.Err() == nil {
+				log.Error(ctx, "failed to accept connection", "error", err)
+			}
 			return
 		}
 
-		closed := false
-		go func() {
-			<-ctx.Done()
-			if !closed {
-				closed = true
-				clientConn.Close()
-			}
-		}()
-
-		defer func() {
-			if !closed {
-				closed = true
-				clientConn.Close()
-			}
-		}()
+		stopClient := context.AfterFunc(ctx, func() { _ = clientConn.Close() })
+		defer stopClient()
+		defer clientConn.Close()
 
 		// Establish connection to destination
 		serverConn, err := dial(destHost)
 		if err != nil {
-			log.Error(ctx, "failed to establish connection to destination", "error", err)
+			if ctx.Err() == nil {
+				log.Error(ctx, "failed to establish connection to destination", "error", err)
+			}
 			return
 		}
+		stopServer := context.AfterFunc(ctx, func() { _ = serverConn.Close() })
+		defer stopServer()
 		defer serverConn.Close()
 
 		// Proxy data bidirectionally
@@ -357,7 +369,12 @@ func (mm *MediaManager) runForwarder(ctx context.Context, dest string, dial func
 
 		// Wait for either direction to complete or error
 		err = <-done
-		if err != nil {
+		clientConn.Close()
+		serverConn.Close()
+		if remaining := <-done; err == nil && !errors.Is(remaining, net.ErrClosed) {
+			err = remaining
+		}
+		if err != nil && ctx.Err() == nil {
 			log.Error(ctx, "proxy connection error", "error", err)
 		}
 	}()

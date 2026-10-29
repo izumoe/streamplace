@@ -36,6 +36,16 @@ type pushEvent struct {
 	Message string `json:"message"`
 }
 
+func rtmpPushResult(ctx context.Context, pipelineErr, sourceErr error) error {
+	if pipelineErr != nil {
+		return pipelineErr
+	}
+	if sourceErr != nil && !errors.Is(sourceErr, context.Canceled) && ctx.Err() == nil {
+		return fmt.Errorf("rtmp push source: %w", sourceErr)
+	}
+	return nil
+}
+
 // RunRTMPPushWorker is the body of the `rtmp-push-worker` subcommand. It reads
 // the assembled fMP4 source stream from `source` (the worker's stdin, fed by
 // main) and runs the native RTMP egress pipeline, reporting status back to main
@@ -141,11 +151,16 @@ func (mm *MediaManager) RTMPPushIsolated(ctx context.Context, user string, rendi
 
 	// Feed the worker the continuous fMP4 source stream (bus → AAC select →
 	// init+concat). Closing stdin on source EOF/cancel is the worker's EOS.
+	sourceCtx, sourceCancel := context.WithCancel(ctx)
+	defer sourceCancel()
+	sourceDone := make(chan error, 1)
 	go func() {
-		defer stdin.Close()
-		if serr := mm.writeRTMPSource(ctx, user, rendition, stdin); serr != nil && ctx.Err() == nil {
+		serr := mm.writeRTMPSource(sourceCtx, user, rendition, stdin)
+		_ = stdin.Close()
+		if serr != nil && !errors.Is(serr, context.Canceled) && ctx.Err() == nil {
 			log.Error(ctx, "rtmp push source ended", "error", serr)
 		}
+		sourceDone <- serr
 	}()
 
 	// Forward stdout + stderr to the node logger. Drain both fully before Wait.
@@ -164,6 +179,9 @@ func (mm *MediaManager) RTMPPushIsolated(ctx context.Context, user string, rendi
 	workerErr := consumePushEvents(ctx, eventsR, report)
 	logsWG.Wait()
 	werr := cmd.Wait()
+	sourceCancel()
+	_ = stdin.Close()
+	sourceErr := <-sourceDone
 
 	switch {
 	case ctx.Err() != nil:
@@ -177,7 +195,7 @@ func (mm *MediaManager) RTMPPushIsolated(ctx context.Context, user string, rendi
 		// the subprocess; StartMultistreamTarget records it and retries.
 		return fmt.Errorf("rtmp push worker exited: %w", werr)
 	}
-	return nil
+	return rtmpPushResult(ctx, nil, sourceErr)
 }
 
 // consumePushEvents reads status frames from the worker and hands each to
