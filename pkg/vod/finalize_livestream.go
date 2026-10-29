@@ -15,7 +15,6 @@ import (
 	"stream.place/streamplace/pkg/blob"
 	"stream.place/streamplace/pkg/config"
 	"stream.place/streamplace/pkg/log"
-	"stream.place/streamplace/pkg/media"
 	"stream.place/streamplace/pkg/muxl"
 	s3pkg "stream.place/streamplace/pkg/s3"
 	"stream.place/streamplace/pkg/statedb"
@@ -36,9 +35,8 @@ type FinalizeInput struct {
 	// records (one recording split across records) in recording order;
 	// empty means just LivestreamURI.
 	LivestreamURIs []string
-	// SigningKey is the did:key whose private half C2PA-signed the live
-	// segments (the streamer's place.stream.key). Recorded on each
-	// place.stream.media.track so playback can verify signatures.
+	// SigningKey is retained on the upload row. An archive catalog alone
+	// does not prove one signing key for every recorded track.
 	SigningKey string
 }
 
@@ -86,7 +84,7 @@ func FinalizeLivestreamVOD(ctx context.Context, cli *config.CLI, state *statedb.
 	log.Log(ctx, "finalizing livestream VOD", "objects", len(keys))
 
 	// 1. Synthesize the flat-MP4 faststart header from the fragments' metafile.
-	flatHeader, err := synthFlatHeaderForObjects(ctx, store, keys)
+	flatHeader, physicalMetafiles, err := synthFlatHeaderForObjects(ctx, store, keys)
 	if err != nil {
 		recordErr(span, "synth_header", err)
 		return "", fmt.Errorf("synthesize flat header: %w", err)
@@ -95,7 +93,7 @@ func FinalizeLivestreamVOD(ctx context.Context, cli *config.CLI, state *statedb.
 
 	// 2. Hash the bare fragments → MUXL CID (the stable, header-independent id)
 	// and build the fragment-relative HLS metafile + per-track init blobs.
-	muxlCID, fragSize, metafile, err := hashAndBuildFragmentMetafile(ctx, store, keys)
+	muxlCID, fragSize, metafile, err := hashAndBuildFragmentMetafile(ctx, store, keys, physicalMetafiles)
 	if err != nil {
 		recordErr(span, "build_metafile", err)
 		return "", err
@@ -127,7 +125,7 @@ func FinalizeLivestreamVOD(ctx context.Context, cli *config.CLI, state *statedb.
 
 	// 4. Publish origin + track records (referencing the MUXL CID) and store
 	// TrackURIs on the Upload row, reusing the upload publish path unchanged.
-	probe := metafileToVODResult(metafile)
+	probe := probeFromMetafile(metafile)
 	if err := runVODStage(ctx, stagePublish, func(ctx context.Context) error {
 		return publishRecords(ctx, publishParams{
 			cli:        cli,
@@ -211,32 +209,26 @@ func assembleViaWriter(ctx context.Context, store blob.Store, header []byte, key
 	return w.Complete()
 }
 
-// metafileToVODResult derives the probe metadata publishTrack needs from the
-// regenerated metafile, standing in for the gstreamer probe that an upload
-// would have produced. publishTrack hardcodes the video codec to h264 and only
-// uses width/height (+ optional framerate), so we leave framerate unset.
-func metafileToVODResult(meta *Metafile) media.VODResult {
-	var res media.VODResult
-	for _, t := range meta.Tracks {
-		switch t.Type {
+// probeFromMetafile retains the canonical container IDs and codec metadata.
+// The archive catalog does not establish a signing key shared by every track.
+func probeFromMetafile(meta *Metafile) probeJSONShape {
+	var result probeJSONShape
+	ids := metafileTrackIDs(meta)
+	for _, id := range ids {
+		track := meta.Tracks[id]
+		probe := trackProbeJSON{TrackID: id}
+		switch track.Type {
 		case "video":
-			res.Video = &media.VODVideoTrack{
-				Codec:  t.Codec,
-				Width:  int(t.Width),
-				Height: int(t.Height),
-			}
+			probe.Video = &videoProbeJSON{Codec: track.Codec, Width: int(track.Width), Height: int(track.Height)}
 		case "audio":
-			res.Audio = &media.VODAudioTrack{
-				Codec:    audioProbeCodec(t.Codec),
-				Rate:     int(t.SampleRate),
-				Channels: int(t.Channels),
-			}
+			probe.Audio = &audioProbeJSON{Codec: track.Codec, Rate: int(track.SampleRate), Channels: int(track.Channels)}
+		default:
+			continue
 		}
-		if d := metafileTrackDurationMS(t); d > res.DurationMS {
-			res.DurationMS = d
-		}
+		result.Tracks = append(result.Tracks, probe)
+		result.DurationMS = max(result.DurationMS, metafileTrackDurationMS(track))
 	}
-	return res
+	return result
 }
 
 // metafileTrackDurationMS sums a track's segment durations (in its timescale)
@@ -250,14 +242,4 @@ func metafileTrackDurationMS(t MetafileTrack) int64 {
 		ticks += s.DurationTicks
 	}
 	return int64(ticks * 1000 / uint64(t.Timescale))
-}
-
-// audioProbeCodec maps a metafile (CMAF catalog) audio codec name to the
-// gstreamer-caps-style value audioCodecForLexicon (publish.go) expects, so the
-// lexicon enum comes out right ("opus" vs "aac").
-func audioProbeCodec(metafileCodec string) string {
-	if strings.Contains(strings.ToLower(metafileCodec), "opus") {
-		return "x-opus"
-	}
-	return "mpeg" // audioCodecForLexicon maps "mpeg" -> "aac"
 }

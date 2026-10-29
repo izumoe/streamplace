@@ -51,11 +51,11 @@ func TestFinalizeFlatVODAssembly(t *testing.T) {
 	keys := []string{"live/frag.m4s"}
 
 	// --- the finalize steps ---
-	flatHeader, err := synthFlatHeaderForObjects(ctx, store, keys)
+	flatHeader, physicalMetafiles, err := synthFlatHeaderForObjects(ctx, store, keys)
 	require.NoError(t, err)
 	require.NotEmpty(t, flatHeader)
 
-	muxlCID, fragSize, metafile, err := hashAndBuildFragmentMetafile(ctx, store, keys)
+	muxlCID, fragSize, metafile, err := hashAndBuildFragmentMetafile(ctx, store, keys, physicalMetafiles)
 	require.NoError(t, err)
 	require.Equal(t, int64(len(fragments)), fragSize, "fragments size")
 
@@ -137,7 +137,7 @@ func TestProcessVODFragmentBuilderPath(t *testing.T) {
 	require.NoError(t, writeBlob(ctx, store, "stage/frag.m4s", fragments))
 	keys := []string{"stage/frag.m4s"}
 
-	flatHeader, err := synthFlatHeaderForObjects(ctx, store, keys)
+	flatHeader, _, err := synthFlatHeaderForObjects(ctx, store, keys)
 	require.NoError(t, err)
 
 	metafile := mb.Finalize(muxlCID, int64(len(fragments)))

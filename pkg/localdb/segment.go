@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"gorm.io/gorm"
@@ -15,23 +16,30 @@ import (
 )
 
 type SegmentMediadataVideo struct {
-	Width   int  `json:"width"`
-	Height  int  `json:"height"`
-	FPSNum  int  `json:"fpsNum"`
-	FPSDen  int  `json:"fpsDen"`
-	BFrames bool `json:"bframes"`
+	TrackID    uint32 `json:"trackId,omitempty"`
+	Codec      string `json:"codec,omitempty"`
+	SigningKey string `json:"signingKey,omitempty"`
+	Width      int    `json:"width"`
+	Height     int    `json:"height"`
+	FPSNum     int    `json:"fpsNum"`
+	FPSDen     int    `json:"fpsDen"`
+	BFrames    bool   `json:"bframes"`
 }
 
 type SegmentMediadataAudio struct {
-	Rate     int `json:"rate"`
-	Channels int `json:"channels"`
+	TrackID    uint32 `json:"trackId,omitempty"`
+	Codec      string `json:"codec,omitempty"`
+	SigningKey string `json:"signingKey,omitempty"`
+	Rate       int    `json:"rate"`
+	Channels   int    `json:"channels"`
 }
 
 type SegmentMediaData struct {
-	Video    []*SegmentMediadataVideo `json:"video"`
-	Audio    []*SegmentMediadataAudio `json:"audio"`
-	Duration int64                    `json:"duration"`
-	Size     int                      `json:"size"`
+	Video         []*SegmentMediadataVideo `json:"video"`
+	Audio         []*SegmentMediadataAudio `json:"audio"`
+	Duration      int64                    `json:"duration"`
+	Size          int                      `json:"size"`
+	BatchDuration time.Duration            `json:"-"`
 }
 
 // Scan scan value into Jsonb, implements sql.Scanner interface
@@ -192,36 +200,51 @@ func (s *Segment) ToStreamplaceSegment() (*placestream.Segment, error) {
 		}
 	}
 
+	videos := make([]placestream.Segment_Video, len(s.MediaData.Video))
+	for i, video := range s.MediaData.Video {
+		if video == nil {
+			return nil, fmt.Errorf("video data is nil")
+		}
+		codec := video.Codec
+		if codec == "" {
+			codec = "h264" // metadata persisted before per-track codecs
+		}
+		videos[i] = placestream.Segment_Video{
+			Codec: codec, Width: int64(video.Width), Height: int64(video.Height),
+			Framerate: &placestream.Segment_Framerate{Num: int64(video.FPSNum), Den: int64(video.FPSDen)},
+			Bframes:   &video.BFrames,
+		}
+		if video.TrackID != 0 {
+			id := strconv.FormatUint(uint64(video.TrackID), 10)
+			videos[i].TrackId = &id
+		}
+		if video.SigningKey != "" {
+			videos[i].SigningKey = &video.SigningKey
+		}
+	}
+	audios := make([]placestream.Segment_Audio, len(s.MediaData.Audio))
+	for i, audio := range s.MediaData.Audio {
+		if audio == nil {
+			return nil, fmt.Errorf("audio data is nil")
+		}
+		codec := audio.Codec
+		if codec == "" {
+			codec = "opus"
+		}
+		audios[i] = placestream.Segment_Audio{Codec: codec, Rate: int64(audio.Rate), Channels: int64(audio.Channels)}
+		if audio.TrackID != 0 {
+			id := strconv.FormatUint(uint64(audio.TrackID), 10)
+			audios[i].TrackId = &id
+		}
+		if audio.SigningKey != "" {
+			audios[i].SigningKey = &audio.SigningKey
+		}
+	}
 	return &placestream.Segment{
-		LexiconTypeID:      "place.stream.segment",
-		Creator:            s.RepoDID,
-		Id:                 s.ID,
-		SigningKey:         s.SigningKeyDID,
-		StartTime:          string(aqt),
-		Duration:           &duration,
-		Size:               &sizei64,
-		ContentRights:      contentRights,
-		ContentWarnings:    contentWarnings,
-		DistributionPolicy: distributionPolicy,
-		Video: []placestream.Segment_Video{
-			{
-				Codec:  "h264",
-				Width:  int64(s.MediaData.Video[0].Width),
-				Height: int64(s.MediaData.Video[0].Height),
-				Framerate: &placestream.Segment_Framerate{
-					Num: int64(s.MediaData.Video[0].FPSNum),
-					Den: int64(s.MediaData.Video[0].FPSDen),
-				},
-				Bframes: &s.MediaData.Video[0].BFrames,
-			},
-		},
-		Audio: []placestream.Segment_Audio{
-			{
-				Codec:    "opus",
-				Rate:     int64(s.MediaData.Audio[0].Rate),
-				Channels: int64(s.MediaData.Audio[0].Channels),
-			},
-		},
+		LexiconTypeID: "place.stream.segment", Creator: s.RepoDID, Id: s.ID,
+		SigningKey: s.SigningKeyDID, StartTime: string(aqt), Duration: &duration, Size: &sizei64,
+		ContentRights: contentRights, ContentWarnings: contentWarnings, DistributionPolicy: distributionPolicy,
+		Video: videos, Audio: audios,
 	}, nil
 }
 

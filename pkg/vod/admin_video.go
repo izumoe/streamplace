@@ -208,7 +208,7 @@ func UpdateVideo(ctx context.Context, state *statedb.StatefulDB, store blob.Stor
 		if upload.ProcessingStatus != "done" {
 			return "", ErrUploadNotReady
 		}
-		tracks, err := tracksForUpload(ctx, state, client, did, upload)
+		tracks, err := tracksForUpload(ctx, state, store, client, did, upload)
 		if err != nil {
 			return "", fmt.Errorf("publish tracks: %w", err)
 		}

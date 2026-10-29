@@ -43,11 +43,13 @@ Media file representing a segment of a livestream
 
 **Properties:**
 
-| Name       | Type      | Req'd | Description | Constraints         |
-| ---------- | --------- | ----- | ----------- | ------------------- |
-| `codec`    | `string`  | ✅    |             | Enum: `opus`, `aac` |
-| `rate`     | `integer` | ✅    |             |                     |
-| `channels` | `integer` | ✅    |             |                     |
+| Name         | Type      | Req'd | Description                                      | Constraints         |
+| ------------ | --------- | ----- | ------------------------------------------------ | ------------------- |
+| `codec`      | `string`  | ✅    |                                                  | Enum: `opus`, `aac` |
+| `trackId`    | `string`  | ❌    | Exact track ID within the signed MUXL container. |                     |
+| `signingKey` | `string`  | ❌    | Signing key verified for this track, when known. | Format: `did`       |
+| `rate`       | `integer` | ✅    |                                                  |                     |
+| `channels`   | `integer` | ✅    |                                                  |                     |
 
 ---
 
@@ -59,13 +61,15 @@ Media file representing a segment of a livestream
 
 **Properties:**
 
-| Name        | Type                       | Req'd | Description | Constraints  |
-| ----------- | -------------------------- | ----- | ----------- | ------------ |
-| `codec`     | `string`                   | ✅    |             | Enum: `h264` |
-| `width`     | `integer`                  | ✅    |             |              |
-| `height`    | `integer`                  | ✅    |             |              |
-| `framerate` | [`#framerate`](#framerate) | ❌    |             |              |
-| `bframes`   | `boolean`                  | ❌    |             |              |
+| Name         | Type                       | Req'd | Description                                      | Constraints         |
+| ------------ | -------------------------- | ----- | ------------------------------------------------ | ------------------- |
+| `codec`      | `string`                   | ✅    |                                                  | Enum: `h264`, `av1` |
+| `trackId`    | `string`                   | ❌    | Exact track ID within the signed MUXL container. |                     |
+| `signingKey` | `string`                   | ❌    | Signing key verified for this track, when known. | Format: `did`       |
+| `width`      | `integer`                  | ✅    |                                                  |                     |
+| `height`     | `integer`                  | ✅    |                                                  |                     |
+| `framerate`  | [`#framerate`](#framerate) | ❌    |                                                  |                     |
+| `bframes`    | `boolean`                  | ❌    |                                                  |                     |
 
 ---
 
@@ -176,6 +180,15 @@ Media file representing a segment of a livestream
           "type": "string",
           "enum": ["opus", "aac"]
         },
+        "trackId": {
+          "type": "string",
+          "description": "Exact track ID within the signed MUXL container."
+        },
+        "signingKey": {
+          "type": "string",
+          "format": "did",
+          "description": "Signing key verified for this track, when known."
+        },
         "rate": {
           "type": "integer"
         },
@@ -190,7 +203,16 @@ Media file representing a segment of a livestream
       "properties": {
         "codec": {
           "type": "string",
-          "enum": ["h264"]
+          "enum": ["h264", "av1"]
+        },
+        "trackId": {
+          "type": "string",
+          "description": "Exact track ID within the signed MUXL container."
+        },
+        "signingKey": {
+          "type": "string",
+          "format": "did",
+          "description": "Signing key verified for this track, when known."
         },
         "width": {
           "type": "integer"

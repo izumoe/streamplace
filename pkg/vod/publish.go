@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/bluesky-social/indigo/xrpc"
 	glex "github.com/streamplace/glex/runtime"
@@ -16,7 +17,6 @@ import (
 	"stream.place/streamplace/pkg/config"
 	"stream.place/streamplace/pkg/constants"
 	"stream.place/streamplace/pkg/log"
-	"stream.place/streamplace/pkg/media"
 	"stream.place/streamplace/pkg/placestream"
 	"stream.place/streamplace/pkg/spid"
 	"stream.place/streamplace/pkg/statedb"
@@ -44,7 +44,7 @@ type publishParams struct {
 	cid        string
 	size       int64
 	mimeType   string
-	probe      media.VODResult
+	probe      probeJSONShape
 	signingKey string
 }
 
@@ -108,12 +108,11 @@ func publishRecords(ctx context.Context, p publishParams) error {
 	return nil
 }
 
-// probeJSONShape mirrors media.VODResult's track fields, for serialization to
-// the Upload row's probe_json column. Only the fields publishTrack consumes.
+// probeJSONShape is the canonical per-track metadata stored on the Upload row
+// for deferred publication. Legacy probes recover their IDs from the metafile.
 type probeJSONShape struct {
-	DurationMS int64           `json:"durationMs"`
-	Video      *videoProbeJSON `json:"video,omitempty"`
-	Audio      *audioProbeJSON `json:"audio,omitempty"`
+	Tracks     []trackProbeJSON `json:"tracks,omitempty"`
+	DurationMS int64            `json:"durationMs"`
 }
 type videoProbeJSON struct {
 	Codec  string `json:"codec"`
@@ -123,56 +122,31 @@ type videoProbeJSON struct {
 	FPSDen int    `json:"fpsDen"`
 }
 type audioProbeJSON struct {
-	Codec       string `json:"codec"`
-	Rate        int    `json:"rate"`
-	Channels    int    `json:"channels"`
-	MPEGVersion int    `json:"mpegVersion"`
+	Codec    string `json:"codec"`
+	Rate     int    `json:"rate"`
+	Channels int    `json:"channels"`
 }
 
-func marshalProbe(p media.VODResult) (string, error) {
-	out := probeJSONShape{DurationMS: p.DurationMS}
-	if p.Video != nil {
-		out.Video = &videoProbeJSON{
-			Codec: p.Video.Codec, Width: p.Video.Width, Height: p.Video.Height,
-			FPSNum: p.Video.FPSNum, FPSDen: p.Video.FPSDen,
-		}
-	}
-	if p.Audio != nil {
-		out.Audio = &audioProbeJSON{
-			Codec: p.Audio.Codec, Rate: p.Audio.Rate, Channels: p.Audio.Channels,
-			MPEGVersion: p.Audio.MPEGVersion,
-		}
-	}
-	b, err := json.Marshal(out)
-	if err != nil {
-		return "", err
-	}
-	return string(b), nil
+type trackProbeJSON struct {
+	TrackID    string          `json:"trackId"`
+	SigningKey string          `json:"signingKey,omitempty"`
+	Video      *videoProbeJSON `json:"video,omitempty"`
+	Audio      *audioProbeJSON `json:"audio,omitempty"`
 }
 
-// unmarshalProbe reverses marshalProbe.
-func unmarshalProbe(s string) (media.VODResult, error) {
-	if s == "" {
-		return media.VODResult{}, nil
-	}
-	var pjs probeJSONShape
-	if err := json.Unmarshal([]byte(s), &pjs); err != nil {
-		return media.VODResult{}, fmt.Errorf("unmarshal probe: %w", err)
-	}
-	res := media.VODResult{DurationMS: pjs.DurationMS}
-	if pjs.Video != nil {
-		res.Video = &media.VODVideoTrack{
-			Codec: pjs.Video.Codec, Width: pjs.Video.Width, Height: pjs.Video.Height,
-			FPSNum: pjs.Video.FPSNum, FPSDen: pjs.Video.FPSDen,
+func marshalProbe(p probeJSONShape) (string, error) {
+	b, err := json.Marshal(p)
+	return string(b), err
+}
+
+func unmarshalProbe(s string) (probeJSONShape, error) {
+	var probe probeJSONShape
+	if s != "" {
+		if err := json.Unmarshal([]byte(s), &probe); err != nil {
+			return probe, fmt.Errorf("unmarshal probe: %w", err)
 		}
 	}
-	if pjs.Audio != nil {
-		res.Audio = &media.VODAudioTrack{
-			Codec: pjs.Audio.Codec, Rate: pjs.Audio.Rate, Channels: pjs.Audio.Channels,
-			MPEGVersion: pjs.Audio.MPEGVersion,
-		}
-	}
-	return res, nil
+	return probe, nil
 }
 
 // publishOrigin attests that this server has the blob with the given
@@ -211,16 +185,13 @@ func publishOrigin(ctx context.Context, cli *config.CLI, cid string, size int64,
 }
 
 // publishTrack creates one place.stream.media.track record in the
-// user's repo. trackID is the 1-indexed track within the MUXL
-// container ("1" for video, "2" for audio in our standard layout).
+// user's repo. trackID is the exact track ID within the signed MUXL container.
 // blobSize is the byte size of the shared MUXL container blob;
 // durationMS is the source duration in milliseconds (same for every
 // track of one upload since they all read from the same container).
-// signingKey is the did:key whose ephemeral private half C2PA-signed
-// this upload's segments — the same key signs every track of an upload.
-// Exactly one of videoMeta / audioMeta should be non-nil; the other
-// is ignored.
-func publishTrack(ctx context.Context, client XRPCClient, did, cid string, blobSize, durationMS int64, trackID, mediaType, signingKey string, videoMeta *media.VODVideoTrack, audioMeta *media.VODAudioTrack) (*comatproto.RepoStrongRef, error) {
+// signingKey is set only when the producer knows which key signed this track.
+// Exactly one of videoMeta and audioMeta must be non-nil.
+func publishTrack(ctx context.Context, client XRPCClient, did, cid string, blobSize, durationMS int64, trackID, mediaType, signingKey string, videoMeta *videoProbeJSON, audioMeta *audioProbeJSON) (*comatproto.RepoStrongRef, error) {
 	ctx, span := vodTracer.Start(ctx, "vod.publishTrack", trace.WithAttributes(
 		attribute.String("cid", cid),
 		attribute.String("track_id", trackID),
@@ -234,7 +205,7 @@ func publishTrack(ctx context.Context, client XRPCClient, did, cid string, blobS
 	}
 	if videoMeta != nil {
 		meta.Video = &placestream.Segment_Video{
-			Codec:  "h264",
+			Codec:  videoCodecForLexicon(videoMeta.Codec),
 			Width:  int64(videoMeta.Width),
 			Height: int64(videoMeta.Height),
 		}
@@ -262,12 +233,15 @@ func publishTrack(ctx context.Context, client XRPCClient, did, cid string, blobS
 				Size:          &blobSize,
 				TrackId:       trackID,
 				MediaType:     mediaType,
-				SigningKey:    &signingKey,
 			},
 		},
 		Metadata: &placestream.MediaTrack_Metadata{
 			MediaTrack_CommonMetadata: meta,
 		},
+	}
+
+	if signingKey != "" {
+		rec.Track.MediaDefs_MuxlTrack.SigningKey = &signingKey
 	}
 
 	rkey := spid.TIDClock.Next().String()
@@ -321,19 +295,27 @@ func getUserXRPCClient(ctx context.Context, state *statedb.StatefulDB, did strin
 	return client, nil
 }
 
-// audioCodecForLexicon maps a parsebin caps name to one of the values
-// allowed by the place.stream.segment#audio.codec enum
-// ({"opus", "aac"}). When the chain transcoded the input audio to AAC,
-// the probe reports codec="mpeg" with MPEGVersion=4 — that's AAC.
-func audioCodecForLexicon(a *media.VODAudioTrack) string {
-	switch a.Codec {
-	case "x-opus":
+// audioCodecForLexicon normalizes canonical CMAF and native caps codec names
+// to the place.stream.segment#audio.codec enum.
+func audioCodecForLexicon(a *audioProbeJSON) string {
+	switch {
+	case a.Codec == "x-opus", strings.EqualFold(a.Codec, "opus"):
 		return "opus"
-	case "mpeg":
+	case a.Codec == "mpeg", a.Codec == "aac", strings.HasPrefix(a.Codec, "mp4a"):
 		// MPEG-4 AAC (and MPEG-2 AAC) are both AAC for our purposes.
 		return "aac"
 	default:
-		// Fall through to AAC; we transcoded everything else to AAC.
-		return "aac"
+		return ""
+	}
+}
+
+func videoCodecForLexicon(codec string) string {
+	switch {
+	case codec == "h264", codec == "x-h264", strings.HasPrefix(codec, "avc1"), strings.HasPrefix(codec, "avc3"):
+		return "h264"
+	case codec == "av1", codec == "x-av1", strings.HasPrefix(codec, "av01"):
+		return "av1"
+	default:
+		return ""
 	}
 }

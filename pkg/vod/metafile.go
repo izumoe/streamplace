@@ -375,3 +375,32 @@ func writeInitBlob(ctx context.Context, store blob.Store, initBytes []byte) (str
 	log.Debug(ctx, "wrote init blob", "cid", cid, "size", len(initBytes))
 	return cid, nil
 }
+
+// metafileTrackIDs puts the primary video first: largest area, then width,
+// then lowest canonical ID. Audio follows in canonical ID order.
+func metafileTrackIDs(meta *Metafile) []string {
+	ids := make([]string, 0, len(meta.Tracks))
+	for id := range meta.Tracks {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool {
+		left, right := meta.Tracks[ids[i]], meta.Tracks[ids[j]]
+		if (left.Type == "video") != (right.Type == "video") {
+			return left.Type == "video"
+		}
+		if left.Type == "video" {
+			leftArea := uint64(left.Width) * uint64(left.Height)
+			rightArea := uint64(right.Width) * uint64(right.Height)
+			if leftArea != rightArea {
+				return leftArea > rightArea
+			}
+			if left.Width != right.Width {
+				return left.Width > right.Width
+			}
+		}
+		a, _ := strconv.ParseUint(ids[i], 10, 32)
+		b, _ := strconv.ParseUint(ids[j], 10, 32)
+		return a < b
+	})
+	return ids
+}

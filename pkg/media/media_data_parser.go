@@ -1,12 +1,12 @@
 package media
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
+	"sort"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -24,30 +24,9 @@ func ParseSegmentMediaData(ctx context.Context, mp4bs []byte) (*localdb.SegmentM
 	ctx, span := otel.Tracer("signer").Start(ctx, "ParseSegmentMediaData")
 	defer span.End()
 	ctx = log.WithLogValues(ctx, "GStreamerFunc", "ParseSegmentMediaData")
-	// Watchdog: parsing a ~1s segment is sub-second. A stalled qtdemux only
-	// posts non-fatal warnings, so bound it — a hang surfaces as an error
-	// rather than wedging the validate/ingest pipeline (which is what a stray
-	// unresolved delayed link did).
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	// Codec-agnostic: audio rate/channels come from the qtdemux pad caps (read
-	// in onPadAdded) and durations from the demuxed buffers, so no per-codec
-	// parser is needed — the segment may carry AAC or Opus. We link only
-	// video_0 and audio_0. A dual-codec (completed) segment's extra audio track
-	// (audio_1) is left unlinked: qtdemux's flow combiner tolerates the
-	// not-linked pad, and the linked sinks still reach EOS. We must NOT add an
-	// idle sink for it (or delayed-link a pad that may not exist) — an unlinked
-	// sink never receives EOS, so the pipeline never posts EOS to the bus and
-	// the parse stalls until its watchdog fires.
-	pipelineSlice := []string{
-		"appsrc name=appsrc ! qtdemux name=demux",
-		fmt.Sprintf("demux.video_0 ! %s ! tee name=videotee", constants.Queue2Big),
-		fmt.Sprintf("videotee. ! %s ! h2642json ! appsink sync=false name=jsonappsink", constants.Queue2Big),
-		fmt.Sprintf("videotee. ! %s ! appsink sync=false name=videoappsink", constants.Queue2Big),
-		fmt.Sprintf("demux.audio_0 ! %s ! appsink sync=false name=audioappsink", constants.Queue2Big),
-	}
-
-	launched, err := gst.ParseLaunch(strings.Join(pipelineSlice, "\n"))
+	launched, err := gst.ParseLaunch("appsrc name=appsrc ! qtdemux name=demux")
 	if err != nil {
 		return nil, fmt.Errorf("error creating SegmentMetadata pipeline: %w", err)
 	}
@@ -55,12 +34,6 @@ func ParseSegmentMediaData(ctx context.Context, mp4bs []byte) (*localdb.SegmentM
 	if !ok {
 		return nil, fmt.Errorf("error creating SegmentMetadata pipeline: parsed description is not a pipeline")
 	}
-
-	var videoMetadata *localdb.SegmentMediadataVideo
-	var audioMetadata *localdb.SegmentMediadataAudio
-	var videoDuration time.Duration
-	var audioDuration time.Duration
-
 	appsrc := pipeline.GetByName("appsrc")
 	if appsrc == nil {
 		return nil, fmt.Errorf("error creating SegmentMetadata pipeline: appsrc not found")
@@ -68,26 +41,16 @@ func ParseSegmentMediaData(ctx context.Context, mp4bs []byte) (*localdb.SegmentM
 	appsrc.(app.AppSrc).SetCallbacks(&app.AppSrcCallbacks{
 		NeedData: gstpipeline.ReaderNeedDataIncremental(ctx, bytes.NewReader(mp4bs)),
 	})
-
-	foundSomeAudio := false
-	audioSink := pipeline.GetByName("audioappsink")
-	if audioSink == nil {
-		return nil, fmt.Errorf("error creating SegmentMetadata pipeline: audioappsink not found")
+	type parsedTrack struct {
+		id       uint32
+		video    *localdb.SegmentMediadataVideo
+		audio    *localdb.SegmentMediadataAudio
+		found    bool
+		duration time.Duration
+		span     sampleSpan
 	}
-	audioSink.(app.AppSink).SetCallbacks(&app.AppSinkCallbacks{
-		NewSample: ParseSegmentMediaDataSinkNewSampleFunc(ctx, &foundSomeAudio, &audioDuration),
-	})
-
-	foundSomeVideo := false
-	videoSink := pipeline.GetByName("videoappsink")
-	if videoSink == nil {
-		return nil, fmt.Errorf("error creating SegmentMetadata pipeline: videoappsink not found")
-	}
-	videoSink.(app.AppSink).SetCallbacks(&app.AppSinkCallbacks{
-		NewSample: ParseSegmentMediaDataSinkNewSampleFunc(ctx, &foundSomeVideo, &videoDuration),
-	})
+	var tracks []*parsedTrack
 	var padsAdded atomic.Int32
-
 	padProbe := func(pad gst.Pad, info *gst.PadProbeInfo) gst.PadProbeReturn {
 		if info.GetEvent().GetType() != gst.EventEOS {
 			return gst.PadProbeOK
@@ -102,179 +65,191 @@ func ParseSegmentMediaData(ctx context.Context, mp4bs []byte) (*localdb.SegmentM
 		}
 		return gst.PadProbeRemove
 	}
-
-	onPadAdded := func(_ gst.Element, pad gst.Pad) {
-		padsAdded.Add(1)
-		caps := pad.GetCurrentCaps()
-		if caps == nil {
-			log.Warn(ctx, "Unable to get pad caps")
-			cancel()
-			return
+	parseErr := make(chan error, 1)
+	fail := func(err error) {
+		select {
+		case parseErr <- err:
+		default:
 		}
-
-		pad.AddProbe(gst.PadProbeTypeEventDownstream, padProbe)
-
-		structure := caps.GetStructure(0)
-		if structure == nil {
-			log.Warn(ctx, "Unable to get structure from caps")
-			cancel()
-			return
-		}
-
-		name := structure.GetName()
-
-		if name[:5] == "video" {
-			videoMetadata = &localdb.SegmentMediadataVideo{}
-			// Get some common video properties
-			if width, ok := structure.GetInt("width"); ok {
-				videoMetadata.Width = int(width)
-			}
-			if height, ok := structure.GetInt("height"); ok {
-				videoMetadata.Height = int(height)
-			}
-			if num, den, ok := structure.GetFraction("framerate"); ok && num != 0 && den != 0 {
-				videoMetadata.FPSNum = int(num)
-				videoMetadata.FPSDen = int(den)
-			}
-		}
-
-		// Primary audio track (audio_0) is statically linked to audioappsink;
-		// read its rate/channels for the segment metadata. Extra audio tracks
-		// (audio_1+, on a dual-codec completed segment) are left unlinked.
-		if name[:5] == "audio" && pad.GetName() == "audio_0" {
-			audioMetadata = &localdb.SegmentMediadataAudio{}
-			if rate, ok := structure.GetInt("rate"); ok {
-				audioMetadata.Rate = int(rate)
-			}
-			if channels, ok := structure.GetInt("channels"); ok {
-				audioMetadata.Channels = int(channels)
-			}
-		}
-
-		// if videoMetadata != nil && audioMetadata != nil {
-		// 	cancel()
-		// }
+		cancel()
 	}
-
 	demux := pipeline.GetByName("demux")
 	if demux == nil {
 		return nil, fmt.Errorf("error creating SegmentMetadata pipeline: demux not found")
 	}
-	demux.ConnectPadAdded(onPadAdded)
-
-	jsonSinkElem := pipeline.GetByName("jsonappsink")
-	if jsonSinkElem == nil {
-		return nil, fmt.Errorf("failed to get jsonappsink element")
-	}
-	jsonSink := jsonSinkElem.(app.AppSink)
-
-	hasBFrames := false
-
-	r, w := io.Pipe()
-	bufW := bufio.NewWriter(w)
-	decoder := json.NewDecoder(r)
-
-	decodeErr := make(chan error)
-	go func() {
-		for {
-			var obj map[string]any
-			err := decoder.Decode(&obj)
-			if err == io.EOF {
-				decodeErr <- nil
-				break // End of stream
-			}
-			if err != nil {
-				decodeErr <- err
-				break
-			}
-			// https://github.com/GStreamer/gstreamer/blob/68fa54c7616b93d5b7cc5febaa388546fcd617e0/subprojects/gst-plugins-bad/ext/codec2json/gsth2642json.c#L836
-			header, ok := obj["slice header"].(map[string]any)
-			if !ok {
-				continue
-			}
-			// https://github.com/GStreamer/gstreamer/blob/68fa54c7616b93d5b7cc5febaa388546fcd617e0/subprojects/gst-plugins-bad/ext/codec2json/gsth2642json.c#L622
-			flag, ok := header["direct spatial mv pred flag"].(bool)
-			if ok && flag {
-				hasBFrames = true
-			}
+	handler := demux.ConnectPadAdded(func(_ gst.Element, pad gst.Pad) {
+		padsAdded.Add(1)
+		pad.AddProbe(gst.PadProbeTypeEventDownstream, padProbe)
+		caps := pad.GetCurrentCaps()
+		if caps == nil || caps.GetStructure(0) == nil {
+			fail(fmt.Errorf("unable to get track caps"))
+			return
 		}
-		close(decodeErr)
-	}()
-
-	jsonSink.SetCallbacks(&app.AppSinkCallbacks{
-		NewSample: func(sink app.AppSink) gst.FlowReturn {
-			sample := sink.PullSample()
-			if sample == nil {
-				return gst.FlowOK
+		structure := caps.GetStructure(0)
+		name := structure.GetName()
+		// qtdemux appends the MP4 track ID to the stream ID. Pad names are
+		// ordinals (video_0, video_1), which must not become signed track IDs.
+		streamID := pad.GetStreamID()
+		id, err := strconv.ParseUint(streamID[strings.LastIndexByte(streamID, '/')+1:], 10, 32)
+		if err != nil || id == 0 {
+			fail(fmt.Errorf("invalid MP4 track stream ID %q", streamID))
+			return
+		}
+		track := &parsedTrack{id: uint32(id)}
+		switch name {
+		case "video/x-h264", "video/x-av1":
+			codec := "h264"
+			if name == "video/x-av1" {
+				codec = "av1"
 			}
-
-			info, ok := sample.GetBuffer().Map(gst.MapRead)
-			if !ok {
-				log.Error(ctx, "failed to map buffer")
-				return gst.FlowError
+			track.video = &localdb.SegmentMediadataVideo{TrackID: track.id, Codec: codec}
+			if width, ok := structure.GetInt("width"); ok {
+				track.video.Width = int(width)
 			}
-			defer info.Unmap()
-			// bufio copies the mapped bytes into its own buffer (or writes them
-			// through to the pipe synchronously), so nothing escapes the mapping.
-			_, err := bufW.Write(info.Data())
-			if err != nil {
-				log.Error(ctx, "failed to write to buffer", "error", err)
-				return gst.FlowError
+			if height, ok := structure.GetInt("height"); ok {
+				track.video.Height = int(height)
 			}
-
-			return gst.FlowOK
-		},
+			if num, den, ok := structure.GetFraction("framerate"); ok && num != 0 && den != 0 {
+				track.video.FPSNum, track.video.FPSDen = int(num), int(den)
+			}
+		case "audio/x-opus", "audio/mpeg":
+			codec := "opus"
+			if name == "audio/mpeg" {
+				version, _ := structure.GetInt("mpegversion")
+				if version != 2 && version != 4 {
+					fail(fmt.Errorf("unsupported audio codec %q", caps.String()))
+					return
+				}
+				codec = "aac"
+			}
+			track.audio = &localdb.SegmentMediadataAudio{TrackID: track.id, Codec: codec}
+			if rate, ok := structure.GetInt("rate"); ok {
+				track.audio.Rate = int(rate)
+			}
+			if channels, ok := structure.GetInt("channels"); ok {
+				track.audio.Channels = int(channels)
+			}
+		default:
+			fail(fmt.Errorf("unsupported media codec %q", name))
+			return
+		}
+		description := constants.Queue2Big + " ! appsink sync=false name=samples"
+		if name == "video/x-h264" {
+			description = fmt.Sprintf("%s ! tee name=t t. ! %s ! appsink sync=false name=samples t. ! %s ! h2642json ! appsink sync=false name=json", constants.Queue2Big, constants.Queue2Big, constants.Queue2Big)
+		}
+		bin, err := gst.ParseBinFromDescription(description, true)
+		if err != nil || !pipeline.Add(bin) {
+			fail(fmt.Errorf("create metadata track bin: %v", err))
+			return
+		}
+		bin.GetByName("samples").(app.AppSink).SetCallbacks(&app.AppSinkCallbacks{
+			NewSample: ParseSegmentMediaDataSinkNewSampleFunc(ctx, &track.found, &track.duration, &track.span),
+		})
+		if name == "video/x-h264" {
+			bin.GetByName("json").(app.AppSink).SetCallbacks(&app.AppSinkCallbacks{
+				NewSample: func(sink app.AppSink) gst.FlowReturn {
+					sample := sink.PullSample()
+					if sample == nil {
+						return gst.FlowOK
+					}
+					info, ok := sample.GetBuffer().Map(gst.MapRead)
+					if !ok {
+						return gst.FlowError
+					}
+					defer info.Unmap()
+					// h2642json emits one complete JSON object per buffer.
+					var object struct {
+						Header struct {
+							BFrame bool `json:"direct spatial mv pred flag"`
+						} `json:"slice header"`
+					}
+					if err := json.Unmarshal(info.Data(), &object); err != nil {
+						fail(fmt.Errorf("decode H264 metadata: %w", err))
+						return gst.FlowError
+					}
+					track.video.BFrames = track.video.BFrames || object.Header.BFrame
+					return gst.FlowOK
+				},
+			})
+		}
+		tracks = append(tracks, track)
+		if result := pad.Link(bin.GetStaticPad("sink")); result != gst.PadLinkOK {
+			fail(fmt.Errorf("link metadata track: %v", result))
+			return
+		}
+		if !bin.SyncStateWithParent() {
+			fail(fmt.Errorf("sync metadata track state"))
+		}
 	})
-
+	defer demux.HandlerDisconnect(handler)
+	busErr := make(chan error, 1)
 	go func() {
-		if err := gstpipeline.HandleBusMessages(ctx, pipeline); err != nil {
-			log.Log(ctx, "pipeline error", "error", err)
-		}
+		busErr <- gstpipeline.HandleBusMessages(ctx, pipeline)
 		cancel()
 	}()
-
-	// Start the pipeline
 	if pipeline.SetState(gst.StatePlaying) == gst.StateChangeFailure {
 		return nil, fmt.Errorf("error setting SegmentMetadata pipeline to playing")
 	}
-
 	<-ctx.Done()
-	err = w.Close()
-	// Validation can cancel while native callbacks are still updating metadata.
-	// Closing the pipe unblocks a callback writing to a failed decoder; then stop
-	// those callbacks before reading their results.
+	// Stop every native callback before reading the collected track state.
 	if pipeline.BlockSetState(gst.StateNull, gst.ClockTimeNone) == gst.StateChangeFailure {
-		log.Error(ctx, "error setting pipeline state to null")
+		return nil, fmt.Errorf("error setting pipeline state to null")
 	}
-	if err != nil {
-		return nil, fmt.Errorf("error closing writer: %w", err)
+	busError := <-busErr
+	select {
+	case err := <-parseErr:
+		return nil, err
+	default:
 	}
-
-	err = <-decodeErr
-	if err != nil {
-		return nil, fmt.Errorf("error decoding JSON object: %w", err)
+	if busError != nil {
+		return nil, busError
 	}
-
-	if videoMetadata == nil || !foundSomeVideo {
+	sort.Slice(tracks, func(i, j int) bool {
+		left, right := tracks[i], tracks[j]
+		if (left.video != nil) != (right.video != nil) {
+			return left.video != nil
+		}
+		if left.video != nil {
+			leftArea := int64(left.video.Width) * int64(left.video.Height)
+			rightArea := int64(right.video.Width) * int64(right.video.Height)
+			if leftArea != rightArea {
+				return leftArea > rightArea
+			}
+			if left.video.Width != right.video.Width {
+				return left.video.Width > right.video.Width
+			}
+		}
+		return left.id < right.id
+	})
+	metadata := &localdb.SegmentMediaData{}
+	var batch sampleSpan
+	for _, track := range tracks {
+		if !track.found {
+			continue
+		}
+		if track.span.valid {
+			batch.include(gst.ClockTime(track.span.start), track.span.end-track.span.start)
+		}
+		if track.video != nil {
+			if len(metadata.Video) == 0 {
+				metadata.Duration = track.duration.Nanoseconds()
+			}
+			metadata.Video = append(metadata.Video, track.video)
+		} else {
+			metadata.Audio = append(metadata.Audio, track.audio)
+		}
+	}
+	if len(metadata.Video) == 0 {
 		return nil, fmt.Errorf("no video in segment")
 	}
-	if audioMetadata == nil || !foundSomeAudio {
+	if len(metadata.Audio) == 0 {
 		return nil, fmt.Errorf("no audio in segment")
 	}
-
-	videoMetadata.BFrames = hasBFrames
-
-	meta := &localdb.SegmentMediaData{
-		Video: []*localdb.SegmentMediadataVideo{videoMetadata},
-		Audio: []*localdb.SegmentMediadataAudio{audioMetadata},
-	}
-
-	meta.Duration = videoDuration.Nanoseconds()
-
-	return meta, nil
+	metadata.BatchDuration = batch.end - batch.start
+	return metadata, nil
 }
 
-func ParseSegmentMediaDataSinkNewSampleFunc(ctx context.Context, foundThisTrack *bool, duration *time.Duration) func(sink app.AppSink) gst.FlowReturn {
+func ParseSegmentMediaDataSinkNewSampleFunc(ctx context.Context, foundThisTrack *bool, duration *time.Duration, span *sampleSpan) func(sink app.AppSink) gst.FlowReturn {
 	var firstPTS gst.ClockTime
 	haveFirstPTS := false
 	return func(sink app.AppSink) gst.FlowReturn {
@@ -295,6 +270,8 @@ func ParseSegmentMediaDataSinkNewSampleFunc(ctx context.Context, foundThisTrack 
 		}
 		if dur, ok := clockTimeDuration(buf.Duration()); ok && dur > 0 {
 			*foundThisTrack = true
+			timestamp := sample.GetSegment().ToRunningTime(gst.FormatTime, uint64(buf.PTS()))
+			span.include(gst.ClockTime(timestamp), dur)
 		} else {
 			log.Warn(ctx, "no duration found for track", "track", sink.GetName())
 		}

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -99,7 +100,7 @@ func PublishDraft(ctx context.Context, state *statedb.StatefulDB, store blob.Sto
 		span.SetStatus(codes.Error, "get_client")
 		return "", "", fmt.Errorf("get user xrpc client: %w", err)
 	}
-	sourceTracks, terr := publishTracksFromUpload(ctx, state, client, did, dv)
+	sourceTracks, terr := publishTracksFromUpload(ctx, state, store, client, did, dv)
 	if terr != nil {
 		span.RecordError(terr)
 		span.SetStatus(codes.Error, "publish_tracks")
@@ -198,7 +199,7 @@ func draftTID(atsURI string) (string, error) {
 // calls publishTrack for each A/V stream, returning the fresh strongRefs to use
 // as the video record's source. Returns (nil, nil) if the draft has no tied
 // upload (so the caller can fall back to a carried-over source).
-func publishTracksFromUpload(ctx context.Context, state *statedb.StatefulDB, client XRPCClient, did string, dv *statedb.DraftVideo) (*placestream.MediaDefs_SourceTracks, error) {
+func publishTracksFromUpload(ctx context.Context, state *statedb.StatefulDB, store blob.Store, client XRPCClient, did string, dv *statedb.DraftVideo) (*placestream.MediaDefs_SourceTracks, error) {
 	if dv.OriginUploadID == "" {
 		return nil, nil
 	}
@@ -209,7 +210,7 @@ func publishTracksFromUpload(ctx context.Context, state *statedb.StatefulDB, cli
 	if upload == nil {
 		return nil, nil
 	}
-	return tracksForUpload(ctx, state, client, did, upload)
+	return tracksForUpload(ctx, state, store, client, did, upload)
 }
 
 // tracksForUpload is a finished upload's source: its place.stream.media.track
@@ -218,7 +219,7 @@ func publishTracksFromUpload(ctx context.Context, state *statedb.StatefulDB, cli
 // same upload again (the operator repairing a video record, a retried
 // publish) reuses the same records rather than minting a second set. nil
 // when the upload has no probed streams.
-func tracksForUpload(ctx context.Context, state *statedb.StatefulDB, client XRPCClient, did string, upload *statedb.Upload) (*placestream.MediaDefs_SourceTracks, error) {
+func tracksForUpload(ctx context.Context, state *statedb.StatefulDB, store blob.Store, client XRPCClient, did string, upload *statedb.Upload) (*placestream.MediaDefs_SourceTracks, error) {
 	if refs, err := sourceTracksFromUpload(upload); err != nil {
 		return nil, err
 	} else if len(refs) > 0 {
@@ -234,18 +235,38 @@ func tracksForUpload(ctx context.Context, state *statedb.StatefulDB, client XRPC
 	if upload.ContentCID == "" {
 		return nil, fmt.Errorf("upload %s has no content_cid", upload.ID)
 	}
-	var tracks []comatproto.RepoStrongRef
-	if probe.Video != nil {
-		ref, err := publishTrack(ctx, client, did, upload.ContentCID, upload.BlobSize, probe.DurationMS, "1", "video", upload.SigningKey, probe.Video, nil)
+	if len(probe.Tracks) == 0 {
+		// Legacy probes had no IDs and reduced all tracks to one video/audio.
+		// Recover the actual canonical identities instead of guessing 1 and 2.
+		meta, err := readMetafile(ctx, store, upload.ContentCID)
 		if err != nil {
-			return nil, fmt.Errorf("publish video track: %w", err)
+			return nil, fmt.Errorf("read canonical track metadata: %w", err)
 		}
-		tracks = append(tracks, *ref)
+		probe = probeFromMetafile(meta)
 	}
-	if probe.Audio != nil {
-		ref, err := publishTrack(ctx, client, did, upload.ContentCID, upload.BlobSize, probe.DurationMS, "2", "audio", upload.SigningKey, nil, probe.Audio)
+	seen := make(map[string]bool, len(probe.Tracks))
+	for _, track := range probe.Tracks {
+		id, err := strconv.ParseUint(track.TrackID, 10, 32)
+		if err != nil || id == 0 || seen[track.TrackID] || (track.Video == nil) == (track.Audio == nil) {
+			return nil, fmt.Errorf("invalid canonical track %q", track.TrackID)
+		}
+		if track.Video != nil && videoCodecForLexicon(track.Video.Codec) == "" {
+			return nil, fmt.Errorf("unsupported video codec %q", track.Video.Codec)
+		}
+		if track.Audio != nil && audioCodecForLexicon(track.Audio) == "" {
+			return nil, fmt.Errorf("unsupported audio codec %q", track.Audio.Codec)
+		}
+		seen[track.TrackID] = true
+	}
+	var tracks []comatproto.RepoStrongRef
+	for _, track := range probe.Tracks {
+		mediaType := "video"
+		if track.Audio != nil {
+			mediaType = "audio"
+		}
+		ref, err := publishTrack(ctx, client, did, upload.ContentCID, upload.BlobSize, probe.DurationMS, track.TrackID, mediaType, track.SigningKey, track.Video, track.Audio)
 		if err != nil {
-			return nil, fmt.Errorf("publish audio track: %w", err)
+			return nil, fmt.Errorf("publish track %s: %w", track.TrackID, err)
 		}
 		tracks = append(tracks, *ref)
 	}

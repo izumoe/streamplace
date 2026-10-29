@@ -238,7 +238,7 @@ func ProcessVOD(ctx context.Context, cli *config.CLI, state *statedb.StatefulDB,
 	// staging blob. muxl owns all co64 offsets over the [header][fragments]
 	// layout, so the result is a real flat MP4 served whole, with HLS reading
 	// byte-ranges at flatHeaderSize+offset into the same blob.
-	flatHeader, err := synthFlatHeaderForObjects(ctx, store, []string{stagingKey})
+	flatHeader, _, err := synthFlatHeaderForObjects(ctx, store, []string{stagingKey})
 	if err != nil {
 		recordErr(span, stageContentAddressCopy, err)
 		return "", fmt.Errorf("synthesize flat header: %w", err)
@@ -272,6 +272,14 @@ func ProcessVOD(ctx context.Context, cli *config.CLI, state *statedb.StatefulDB,
 		return "", fmt.Errorf("write metafile: %w", err)
 	}
 
+	publishProbe := probeFromMetafile(metafile)
+	for i := range publishProbe.Tracks {
+		publishProbe.Tracks[i].SigningKey = signer.DIDKey
+		if video := publishProbe.Tracks[i].Video; video != nil && probe.Video != nil {
+			video.FPSNum, video.FPSDen = probe.Video.FPSNum, probe.Video.FPSDen
+		}
+	}
+
 	// Thumbnail generation is deferred: the place.stream.video record is
 	// created client-side now, so there's no server-side record to attach
 	// one to. generateThumbnail (and its fmp4 fix) stay in the tree,
@@ -284,7 +292,7 @@ func ProcessVOD(ctx context.Context, cli *config.CLI, state *statedb.StatefulDB,
 			cid:        muxlCID,
 			size:       blobSize,
 			mimeType:   "video/mp4",
-			probe:      probe,
+			probe:      publishProbe,
 			signingKey: signer.DIDKey,
 		})
 	}); err != nil {

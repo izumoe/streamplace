@@ -81,7 +81,7 @@ func PublishVideo(ctx context.Context, state *statedb.StatefulDB, store blob.Sto
 	// draft path does (processing no longer publishes them, so the upload
 	// row carries none until now): a video record whose source names no
 	// tracks is one nothing can play.
-	tracks, err := tracksForUpload(ctx, state, client, did, upload)
+	tracks, err := tracksForUpload(ctx, state, store, client, did, upload)
 	if err != nil {
 		span.RecordError(err)
 		return "", "", fmt.Errorf("publish tracks: %w", err)

@@ -69,6 +69,15 @@
       "required": ["codec", "rate", "channels"],
       "properties": {
         "codec": { "type": "string", "enum": ["opus", "aac"] },
+        "trackId": {
+          "type": "string",
+          "description": "Exact track ID within the signed MUXL container."
+        },
+        "signingKey": {
+          "type": "string",
+          "format": "did",
+          "description": "Signing key verified for this track, when known."
+        },
         "rate": { "type": "integer" },
         "channels": { "type": "integer" }
       }
@@ -77,7 +86,16 @@
       "type": "object",
       "required": ["codec", "width", "height"],
       "properties": {
-        "codec": { "type": "string", "enum": ["h264"] },
+        "codec": { "type": "string", "enum": ["h264", "av1"] },
+        "trackId": {
+          "type": "string",
+          "description": "Exact track ID within the signed MUXL container."
+        },
+        "signingKey": {
+          "type": "string",
+          "format": "did",
+          "description": "Signing key verified for this track, when known."
+        },
         "width": { "type": "integer" },
         "height": { "type": "integer" },
         "framerate": {

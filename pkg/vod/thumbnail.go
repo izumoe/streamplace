@@ -43,9 +43,9 @@ func generateThumbnail(ctx context.Context, store blob.Store, cid string, meta *
 	defer span.End()
 
 	var video *MetafileTrack
-	for tid := range meta.Tracks {
+	for _, tid := range metafileTrackIDs(meta) {
 		tr := meta.Tracks[tid]
-		if tr.Type == "video" {
+		if tr.Type == "video" && len(tr.Segments) > 0 {
 			video = &tr
 			break
 		}

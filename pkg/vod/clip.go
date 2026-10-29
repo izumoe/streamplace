@@ -137,7 +137,8 @@ func (c *Clip) Header(ctx context.Context) ([]byte, error) {
 		return nil, err
 	}
 	defer closeParts()
-	return synthFlatHeader(ctx, r)
+	header, _, err := synthFlatHeader(ctx, r)
+	return header, err
 }
 
 // BodySize is the byte length of the clip's segments.

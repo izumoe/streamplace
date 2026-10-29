@@ -70,6 +70,10 @@ type Segment_Audio struct {
 	Channels      int64  `json:"channels"`
 	Codec         string `json:"codec"`
 	Rate          int64  `json:"rate"`
+	// signingKey: Signing key verified for this track, when known.
+	SigningKey *string `json:"signingKey,omitempty"`
+	// trackId: Exact track ID within the signed MUXL container.
+	TrackId *string `json:"trackId,omitempty"`
 }
 
 // RecordTypeID implements glex.Record.
@@ -147,7 +151,11 @@ type Segment_Video struct {
 	Codec         string             `json:"codec"`
 	Framerate     *Segment_Framerate `json:"framerate,omitempty"`
 	Height        int64              `json:"height"`
-	Width         int64              `json:"width"`
+	// signingKey: Signing key verified for this track, when known.
+	SigningKey *string `json:"signingKey,omitempty"`
+	// trackId: Exact track ID within the signed MUXL container.
+	TrackId *string `json:"trackId,omitempty"`
+	Width   int64   `json:"width"`
 }
 
 // RecordTypeID implements glex.Record.

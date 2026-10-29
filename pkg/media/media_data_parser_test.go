@@ -1,7 +1,9 @@
 package media
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -9,12 +11,91 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sync/errgroup"
 	"stream.place/streamplace/pkg/log"
+	"stream.place/streamplace/pkg/muxl"
 	"stream.place/streamplace/test/remote"
 )
+
+func TestMediaDataParserAV1(t *testing.T) {
+	withNoGSTLeaks(t, func() {
+		fixture, err := os.ReadFile(getFixture("av1-aac-frag.mp4"))
+		require.NoError(t, err)
+		ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+		defer cancel()
+		metadata, err := ParseSegmentMediaData(ctx, fixture)
+		require.NoError(t, err)
+		require.Len(t, metadata.Video, 1)
+		require.Len(t, metadata.Audio, 1)
+		encoded, err := json.Marshal(metadata)
+		require.NoError(t, err)
+		require.Contains(t, string(encoded), `"codec":"av1"`)
+		require.Contains(t, string(encoded), `"codec":"aac"`)
+		require.Equal(t, 160, metadata.Video[0].Width)
+		require.Equal(t, 120, metadata.Video[0].Height)
+		require.Greater(t, metadata.Duration, int64(0))
+	})
+}
+
+func TestMediaDataParserMeasuresPublicationBatch(t *testing.T) {
+	for _, offset := range []time.Duration{0, 250 * time.Millisecond} {
+		t.Run(offset.String(), func(t *testing.T) {
+			withNoGSTLeaks(t, func() {
+				flat := runSynthPipeline(t, t.Context(), fmt.Sprintf(
+					"videotestsrc num-buffers=30 ! video/x-raw,width=160,height=120,framerate=30/1 ! x264enc tune=zerolatency speed-preset=ultrafast ! h264parse ! mp4mux name=mux ! appsink name=sink audiotestsrc num-buffers=50 samplesperbuffer=960 timestamp-offset=%d ! audio/x-raw,rate=48000,channels=1 ! audioconvert ! opusenc ! mux.", offset))
+				metadata, err := ParseSegmentMediaData(t.Context(), flat)
+				require.NoError(t, err)
+				require.InDelta(t, time.Second+offset, metadata.BatchDuration, float64(40*time.Millisecond),
+					"publication timing includes the later audio track's offset and final sample")
+			})
+		})
+	}
+}
+
+func TestMediaDataParserPreservesAllTrackIDs(t *testing.T) {
+	withNoGSTLeaks(t, func() {
+		fixture, err := os.ReadFile(getFixture("h264-opus-frag.mp4"))
+		require.NoError(t, err)
+		base, err := muxl.RunMuxlCanonicalize(t.Context(), fixture, map[uint32]uint32{1: 7, 2: 42})
+		require.NoError(t, err)
+		events, err := unwrapMuxlEvents(t.Context(), base)
+		require.NoError(t, err)
+		_, tracks := catalogAndTracks(events)
+		other, err := muxl.RunMuxlCanonicalize(t.Context(), renditionMP4(t, 640, 480), map[uint32]uint32{1: 20})
+		require.NoError(t, err)
+		events, err = unwrapMuxlEvents(t.Context(), other)
+		require.NoError(t, err)
+		_, extra := catalogAndTracks(events)
+		tracks["20"] = extra["20"]
+		var flat bytes.Buffer
+		require.NoError(t, muxl.RunMuxlWrap(t.Context(), bytes.NewReader(concatTracksByID(tracks)), "flat", &flat))
+		metadata, err := ParseSegmentMediaData(t.Context(), flat.Bytes())
+		require.NoError(t, err)
+		require.Len(t, metadata.Video, 2)
+		require.Len(t, metadata.Audio, 1)
+		encoded, err := json.Marshal(metadata)
+		require.NoError(t, err)
+		var got struct {
+			Video []struct {
+				TrackID uint32 `json:"trackId"`
+				Codec   string `json:"codec"`
+			} `json:"video"`
+			Audio []struct {
+				TrackID uint32 `json:"trackId"`
+				Codec   string `json:"codec"`
+			} `json:"audio"`
+		}
+		require.NoError(t, json.Unmarshal(encoded, &got))
+		require.Equal(t, uint32(20), got.Video[0].TrackID, "larger source video is primary regardless of pad or track ID order")
+		require.Equal(t, uint32(7), got.Video[1].TrackID)
+		require.Equal(t, "h264", got.Video[0].Codec)
+		require.Equal(t, uint32(42), got.Audio[0].TrackID)
+		require.Equal(t, "opus", got.Audio[0].Codec)
+	})
+}
 
 func TestMediaDataParser(t *testing.T) {
 	segmentsWithoutBFrames := []string{
