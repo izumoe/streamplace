@@ -42,6 +42,10 @@ if [ -d "$BUILDDIR" ]; then
 fi
 
 e2e_harness_start() {
+  if [ "${E2E_LATENCY:-}" = 1 ] && [ "${E2E_ERTMP:-}" = 1 ]; then
+    echo "choose one external publisher: E2E_LATENCY or E2E_ERTMP"
+    exit 1
+  fi
   if [ ! -x "$BUILDDIR/streamplace" ]; then
     echo "harness binary $BUILDDIR/streamplace missing — run 'make dev' first"
     exit 1
@@ -67,7 +71,7 @@ e2e_harness_start() {
   E2E_HTTPS_PDS_HOSTNAME="${E2E_HTTPS_PDS_HOSTNAME-localhost-pds.streamplace.network}"
   E2E_HTTPS_STATION_HOSTNAME="${E2E_HTTPS_STATION_HOSTNAME-localhost-station.streamplace.team}"
   local args=(e2e)
-  if [ "${E2E_LATENCY:-}" = 1 ]; then
+  if [ "${E2E_LATENCY:-}" = 1 ] || [ "${E2E_ERTMP:-}" = 1 ]; then
     args+=(--external-stream)
   fi
   if [ -n "$E2E_HTTPS_PDS_HOSTNAME" ]; then
@@ -92,15 +96,29 @@ e2e_harness_start() {
   export SERVER_URL SERVER2_URL ACCOUNT_HANDLE ACCOUNT_DID ACCOUNT_PASSWORD VIDEO_URI
   export E2E_FIXTURE_MP4 PDS_HTTP_URL
   export E2E_STREAM_KEY
+  export E2E_RTMP_URL
   # Every node's log, for specs that check how something happened.
   export E2E_LOGFILE
   # only set in HTTPS mode
   export SERVER_HTTPS_URL PDS_HTTPS_URL E2E_PROXY_URL E2E_TLS_SPKI E2E_TLS_CA
+  if [ "${E2E_ERTMP:-}" = 1 ]; then
+    if command -v setsid >/dev/null 2>&1; then
+      setsid go run ./test/ertmp >&2 &
+    else
+      go run ./test/ertmp >&2 &
+    fi
+    E2E_PUBLISHER_PID=$!
+  fi
   echo "harness up: SERVER_URL=$SERVER_URL ACCOUNT_HANDLE=$ACCOUNT_HANDLE${SERVER_HTTPS_URL:+ SERVER_HTTPS_URL=$SERVER_HTTPS_URL}"
 }
 
 e2e_harness_stop() {
   [ -n "${E2E_HARNESS_PID:-}" ] || return 0
+  if [ -n "${E2E_PUBLISHER_PID:-}" ]; then
+    kill -- -"$E2E_PUBLISHER_PID" 2>/dev/null || kill "$E2E_PUBLISHER_PID" 2>/dev/null || true
+    wait "$E2E_PUBLISHER_PID" 2>/dev/null || true
+    E2E_PUBLISHER_PID=
+  fi
   kill -- -"$E2E_HARNESS_PID" 2>/dev/null || kill "$E2E_HARNESS_PID" 2>/dev/null || true
   wait "$E2E_HARNESS_PID" 2>/dev/null || true
   # The ingest worker re-setsid's itself, escaping the group kill; sweep the

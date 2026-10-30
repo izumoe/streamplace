@@ -34,8 +34,16 @@ the existing reconnect buffer after a five-second deadline. HLS keeps each
 stream's writer and publication status together, with distinct writers across
 preview/public transitions. The browser retains live audio ordering and adds a
 200 ms scheduling reserve through its existing MoQ sync mechanism. See
-[measurement and limits](moq.md#measuring-live-latency). Enhanced RTMP remains
-the next ingest migration.
+[measurement and limits](moq.md#measuring-live-latency).
+
+Native RTMP ingest accepts one to six H.264 or AV1 video tracks and exactly one
+AAC audio track. It sends encoded packets directly to the shared signer,
+preserving each source track and its identity without an internal RTMP relay.
+The bitrate limit still applies to the aggregate stream. HEVC is unsupported;
+AV1 codec or resolution changes require reconnecting. The optional legacy
+MistServer comparison relay remains H.264-only. AV1 playback uses the original
+video over MoQ; H.264 compatibility output for legacy transports requires the
+configured transcoder service.
 
 This is a source and startup audit, not usage research. Technical coupling is
 visible in the repository; demand for optional features is unknown. No binary

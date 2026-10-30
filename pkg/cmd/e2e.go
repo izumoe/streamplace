@@ -545,6 +545,7 @@ func runE2E(ctx context.Context, devEnvPath, httpsPDSHost, httpsStationHost stri
 		httpAddr, peerAddr, out.Handle, out.Did, password, videoURI, fixture, env.PDSURL)
 	if externalStream {
 		vars += "E2E_STREAM_KEY=" + priv + "\n"
+		vars += fmt.Sprintf("E2E_RTMP_URL=rtmp://127.0.0.1:%d/live\n", rtmpPort)
 	}
 	if tlsEnv != nil {
 		// The same node over HTTPS at its public name, plus what clients

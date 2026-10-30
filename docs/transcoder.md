@@ -27,6 +27,11 @@ An empty URL disables live transcoding. Existing rendition selection still uses
 and skips new work when those slots or the service's slots are busy. Publication
 keeps its existing order even when jobs finish out of order.
 
+The service also supplies H.264 compatibility output for AV1-only sources used
+by WebRTC and RTMP playback. Without a configured service, those sources retain
+their original AV1 video for MoQ playback. A publisher-provided multitrack ladder
+that includes H.264 does not need video transcoding for compatibility.
+
 The listener is private by default and has no application authentication.
 Keep it on a private network or place authenticated transport in front of it.
 The node treats the endpoint as trusted operator infrastructure.
@@ -41,7 +46,7 @@ credentials. The service defaults to two jobs, with a 30-second job deadline.
 `POST /transcode` accepts `multipart/form-data` with exactly two ordered parts:
 
 1. `profiles`, a JSON array of 1 to 8 objects.
-2. `source`, a complete MP4 segment with H.264 video and AAC or Opus audio.
+2. `source`, a complete MP4 segment with H.264 or AV1 video and AAC or Opus audio.
 
 Each profile contains `name`, `width`, `height`, `bitrate` in bits per second,
 `profile` (`high` or `baseline`), and optional `fps` and `fpsDen`. For example:
@@ -70,8 +75,8 @@ and a `Content-Disposition: form-data` name matching one requested profile.
 Every requested name must appear exactly once with nonempty media; order may
 differ. The client restores ladder order before signing. The included encoder
 decodes video once, scales each rendition and encodes H.264 with no B-frames.
-It preserves compressed audio packets and does not synthesize extra frames to
-meet a higher requested rate.
+Its native build includes dav1d for AV1 decoding. It preserves compressed audio
+packets and does not synthesize extra frames to meet a higher requested rate.
 
 Malformed requests return 400, oversized source media 413, encoding failures
 422, busy admission 503 and job deadlines 504. Failed jobs publish no partial
@@ -84,5 +89,5 @@ the client also bounds the response to 128 MiB. These are payload limits, not a
 total memory budget: native queues and concurrently buffered renditions need
 additional memory. Size `-jobs` and container memory limits for the chosen ladder.
 
-Tests exercise real AAC/Opus segments, frame and packet preservation,
+Tests exercise real H.264/AV1 and AAC/Opus segments, frame and packet preservation,
 cancellation, admission, malformed output and signed live-window publication.

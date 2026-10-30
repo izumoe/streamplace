@@ -14,6 +14,7 @@ export default defineConfig({
   test: {
     globals: true,
     environment: "jsdom",
+    server: { deps: { inline: [/@moq\//] } },
     include: ["src/**/*.test.{ts,tsx}", "src/**/*.spec.{ts,tsx}"],
   },
 });

@@ -11,6 +11,7 @@ import { observeAudioOutput } from "../../e2e-web/flows/audio-observer";
 declare global {
   interface Window {
     loseMoqConnection?: () => Promise<void>;
+    moqCodecSupport?: { codec: string; supported: boolean }[];
   }
 }
 
@@ -83,6 +84,115 @@ async function expectAudioPlaying(page: Page, testInfo: TestInfo) {
     throw error;
   }
 }
+
+test("Enhanced RTMP keeps same-height H264 tracks distinct and decodes supported AV1", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    process.env.E2E_ERTMP !== "1",
+    "requires the real multitrack publisher",
+  );
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  await page.addInitScript(observeAudioOutput);
+  await page.addInitScript(() => {
+    window.moqCodecSupport = [];
+    const supports = VideoDecoder.isConfigSupported;
+    VideoDecoder.isConfigSupported = async function (config) {
+      const result = await Reflect.apply(supports, this, [config]);
+      window.moqCodecSupport!.push({
+        codec: config.codec,
+        supported: result.supported === true,
+      });
+      return result;
+    };
+  });
+  const player = await openLivePlayer(page);
+  await expect(player).toHaveAttribute("data-playback-transport", "moq");
+  const canvas = player.locator("canvas");
+  await expect(canvas).toHaveCSS("opacity", "1");
+  await player.hover();
+  await player.locator('button[title="Unmute"]').click();
+  await expectAudioPlaying(page, testInfo);
+
+  const picture = (surface: Locator) =>
+    surface.evaluate((element: HTMLCanvasElement | HTMLVideoElement) => {
+      const copy = document.createElement("canvas");
+      copy.width = 160;
+      copy.height = 120;
+      const context = copy.getContext("2d", { willReadFrequently: true })!;
+      context.drawImage(element, 0, 0, copy.width, copy.height);
+      const [red, green, blue] = context.getImageData(8, 8, 1, 1).data;
+      return {
+        color:
+          red > green + 60 && red > blue + 60
+            ? "red"
+            : blue > red + 60 && blue > green + 60
+              ? "blue"
+              : green > red + 60 && green > blue + 60
+                ? "green"
+                : "unknown",
+        frame: copy.toDataURL(),
+      };
+    });
+  async function selectAndSee(surface: Locator, label: string, color: string) {
+    await player.hover();
+    await player.locator('button[title="Settings"]').click();
+    await page.getByRole("menuitemradio", { name: label, exact: true }).click();
+    await page.keyboard.press("Escape");
+    await expect.poll(async () => (await picture(surface)).color).toBe(color);
+    const frame = (await picture(surface)).frame;
+    await expect
+      .poll(async () => (await picture(surface)).frame)
+      .not.toBe(frame);
+  }
+
+  await selectAndSee(canvas, "120p (H.264, video1)", "red");
+  await selectAndSee(canvas, "120p (H.264, video2)", "blue");
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        window.moqCodecSupport!.find(({ codec }) => codec.startsWith("av01.")),
+      ),
+    )
+    .not.toBeUndefined();
+  const support = await page.evaluate(() => window.moqCodecSupport!);
+  await testInfo.attach("native-video-codec-support", {
+    body: JSON.stringify(support),
+    contentType: "application/json",
+  });
+  const av1 = support.find(({ codec }) => codec.startsWith("av01."))!;
+  testInfo.annotations.push({
+    type: "AV1",
+    description: av1.supported
+      ? "native decode supported"
+      : "native decode unsupported",
+  });
+  if (av1.supported) {
+    await selectAndSee(canvas, "120p (AV1, video3)", "green");
+    await expectAudioPlaying(page, testInfo);
+  } else {
+    await player.hover();
+    await player.locator('button[title="Settings"]').click();
+    await expect(page.getByRole("menuitemradio", { name: /AV1/ })).toHaveCount(
+      0,
+    );
+    await page.keyboard.press("Escape");
+  }
+
+  await player.hover();
+  await player.locator('button[title="Settings"]').click();
+  await page
+    .getByRole("menuitemradio", { name: "Standard", exact: true })
+    .click();
+  await page.keyboard.press("Escape");
+  await expect(player).toHaveAttribute("data-playback-transport", "hls");
+  const video = player.locator("video");
+  await expectVideoAdvancing(video);
+  await selectAndSee(video, "120p (H.264, video1)", "red");
+  await selectAndSee(video, "120p (H.264, video2)", "blue");
+  expect(pageErrors).toEqual([]);
+});
 
 test("MoQ plays real video and audio, pauses, and releases resources on transport switch", async ({
   page,

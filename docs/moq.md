@@ -22,12 +22,13 @@ section described below for signed media batches.
 | broadcast path                              | the streamer's DID (`did:plc:...`) for peers; `playback/did:plc:...` for browser playback                   |
 | `catalog.json`, `catalog.json.z`, `catalog` | the hang and MSF catalogs, one CMAF rendition per track                                                     |
 | track                                       | one MUXL track, named by its MUXL rendition (`video1`, `audio2`, `audio3`; renditions `video100` up)        |
-| group                                       | that track's canonical segment for one GoP                                                                  |
+| group                                       | a shared admission batch sequence for peers; a video GoP or audio batch for browser playback                |
 | frame                                       | one `moof`+`mdat`, the first also carrying the segment's leading `uuid` boxes (C2PA manifest, MUXL catalog) |
 | timestamp                                   | the fragment's first presentation time, on the track's timescale                                            |
 
-A group's frames concatenate back to the track's canonical segment, byte
-for byte. Each catalog rendition's CMAF `init` is the track's own init
+Peer groups preserve each track's signed canonical assets byte for byte.
+Browser video groups begin at actual sync samples and can cross admission
+batches; audio groups follow the batches. Each catalog rendition's CMAF `init` is the track's own init
 segment, synthesized from its MUXL catalog (`muxl wrap --init-only`); the
 hang codec fields are derived from that init by `moq-mux`. The catalog is
 unsigned: a node uses it only to find the tracks, and verifies the bytes.
@@ -94,8 +95,9 @@ must be reachable by the browser; an HTTP reverse proxy alone does not
 carry this connection. Discovery uses the configured node, independently
 of whether Bluesky's public AppView has indexed the streamer's profile.
 
-The playback broadcast uses independently verified source media before
-the ingest worker finishes adding AAC. Peers continue to receive the
+For worker-based ingest, the playback broadcast uses independently verified
+source media before the worker finishes adding AAC. Direct RTMP ingest publishes
+after source GoP signing and audio completion. Peers continue to receive the
 completed, signed canonical media on the ordinary DID path. Signature,
 streamer identity and distribution checks apply before source playback;
 unpublished segments are not served over MoQ. When a live bitrate limit

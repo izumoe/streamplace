@@ -8,6 +8,7 @@ import { useEffect, useImperativeHandle, useRef, type RefObject } from "react";
 import { useTranslation } from "react-i18next";
 import type { PlayerBackendHandle, PlayerStats, QualityOption } from "./player";
 import { readQualityPreference } from "./player";
+import { getQualityLabels } from "./quality-labels";
 
 export type HLSPlayerProps = {
   /** The video element managed by the parent <Player>. */
@@ -121,7 +122,17 @@ export function HLSPlayer({
           : lowLatency
             ? LIVE_LOWLATENCY_HLS_SETTINGS
             : LIVE_HLS_SETTINGS;
-      const hls = new Hls(settings);
+      const ownLivePlaylist =
+        mode === "live" &&
+        new URL(src, window.location.href).pathname ===
+          "/xrpc/place.stream.playback.getLivePlaylist";
+      // Signed source tracks can have identical bandwidth and geometry.
+      // They are independent choices, not redundant delivery pathways.
+      const hls = new Hls(
+        ownLivePlaylist
+          ? { ...settings, contentSteeringController: undefined }
+          : settings,
+      );
       hlsRef.current = hls;
 
       hls.on(Hls.Events.MANIFEST_PARSED, (_e, data) => {
@@ -293,9 +304,19 @@ function buildQualities(
   levels: Level[],
   t: (key: string) => string,
 ): QualityOption[] {
-  const explicit = levels.map((level, index) => ({
+  const labels = getQualityLabels(
+    levels.map((level, index) => {
+      const track = new URL(level.uri).searchParams.get("track");
+      return {
+        id: track === null ? `Level ${index}` : `video${track}`,
+        codec: level.videoCodec,
+        label: labelForLevel(level, index),
+      };
+    }),
+  );
+  const explicit = labels.map((label, index) => ({
     index,
-    label: labelForLevel(level, index),
+    label,
   }));
   // "Auto" maps to hls.js currentLevel = -1.
   return [{ index: -1, label: t("player-quality-auto") }, ...explicit];

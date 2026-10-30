@@ -1,0 +1,105 @@
+diff --git a/container/cmaf/decode.d.ts b/container/cmaf/decode.d.ts
+index 07607e838ba9932f61d2c2529e72266b84c979e4..07aa7b930eaedfc955b8ee5e5e453c3aa98617ed 100644
+--- a/container/cmaf/decode.d.ts
++++ b/container/cmaf/decode.d.ts
+@@ -9,6 +9,8 @@ import type { Time } from "@moq/net";
+ export interface InitSegment {
+     /** Codec-specific description (avcC, hvcC, esds, dOps, etc.) */
+     description?: Uint8Array;
++    /** AV1 initialization OBUs from av1C, restored in WebCodecs key chunks. */
++    av1SequenceHeader?: Uint8Array;
+     /** Time units per second */
+     timescale: number;
+     /** Track ID from the init segment */
+diff --git a/container/cmaf/decode.js b/container/cmaf/decode.js
+index 00a407a10732293c343bfada350c24bddb21602d..501cd727470f360c3603779b59e74547031787ab 100644
+--- a/container/cmaf/decode.js
++++ b/container/cmaf/decode.js
+@@ -3,11 +3,12 @@
+  * MP4 decoding utilities for parsing fMP4 init and data segments.
+  * Used by WebCodecs to extract raw frames from CMAF container.
+  */
+-import { readAvc1, readHdlr, readHev1, readHvc1, readIsoBoxes, readMdat, readMdhd, readMfhd, readMp4a, readStsd, readTfdt, readTfhd, readTkhd, readTrex, readTrun, } from "@svta/cml-iso-bmff";
++import { createVisualSampleEntryReader, readAvc1, readHdlr, readHev1, readHvc1, readIsoBoxes, readMdat, readMdhd, readMfhd, readMp4a, readStsd, readTfdt, readTfhd, readTkhd, readTrex, readTrun, } from "@svta/cml-iso-bmff";
+ // Configure readers for specific box types we need to parse
+ const INIT_READERS = {
+     avc1: readAvc1,
+     avc3: readAvc1, // avc3 has same structure
++    av01: createVisualSampleEntryReader("av01"),
+     hvc1: readHvc1,
+     hev1: readHev1,
+     mp4a: readMp4a,
+@@ -89,12 +90,16 @@ export function decodeInitSegment(init) {
+     }
+     // Extract codec-specific description from the first sample entry
+     const entry = stsd.entries[0];
+-    const description = extractDescription(entry);
++    const configuration = extractDescription(entry);
++    // AV1 WebCodecs ignores description and requires initialization OBUs in key chunks.
++    const av1SequenceHeader = entry.type === "av01" ? configuration?.subarray(4) : undefined;
++    const description = entry.type === "av01" ? undefined : configuration;
+     // Find moov > mvex > trex for this track to extract default sample values.
+     // These are the bottom of the fallback chain when tfhd/trun don't specify them.
+     const trex = findBox(boxes, (box) => box.type === "trex" && box.trackId === trackId);
+     return {
+         description,
++        av1SequenceHeader,
+         timescale: mdhd.timescale,
+         trackId,
+         kind,
+@@ -120,7 +125,7 @@ function extractDescription(entry) {
+             if (box.length > 8) {
+                 // Check if this looks like a codec config box by reading the type
+                 const typeBytes = String.fromCharCode(box[4], box[5], box[6], box[7]);
+-                if (typeBytes === "avcC" || typeBytes === "hvcC" || typeBytes === "dOps") {
++                if (typeBytes === "avcC" || typeBytes === "hvcC" || typeBytes === "dOps" || typeBytes === "av1C") {
+                     return new Uint8Array(box.slice(8));
+                 }
+                 if (typeBytes === "esds") {
+@@ -132,7 +137,7 @@ function extractDescription(entry) {
+         }
+         // Check for known codec config box types
+         const boxType = box.type;
+-        if (boxType === "avcC" || boxType === "hvcC" || boxType === "dOps") {
++        if (boxType === "avcC" || boxType === "hvcC" || boxType === "dOps" || boxType === "av1C") {
+             if (box.view) {
+                 const view = box.view;
+                 const headerSize = 8;
+@@ -288,22 +293,30 @@ export function decodeDataSegment(segment, init) {
+         if (dataOffset + sampleSize > mdatData.length) {
+             throw new Error(`Sample ${i} would overflow mdat: offset=${dataOffset}, size=${sampleSize}, mdatLength=${mdatData.length}`);
+         }
++        const compositionOffset = sample.sampleCompositionTimeOffset ?? 0;
+         const sampleFlags = i === 0 && trun.firstSampleFlags !== undefined
+             ? trun.firstSampleFlags
+             : (sample.sampleFlags ?? defaultFlags);
+-        const compositionOffset = sample.sampleCompositionTimeOffset ?? 0;
+-        // Extract sample data
+-        const data = new Uint8Array(mdatData.slice(dataOffset, dataOffset + sampleSize));
++        // Check if keyframe (sample_is_non_sync_sample flag is bit 16)
++        // If flag is 0, treat as keyframe for safety. Audio never reports one: every
++        // audio sample is a sync sample, and the group start is the consumer's to mark.
++        const keyframe = init.kind === "video" && (sampleFlags === 0 || (sampleFlags & 0x00010000) === 0);
++        // Restore AV1 initialization only in the decode payload, never in signed CMAF bytes.
++        const sampleData = mdatData.subarray(dataOffset, dataOffset + sampleSize);
++        const sequence = keyframe && init.av1SequenceHeader;
++        // A temporal delimiter may precede an in-band sequence header.
++        const sequenceOffset = sampleData[0] === 0x12 && sampleData[1] === 0 ? 2 : 0;
++        const prefix = sequence?.length && !sequence.every((byte, index) => sampleData[sequenceOffset + index] === byte)
++            ? sequence : undefined;
++        const data = new Uint8Array((prefix?.length ?? 0) + sampleSize);
++        if (prefix) data.set(prefix);
++        data.set(sampleData, prefix?.length ?? 0);
+         dataOffset += sampleSize;
+         // Calculate presentation timestamp in microseconds
+         // PTS = (decode_time + composition_offset) * 1_000_000 / timescale
+         const pts = decodeTime + compositionOffset;
+         const timestamp = Math.round((pts * 1_000_000) / init.timescale);
+         const duration = Math.round((sampleDuration * 1_000_000) / init.timescale);
+-        // Check if keyframe (sample_is_non_sync_sample flag is bit 16)
+-        // If flag is 0, treat as keyframe for safety. Audio never reports one: every
+-        // audio sample is a sync sample, and the group start is the consumer's to mark.
+-        const keyframe = init.kind === "video" && (sampleFlags === 0 || (sampleFlags & 0x00010000) === 0);
+         samples.push({
+             data,
+             timestamp,

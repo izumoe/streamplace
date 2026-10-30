@@ -70,7 +70,7 @@ native RTMP listeners do not report this warning.
 
 #### 2e. Suggested Video Encoder Settings
 
-- Video Encoder: x264/h264 (**must** be an x/h.264 encoder)
+- Video Encoder: x264/h264 for the public servers and WHIP settings above.
 - Rate Control: `CBR`
 - Keyframe Interval: `1s` (or anything less than once every ~7s)
   - This is _one keyframe per second_
@@ -83,6 +83,14 @@ native RTMP listeners do not report this warning.
 :::caution
 These last two options are very important! Your viewers' experience may be choppy or otherwise subpar if you don't have them correct.
 :::
+
+The fork's native RTMP listener also supports enhanced RTMP with H.264 or AV1,
+up to six video tracks and exactly one AAC audio track. Use the server address
+provided by your fork's operator; these capabilities do not describe the public
+`rtmp.stream.place` service above. HEVC is unsupported. Reconnect after changing
+an AV1 stream's codec or resolution. AV1-only sources need the operator's
+transcoder service for H.264 compatibility playback over WebRTC or RTMP. The
+optional legacy MistServer comparison relay supports H.264 only.
 
 ### 3. Announce your stream
 

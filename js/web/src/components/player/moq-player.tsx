@@ -7,6 +7,7 @@ import {
   STALL_TIMEOUT_MS,
 } from "./moq-source";
 import type { PlayerBackendHandle, PlayerStats, QualityOption } from "./player";
+import { getQualityLabels } from "./quality-labels";
 
 type MoQPlayerProps = {
   canvasRef: RefObject<HTMLCanvasElement | null>;
@@ -95,6 +96,8 @@ export function MoQPlayer(props: MoQPlayerProps) {
       const state = propsRef.current;
       const video = player?.renderer.out.timestamp.peek();
       const audio = player?.audio.out.timestamp.peek();
+      const audioRenditions =
+        player?.audio.source.out.catalog.peek()?.renditions;
       if (
         state.paused ||
         player?.renderer.out.visible.peek() === false ||
@@ -105,7 +108,8 @@ export function MoQPlayer(props: MoQPlayerProps) {
       if (
         state.paused ||
         state.muted ||
-        !player?.audio.source.out.config.peek() ||
+        !audioRenditions ||
+        Object.keys(audioRenditions).length === 0 ||
         (audio !== undefined && audio !== audioTimestamp)
       ) {
         lastAudioProgress = now;
@@ -226,32 +230,26 @@ export function MoQPlayer(props: MoQPlayerProps) {
           if (paused || stalled) waitingToPlay = true;
           propsRef.current.onBufferingChange(!paused && stalled);
         });
-        effects.cleanup(
-          currentPlayer.audio.source.out.available.subscribe((available) => {
-            const advertised =
-              currentPlayer.audio.source.out.catalog.peek()?.renditions;
-            if (
-              advertised &&
-              Object.keys(advertised).length > 0 &&
-              Object.keys(available).length === 0
-            ) {
-              unavailable();
-            }
-          }),
-        );
         effects.run((effect) => {
           const available = effect.get(
             currentPlayer.video.source.out.available,
           );
           const entries = Object.entries(available);
           renditionsRef.current = entries.map(([name]) => name);
-          propsRef.current.onQualitiesChange([
-            { index: -1, label: translationRef.current("player-quality-auto") },
-            ...entries.map(([name, config], index) => ({
-              index,
+          const labels = getQualityLabels(
+            entries.map(([name, config]) => ({
+              id: name,
+              codec: config.codec,
               label:
                 config.label ??
                 (config.codedHeight ? `${config.codedHeight}p` : name),
+            })),
+          );
+          propsRef.current.onQualitiesChange([
+            { index: -1, label: translationRef.current("player-quality-auto") },
+            ...labels.map((label, index) => ({
+              index,
+              label,
             })),
           ]);
           const target = effect.get(controls.target);
