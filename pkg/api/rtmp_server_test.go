@@ -73,12 +73,12 @@ func TestRelayRTMPSessionSequenceHeader(t *testing.T) {
 	slice := []byte{0x41, 0x9a, 0x02}
 
 	session := &media.RTMPSession{
-		EventChan:  make(chan any, 8),
-		VideoTrack: &gortmplib.Track{Codec: &codecs.H264{SPS: sps, PPS: pps}},
+		EventChan:   make(chan any, 8),
+		VideoTracks: []media.RTMPVideoTrack{{Track: &gortmplib.Track{Codec: &codecs.H264{SPS: sps, PPS: pps}}}},
 	}
-	session.EventChan <- &media.RTMPH264Data{AU: [][]byte{sps, pps}}
-	session.EventChan <- &media.RTMPH264Data{AU: [][]byte{idr}}
-	session.EventChan <- &media.RTMPH264Data{AU: [][]byte{slice}, PTS: 33 * time.Millisecond, DTS: 33 * time.Millisecond}
+	session.EventChan <- &media.RTMPVideoData{AU: [][]byte{sps, pps}}
+	session.EventChan <- &media.RTMPVideoData{AU: [][]byte{idr}}
+	session.EventChan <- &media.RTMPVideoData{AU: [][]byte{slice}, PTS: 33 * time.Millisecond, DTS: 33 * time.Millisecond}
 	close(session.EventChan)
 
 	conn := &recordingConn{}

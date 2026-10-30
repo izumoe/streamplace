@@ -36,7 +36,7 @@ func (mm *MediaManager) MP4Ingest(ctx context.Context, input io.Reader, ms Media
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	signer, err := mm.SegmentAndSignElem(ctx, ms)
+	signer, err := mm.SegmentAndSignElem(ctx, ms, 1)
 	if err != nil {
 		return err
 	}

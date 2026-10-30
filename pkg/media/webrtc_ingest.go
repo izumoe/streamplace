@@ -25,7 +25,7 @@ func (mm *MediaManager) WebRTCIngest(ctx context.Context, offer *webrtc.SessionD
 	}
 	ctx = log.WithLogValues(ctx, "webrtcID", uu.String(), "mediafunc", "WebRTCIngest", "streamer", signer.Streamer())
 	ctx, cancel := context.WithCancel(ctx)
-	signerElem, err := mm.SegmentAndSignElem(ctx, signer)
+	signerElem, err := mm.SegmentAndSignElem(ctx, signer, 1)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("failed create signer element: %w", err)

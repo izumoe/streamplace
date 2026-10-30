@@ -150,8 +150,7 @@ func SegmentElem(ctx context.Context, cli *config.CLI, streamer string, doH264Pa
 	return elem, nil
 }
 
-func (mm *MediaManager) SegmentAndSignElem(ctx context.Context, ms MediaSigner) (gst.Element, error) {
-	tracer := otel.Tracer("signer")
+func (mm *MediaManager) SegmentAndSignElem(ctx context.Context, ms MediaSigner, videoTrackCount int) (gst.Element, error) {
 	streamer := ms.Streamer()
 
 	// Stamp a fresh ingest-session epoch on the context that flows down to every
@@ -167,27 +166,28 @@ func (mm *MediaManager) SegmentAndSignElem(ctx context.Context, ms MediaSigner) 
 	// segment, so ValidateMP4 derives StartTime from the segment itself — no
 	// per-GoP wall-clock is threaded through here.
 	onSegment := func(ctx context.Context, segment []byte) error {
-		// Top-level span for segment-delivery latency: signed bytes from the
-		// streaming signer go in, a validated/persisted/distributed segment
-		// comes out (ValidateMP4 = in-wasm c2pa verify + media parse + DB).
-		ctx, span := tracer.Start(ctx, "SegmentAndSign", trace.WithAttributes(
-			attribute.String("streamer", streamer),
-			attribute.Int("segment_bytes", len(segment)),
-		))
-		defer span.End()
-		startTime := time.Now()
-		defer func() {
-			spmetrics.SegmentDeliveryDuration.WithLabelValues(streamer).
-				Observe(float64(time.Since(startTime).Milliseconds()))
-		}()
-		if err := mm.ValidateMP4(ctx, bytes.NewReader(segment), true); err != nil {
-			span.SetAttributes(attribute.String("error", "validate"))
-			mm.cli.DumpDebugSegment(ctx, "just-signed-segment.m4s", bytes.NewReader(segment))
-			return fmt.Errorf("error validating signed segment: %w", err)
-		}
-		return nil
+		return mm.receiveSignedSegment(ctx, streamer, segment)
 	}
-	return MuxlSignSegmentElem(ctx, mm.cli, ms, onSegment)
+	return MuxlSignSegmentElem(ctx, mm.cli, ms, videoTrackCount, onSegment)
+}
+
+func (mm *MediaManager) receiveSignedSegment(ctx context.Context, streamer string, segment []byte) error {
+	ctx, span := otel.Tracer("signer").Start(ctx, "SegmentAndSign", trace.WithAttributes(
+		attribute.String("streamer", streamer),
+		attribute.Int("segment_bytes", len(segment)),
+	))
+	defer span.End()
+	startTime := time.Now()
+	defer func() {
+		spmetrics.SegmentDeliveryDuration.WithLabelValues(streamer).
+			Observe(float64(time.Since(startTime).Milliseconds()))
+	}()
+	if err := mm.ValidateMP4(ctx, bytes.NewReader(segment), true); err != nil {
+		span.SetAttributes(attribute.String("error", "validate"))
+		mm.cli.DumpDebugSegment(ctx, "just-signed-segment.m4s", bytes.NewReader(segment))
+		return fmt.Errorf("error validating signed segment: %w", err)
+	}
+	return nil
 }
 
 func SegmentFileUnsigned(ctx context.Context, cli *config.CLI, streamer string, input string, ch chan *SplitSegment) error {

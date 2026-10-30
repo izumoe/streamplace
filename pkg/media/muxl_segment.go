@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strconv"
 
 	"github.com/go-gst/go-gst/pkg/gst"
 	app "github.com/go-gst/go-gst/pkg/gstapp"
@@ -30,8 +31,8 @@ type SignSegmentStreamFunc func(ctx context.Context, input io.Reader, eventCh ch
 // is exactly what gets stored, verified, and replicated; no flat MP4 is
 // produced here. Presentation headers are synthesized downstream (ValidateMP4
 // / playback) only when needed.
-func MuxlSignSegmentElem(ctx context.Context, cli *config.CLI, ms MediaSigner, onSegment func(ctx context.Context, segment []byte) error) (gst.Element, error) {
-	elem, _, err := muxlSignSegmentElem(ctx, cli, ms.SignSegmentStream, onSegment)
+func MuxlSignSegmentElem(ctx context.Context, cli *config.CLI, ms MediaSigner, videoTrackCount int, onSegment func(ctx context.Context, segment []byte) error) (gst.Element, error) {
+	elem, _, err := muxlSignSegmentElem(ctx, cli, ms.SignSegmentStream, videoTrackCount, onSegment)
 	return elem, err
 }
 
@@ -41,7 +42,10 @@ func MuxlSignSegmentElem(ctx context.Context, cli *config.CLI, ms MediaSigner, o
 // has finished and the event loop has emptied). The isolated ingest worker waits
 // on it to guarantee all segment frames are flushed before it signals a clean
 // end-of-stream.
-func muxlSignSegmentElem(ctx context.Context, cli *config.CLI, signStream SignSegmentStreamFunc, onSegment func(ctx context.Context, segment []byte) error) (gst.Element, <-chan struct{}, error) {
+func muxlSignSegmentElem(ctx context.Context, cli *config.CLI, signStream SignSegmentStreamFunc, videoTrackCount int, onSegment func(ctx context.Context, segment []byte) error) (gst.Element, <-chan struct{}, error) {
+	if videoTrackCount < 1 || videoTrackCount > MaxRTMPVideoTracks {
+		return nil, nil, fmt.Errorf("expected 1 to %d video tracks, got %d", MaxRTMPVideoTracks, videoTrackCount)
+	}
 	ctx = log.WithLogValues(ctx, "func", "MuxlSignSegmentElem")
 	bin := gst.NewBin("muxl-segment-bin").(gst.Bin)
 	elem := gst.ElementFactoryMakeWithProperties("mp4mux", map[string]any{
@@ -56,13 +60,15 @@ func muxlSignSegmentElem(ctx context.Context, cli *config.CLI, signStream SignSe
 		return nil, nil, fmt.Errorf("failed to add mp4mux to bin")
 	}
 
-	videoPad := elem.RequestPadSimple("video_%u")
-	if videoPad == nil {
-		return nil, nil, fmt.Errorf("failed to get video pad")
-	}
-	videoGhost := gst.NewGhostPad("video_0", videoPad)
-	if videoGhost == nil {
-		return nil, nil, fmt.Errorf("failed to create video ghost pad")
+	for i := range videoTrackCount {
+		videoPad := elem.RequestPadSimple("video_%u")
+		if videoPad == nil {
+			return nil, nil, fmt.Errorf("failed to get video pad %d", i)
+		}
+		videoGhost := gst.NewGhostPad(fmt.Sprintf("video_%d", i), videoPad)
+		if videoGhost == nil || !bin.AddPad(videoGhost) {
+			return nil, nil, fmt.Errorf("failed to add video ghost pad %d", i)
+		}
 	}
 	audioPad := elem.RequestPadSimple("audio_%u")
 	if audioPad == nil {
@@ -71,9 +77,6 @@ func muxlSignSegmentElem(ctx context.Context, cli *config.CLI, signStream SignSe
 	audioGhost := gst.NewGhostPad("audio_0", audioPad)
 	if audioGhost == nil {
 		return nil, nil, fmt.Errorf("failed to create audio ghost pad")
-	}
-	if ok := bin.AddPad(videoGhost); !ok {
-		return nil, nil, fmt.Errorf("failed to add video ghost pad to bin")
 	}
 	if ok := bin.AddPad(audioGhost); !ok {
 		return nil, nil, fmt.Errorf("failed to add audio ghost pad to bin")
@@ -129,15 +132,41 @@ func muxlSignSegmentElem(ctx context.Context, cli *config.CLI, signStream SignSe
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		for ev := range eventCh {
-			if ev.Type != "signed-segment" {
-				continue
-			}
-			segment := concatTracksSorted(ev.Tracks)
+		var pending []map[string][]byte
+		var contributed [MaxRTMPVideoTracks + 1]bool
+		publish := func() {
+			segment := concatTracksSorted(pending...)
+			clear(pending)
+			pending = pending[:0]
+			clear(contributed[:])
 			cli.DumpDebugSegment(drainCtx, "muxl_signed_segment.m4s", bytes.NewReader(segment))
 			if err := onSegment(drainCtx, segment); err != nil {
 				log.Error(drainCtx, "error handling signed segment", "error", err)
 			}
+		}
+		for ev := range eventCh {
+			if ev.Type != "signed-segment" {
+				continue
+			}
+			pending = append(pending, ev.Tracks)
+			// Muxl cuts at every video's keyframe, so an event can hold just
+			// one track. Publish as soon as every requested video and audio
+			// track has contributed, retaining their signed bytes verbatim.
+			ready := true
+			if videoTrackCount > 1 {
+				for id := 1; id <= videoTrackCount+1; id++ {
+					contributed[id-1] = contributed[id-1] || len(ev.Tracks[strconv.Itoa(id)]) > 0
+					ready = ready && contributed[id-1]
+				}
+			}
+			if ready {
+				publish()
+			}
+		}
+		// The final native drain may end with a partial batch. Preserve it
+		// and let the ordinary validation reject missing video or audio.
+		if len(pending) > 0 {
+			publish()
 		}
 	}()
 
@@ -148,18 +177,26 @@ func muxlSignSegmentElem(ctx context.Context, cli *config.CLI, signStream SignSe
 	return bin, done, nil
 }
 
-// concatTracksSorted joins the per-track canonical segment bytes for one GoP
-// in ascending track-id order — the canonical interleave a multi-track .m4s
-// uses, which muxl's unwrap/verify/wrap all expect.
-func concatTracksSorted(tracks map[string][]byte) []byte {
-	keys := make([]string, 0, len(tracks))
-	for k := range tracks {
-		keys = append(keys, k)
+// concatTracksSorted preserves signed event order and joins each event's
+// per-track canonical bytes in the same order as muxl's event byte channel.
+func concatTracksSorted(events ...map[string][]byte) []byte {
+	size := 0
+	for _, tracks := range events {
+		for _, track := range tracks {
+			size += len(track)
+		}
 	}
-	sort.Strings(keys)
-	var out []byte
-	for _, k := range keys {
-		out = append(out, tracks[k]...)
+	out := make([]byte, 0, size)
+	var keys []string
+	for _, tracks := range events {
+		keys = keys[:0]
+		for k := range tracks {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			out = append(out, tracks[k]...)
+		}
 	}
 	return out
 }

@@ -188,7 +188,7 @@ func (mm *MediaManager) TestSource(ctx context.Context, ms MediaSigner) error {
 		return fmt.Errorf("audioparse element not found")
 	}
 
-	signer, err := mm.SegmentAndSignElem(ctx, ms)
+	signer, err := mm.SegmentAndSignElem(ctx, ms, 1)
 	if err != nil {
 		return err
 	}

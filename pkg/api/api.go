@@ -96,9 +96,8 @@ type StreamplaceAPI struct {
 	// override tls port for http redirect server if we're using systemd file descriptors
 	HTTPRedirectTLSPort *int
 
-	rtmpSessions             map[string]*media.RTMPSession
-	rtmpSessionsLock         sync.Mutex
-	rtmpInternalPlaybackAddr string
+	rtmpSessions     map[string]*media.RTMPSession
+	rtmpSessionsLock sync.Mutex
 
 	// IngestHosts tracks authorized Mist publishes by the hostname reported
 	// in PUSH_REWRITE, for the lifetime of their pull ingest.

@@ -2,11 +2,14 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"net"
+	"sort"
 	"strings"
 	"time"
 
@@ -50,17 +53,6 @@ func (a *StreamplaceAPI) HandleRTMPPublisher(ctx context.Context, sc *gortmplib.
 		EventChan:   make(chan any, 1024),
 		MediaSigner: mediaSigner,
 	}
-	a.rtmpSessionsLock.Lock()
-	a.rtmpSessions[streamer] = session
-	a.rtmpSessionsLock.Unlock()
-
-	defer func() {
-		a.rtmpSessionsLock.Lock()
-		delete(a.rtmpSessions, streamer)
-		a.rtmpSessionsLock.Unlock()
-		close(session.EventChan)
-	}()
-
 	g, ctx := errgroup.WithContext(ctx)
 	r, err := initializeRTMPReader(ctx, sc, session)
 	if err != nil {
@@ -70,6 +62,7 @@ func (a *StreamplaceAPI) HandleRTMPPublisher(ctx context.Context, sc *gortmplib.
 	stopRead := context.AfterFunc(ctx, func() { _ = sc.RW.(net.Conn).Close() })
 	defer stopRead()
 	g.Go(func() error {
+		defer close(session.EventChan)
 		for {
 			if ctx.Err() != nil {
 				return ctx.Err()
@@ -80,13 +73,16 @@ func (a *StreamplaceAPI) HandleRTMPPublisher(ctx context.Context, sc *gortmplib.
 			}
 			err = r.Read()
 			if err != nil {
+				if errors.Is(err, io.EOF) {
+					return nil // close the packet input and let native mux/sign drain
+				}
 				return err
 			}
 		}
 	})
 
 	g.Go(func() error {
-		return a.MediaManager.RTMPIngest(ctx, fmt.Sprintf("rtmp://%s/live/%s", a.rtmpInternalPlaybackAddr, streamer), mediaSigner)
+		return a.MediaManager.RTMPIngest(ctx, session)
 	})
 
 	return g.Wait()
@@ -104,14 +100,58 @@ func initializeRTMPReader(ctx context.Context, sc *gortmplib.ServerConn, session
 		case <-ctx.Done():
 		}
 	}
+	// Observe the reader's rewound connection so configuration and DTS are
+	// available for replayed packets too. The AV1 callback supplies only PTS and
+	// does not expose the sequence-start decoder configuration.
+	videoConfigs := map[uint8][]byte{}
+	var lastDTS time.Duration
+	configured := false
+	r.Conn = &rtmpObservedConn{Conn: r.Conn, onRead: func(msg message.Message) error {
+		var id uint8
+		if multi, ok := msg.(*message.VideoExMultitrack); ok {
+			id, msg = multi.TrackID, multi.Wrapped
+		}
+		switch packet := msg.(type) {
+		case *message.Video:
+			lastDTS = packet.DTS
+			if !configured && packet.PacketType == message.VideoPacketTypeConfig {
+				videoConfigs[id] = nil
+			}
+		case *message.VideoExCodedFrames:
+			lastDTS = packet.DTS
+		case *message.VideoExFramesX:
+			lastDTS = packet.DTS
+		case *message.VideoExSequenceStart:
+			if !configured {
+				var config bytes.Buffer
+				if packet.FourCC == message.FourCCAV1 {
+					if _, err := mp4.Marshal(&config, packet.AV1Config, mp4.Context{}); err != nil {
+						return fmt.Errorf("AV1 configuration: %w", err)
+					}
+				}
+				videoConfigs[id] = config.Bytes()
+			}
+		}
+		return nil
+	}}
 	for _, track := range r.Tracks() {
 		switch track.Codec.(type) {
 		case *codecs.H264:
-			session.VideoTrack = track
+			id := len(session.VideoTracks)
+			session.VideoTracks = append(session.VideoTracks, media.RTMPVideoTrack{Track: track})
 			r.OnDataH264(track, func(pts, dts time.Duration, au [][]byte) {
-				send(&media.RTMPH264Data{AU: au, PTS: pts, DTS: dts})
+				send(&media.RTMPVideoData{TrackID: id, AU: au, PTS: pts, DTS: dts})
+			})
+		case *codecs.AV1:
+			id := len(session.VideoTracks)
+			session.VideoTracks = append(session.VideoTracks, media.RTMPVideoTrack{Track: track})
+			r.OnDataAV1(track, func(pts time.Duration, tu [][]byte) {
+				send(&media.RTMPVideoData{TrackID: id, AU: tu, PTS: pts, DTS: lastDTS})
 			})
 		case *codecs.MPEG4Audio:
+			if session.AudioTrack != nil {
+				return nil, fmt.Errorf("RTMP supports one AAC audio track")
+			}
 			session.AudioTrack = track
 			r.OnDataMPEG4Audio(track, func(pts time.Duration, au []byte) {
 				send(&media.RTMPAACData{AU: au, PTS: pts})
@@ -120,7 +160,43 @@ func initializeRTMPReader(ctx context.Context, sc *gortmplib.ServerConn, session
 			return nil, fmt.Errorf("unsupported track codec: %T", track.Codec)
 		}
 	}
+	if len(session.VideoTracks) == 0 || len(session.VideoTracks) > media.MaxRTMPVideoTracks {
+		return nil, fmt.Errorf("RTMP requires 1 to %d video tracks", media.MaxRTMPVideoTracks)
+	}
+	if session.AudioTrack == nil {
+		return nil, fmt.Errorf("RTMP requires one AAC audio track")
+	}
+	// All sequence-start messages are already in the reader's discovery replay.
+	// Consume that prefix before constructing native branches, retaining any
+	// interleaved media in the session's bounded channel.
+	for len(videoConfigs) < len(session.VideoTracks) {
+		if err := r.Read(); err != nil {
+			return nil, fmt.Errorf("RTMP video configuration: %w", err)
+		}
+	}
+	ids := make([]int, 0, len(videoConfigs))
+	for id := range videoConfigs {
+		ids = append(ids, int(id))
+	}
+	sort.Ints(ids)
+	for i, id := range ids {
+		session.VideoTracks[i].AV1Config = videoConfigs[uint8(id)]
+	}
+	configured = true
 	return r, nil
+}
+
+type rtmpObservedConn struct {
+	gortmplib.Conn
+	onRead func(message.Message) error
+}
+
+func (c *rtmpObservedConn) Read() (message.Message, error) {
+	msg, err := c.Conn.Read()
+	if err == nil {
+		err = c.onRead(msg)
+	}
+	return msg, err
 }
 
 func (a *StreamplaceAPI) HandleRTMPPlayback(ctx context.Context, sc *gortmplib.ServerConn) error {
@@ -143,8 +219,11 @@ func (a *StreamplaceAPI) HandleRTMPPlayback(ctx context.Context, sc *gortmplib.S
 // session closes or ctx ends.
 func relayRTMPSession(ctx context.Context, conn gortmplib.Conn, session *media.RTMPSession) error {
 	tracks := []*gortmplib.Track{}
-	if session.VideoTrack != nil {
-		tracks = append(tracks, session.VideoTrack)
+	for _, video := range session.VideoTracks {
+		if _, ok := video.Track.Codec.(*codecs.H264); !ok {
+			return fmt.Errorf("legacy RTMP relay supports H264 video only")
+		}
+		tracks = append(tracks, video.Track)
 	}
 	if session.AudioTrack != nil {
 		tracks = append(tracks, session.AudioTrack)
@@ -166,7 +245,10 @@ func relayRTMPSession(ctx context.Context, conn gortmplib.Conn, session *media.R
 				return fmt.Errorf("RTMP session closed: %w", io.EOF)
 			}
 			switch event := event.(type) {
-			case *media.RTMPH264Data:
+			case *media.RTMPVideoData:
+				if event.TrackID < 0 || event.TrackID >= len(session.VideoTracks) {
+					return fmt.Errorf("unknown RTMP video track %d", event.TrackID)
+				}
 				// gortmplib's reader hands on an AVC sequence header as an AU
 				// of just SPS and PPS, including the stream's first one, which
 				// it replays after reading ahead for the tracks. Written back as
@@ -174,12 +256,19 @@ func relayRTMPSession(ctx context.Context, conn gortmplib.Conn, session *media.R
 				// h264parse drops that keyframe's PTS, which fails the
 				// segmenter's muxer. Write it as the sequence header it was.
 				if msg, ok := h264ConfigMessage(event.AU, event.DTS); ok {
-					if err := conn.Write(msg); err != nil {
+					var config message.Message = msg
+					if event.TrackID != 0 {
+						config = &message.VideoExMultitrack{TrackID: uint8(event.TrackID), Wrapped: &message.VideoExSequenceStart{
+							ChunkStreamID: msg.ChunkStreamID, MessageStreamID: msg.MessageStreamID,
+							FourCC: message.FourCCAVC, AVCConfig: msg.AVCConfig,
+						}}
+					}
+					if err := conn.Write(config); err != nil {
 						return fmt.Errorf("error writing H264 config: %w", err)
 					}
 					continue
 				}
-				err := w.WriteH264(session.VideoTrack, event.PTS, event.DTS, event.AU)
+				err := w.WriteH264(session.VideoTracks[event.TrackID].Track, event.PTS, event.DTS, event.AU)
 				if err != nil {
 					return fmt.Errorf("error writing H264: %w", err)
 				}
@@ -196,6 +285,7 @@ func relayRTMPSession(ctx context.Context, conn gortmplib.Conn, session *media.R
 }
 
 func (a *StreamplaceAPI) HandleRTMPPublishConn(ctx context.Context, conn net.Conn) error {
+	defer conn.Close()
 	err := conn.SetReadDeadline(time.Now().Add(RTMPTimeout))
 	if err != nil {
 		return err
@@ -252,62 +342,11 @@ func (a *StreamplaceAPI) ServeRTMP(ctx context.Context) error {
 	}
 	defer ln.Close()
 
-	go func() {
-		<-ctx.Done()
-		ln.Close()
-	}()
+	stop := context.AfterFunc(ctx, func() { _ = ln.Close() })
+	defer stop()
 
 	log.Log(ctx, "rtmp server starting", "addr", a.CLI.RTMPAddr)
 
-	g, ctx := errgroup.WithContext(ctx)
-	g.Go(func() error {
-		return a.ServeRTMPInternalPlayback(ctx)
-	})
-	g.Go(func() error {
-		for {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			conn, err := ln.Accept()
-			if err != nil {
-				return fmt.Errorf("error accepting RTMP connection: %w", err)
-			}
-			go func() {
-				err := a.HandleRTMPPublishConn(ctx, conn)
-				if err != nil {
-					log.Error(ctx, "error handling RTMP publish connection", "error", err)
-				}
-			}()
-		}
-	})
-
-	return g.Wait()
-}
-
-// Serve RTMP internal playback server for gstreamer to pull from
-func (a *StreamplaceAPI) ServeRTMPInternalPlayback(ctx context.Context) error {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return fmt.Errorf("failed to listen: %w", err)
-	}
-	addr := ln.Addr().String()
-	defer ln.Close()
-
-	_, port, err := net.SplitHostPort(addr)
-	if err != nil {
-		return fmt.Errorf("failed to split host and port: %w", err)
-	}
-
-	go func() {
-		<-ctx.Done()
-		ln.Close()
-	}()
-
-	a.rtmpInternalPlaybackAddr = fmt.Sprintf("127.0.0.1:%s", port)
-
-	log.Log(ctx, "rtmp internal playback server starting", "addr", a.rtmpInternalPlaybackAddr)
-
-	// Accept loop in a goroutine so we can select on context.Done
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -316,11 +355,10 @@ func (a *StreamplaceAPI) ServeRTMPInternalPlayback(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("error accepting RTMP connection: %w", err)
 		}
-
 		go func() {
-			err := a.HandleRTMPPlaybackConn(ctx, conn)
+			err := a.HandleRTMPPublishConn(ctx, conn)
 			if err != nil {
-				log.Error(ctx, "error handling RTMP internal playback connection", "error", err)
+				log.Error(ctx, "error handling RTMP publish connection", "error", err)
 			}
 		}()
 	}
@@ -345,37 +383,28 @@ func (a *StreamplaceAPI) ServeRTMPS(ctx context.Context, cli *config.CLI) error 
 	if err != nil {
 		return fmt.Errorf("failed to create RTMPS listener: %w", err)
 	}
+	defer ln.Close()
 
 	log.Log(ctx, "rtmps server starting", "addr", cli.RTMPAddr)
 
-	go func() {
-		<-ctx.Done()
-		ln.Close()
-	}()
+	stop := context.AfterFunc(ctx, func() { _ = ln.Close() })
+	defer stop()
 
-	g, ctx := errgroup.WithContext(ctx)
-	g.Go(func() error {
-		return a.ServeRTMPInternalPlayback(ctx)
-	})
-	g.Go(func() error {
-		for {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			conn, err := ln.Accept()
-			if err != nil {
-				return fmt.Errorf("error accepting RTMP connection: %w", err)
-			}
-			go func() {
-				err := a.HandleRTMPPublishConn(ctx, conn)
-				if err != nil {
-					log.Error(ctx, "error handling RTMP publish connection", "error", err)
-				}
-			}()
+	for {
+		if ctx.Err() != nil {
+			return ctx.Err()
 		}
-	})
-
-	return g.Wait()
+		conn, err := ln.Accept()
+		if err != nil {
+			return fmt.Errorf("error accepting RTMP connection: %w", err)
+		}
+		go func() {
+			err := a.HandleRTMPPublishConn(ctx, conn)
+			if err != nil {
+				log.Error(ctx, "error handling RTMP publish connection", "error", err)
+			}
+		}()
+	}
 }
 
 // h264ConfigMessage returns the FLV sequence header for an H.264 access unit

@@ -260,7 +260,7 @@ func RunMP4IngestWorker(ctx context.Context, cfg IngestWorkerConfig, stdin io.Re
 		defer finalize()
 	}
 
-	signerElem, done, err := muxlSignSegmentElem(ctx, mm.cli, workerSignStream(cfg, getManifest), onSegment)
+	signerElem, done, err := muxlSignSegmentElem(ctx, mm.cli, workerSignStream(cfg, getManifest), 1, onSegment)
 	if err != nil {
 		return fmt.Errorf("build signer element: %w", err)
 	}

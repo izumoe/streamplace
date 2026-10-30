@@ -38,6 +38,8 @@ func runMP4ThroughIngestWorker(t *testing.T, mp4 []byte, transcode bool) (int, e
 // than just count them.
 func runMP4ThroughIngestWorkerSegments(t *testing.T, mp4 []byte, transcode bool) ([][]byte, error) {
 	t.Helper()
+	// The shortened watchdog tests native progress, not cold WASM compilation.
+	require.NoError(t, muxl.Initialize())
 	old := ingestWorkerWatchdog
 	ingestWorkerWatchdog = 10 * time.Second
 	if wd := os.Getenv("SP_TEST_WATCHDOG"); wd != "" {
