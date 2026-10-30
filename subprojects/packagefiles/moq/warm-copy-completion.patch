@@ -1,0 +1,91 @@
+diff --git a/rs/moq-net/src/model/origin.rs b/rs/moq-net/src/model/origin.rs
+index b3b139e..416ddf7 100644
+--- a/rs/moq-net/src/model/origin.rs
++++ b/rs/moq-net/src/model/origin.rs
+@@ -2401,7 +2401,8 @@ fn warm_copy(source: &track::Consumer, head: Option<&WarmGroup>, held: Option<&g
+ }
+ 
+ /// Rebuild `live` on `track` from its delivered frames, prefixed by `head`'s when `live`
+-/// only holds a continuation of it. Finished like `live`, or left open.
++/// only holds a continuation of it. Only a drain that observes the source's end
++/// finishes the copy; a source finishing afterwards can still have an uncopied tail.
+ fn warm_rebuild(track: &track::Producer, live: &group::Producer, head: Option<&group::Producer>) -> Option<WarmGroup> {
+ 	// A continuation holds nothing below its offset.
+ 	let mut start = live.live_first_frame()? as u64;
+@@ -2426,9 +2427,13 @@ fn warm_rebuild(track: &track::Producer, live: &group::Producer, head: Option<&g
+ 			false => frames.clear(),
+ 		}
+ 	}
+-	while let Poll::Ready(Ok(Some(frame))) = tail.poll_read_frame(&kio::Waiter::noop()) {
+-		frames.push(frame);
+-	}
++	let finished = loop {
++		match tail.poll_read_frame(&kio::Waiter::noop()) {
++			Poll::Ready(Ok(Some(frame))) => frames.push(frame),
++			Poll::Ready(Ok(None)) => break true,
++			_ => break false,
++		}
++	};
+ 	if frames.is_empty() {
+ 		return None;
+ 	}
+@@ -2448,7 +2453,7 @@ fn warm_rebuild(track: &track::Producer, live: &group::Producer, head: Option<&g
+ 	for frame in frames {
+ 		writer.write_frame(frame.timestamp, frame.payload).ok()?;
+ 	}
+-	if live.is_finished() {
++	if finished {
+ 		writer.finish().ok()?;
+ 	}
+ 	Some(rebuilt)
+@@ -6393,6 +6398,50 @@ mod tests {
+ 		));
+ 	}
+ 
++	/// Finishing the source after the cached-frame drain must not seal a shorter snapshot.
++	#[test]
++	fn warm_rebuild_keeps_a_racing_source_finish_open() {
++		struct FinishSource(std::sync::Mutex<Option<group::Producer>>);
++
++		impl std::task::Wake for FinishSource {
++			fn wake(self: Arc<Self>) {
++				self.wake_by_ref();
++			}
++
++			fn wake_by_ref(self: &Arc<Self>) {
++				if let Some(mut source) = self.0.lock().unwrap().take() {
++					source.write_frame(crate::Timestamp::ZERO, b"tail".as_ref()).unwrap();
++					source.finish().unwrap();
++				}
++			}
++		}
++
++		let info = Arc::new(broadcast::Info::default());
++		let source_track = track::Producer::new(info.clone(), "video", None);
++		let mut source = source_track.create_group(0u64.into()).unwrap();
++		source.write_frame(crate::Timestamp::ZERO, b"head".as_ref()).unwrap();
++		let rebuilt_track = track::Producer::new(info, "video", None);
++		let consumer = rebuilt_track.consume();
++		let waiter = kio::Waiter::new(std::task::Waker::from(Arc::new(FinishSource(std::sync::Mutex::new(
++			Some(source.clone()),
++		)))));
++		// Creating the rebuilt group wakes this consumer after the source drain,
++		// deterministically delivering the final source frame before the rebuild returns.
++		assert!(consumer.poll_peek_group(0, &waiter).is_pending());
++		let rebuilt = warm_rebuild(&rebuilt_track, &source, None).unwrap();
++		assert!(source.is_finished(), "the source completed during the rebuild");
++		assert_eq!(source.frame_count(), 2);
++		let mut reading = rebuilt.0.consume();
++		assert_eq!(
++			&reading.read_frame().now_or_never().unwrap().unwrap().unwrap().payload[..],
++			b"head"
++		);
++		assert!(
++			reading.read_frame().now_or_never().is_none(),
++			"the cached head must wait for the uncopied tail rather than report a clean end"
++		);
++	}
++
+ 	/// A returning reader is handed the parked open group spliced onto the source's
+ 	/// continuation, which starts past the warm head. The group's end stays unknown
+ 	/// until the source finishes it, even before a frame of it is read: readers drop a
