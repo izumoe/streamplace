@@ -13,6 +13,7 @@ import (
 	official "moq.dev/moq"
 	"stream.place/streamplace/pkg/media"
 	"stream.place/streamplace/pkg/muxl"
+	"stream.place/streamplace/pkg/placestream"
 )
 
 func TestMoqPeerPreservesPrimarySourcePolicy(t *testing.T) {
@@ -40,8 +41,12 @@ func TestMoqPeerPreservesPrimarySourcePolicy(t *testing.T) {
 	audio := remap(base["audio2"], 2, 3)
 	signer, err := media.NewEphemeralMediaSigner("peer-policy-source")
 	require.NoError(t, err)
-	sign := func(t *testing.T, signer *media.MediaSignerLocal, data []byte, published bool, allowedBroadcasters []string) []byte {
+	sign := func(t *testing.T, signer *media.MediaSignerLocal, data []byte, published bool, allowedBroadcasters []string, livestream *placestream.Livestream) []byte {
 		t.Helper()
+		title := "Peer policy source"
+		if livestream != nil {
+			title = livestream.Title
+		}
 		actions := []map[string]string{{"action": "c2pa.created"}}
 		if published {
 			actions = append(actions, map[string]string{"action": "c2pa.published"})
@@ -50,9 +55,12 @@ func TestMoqPeerPreservesPrimarySourcePolicy(t *testing.T) {
 			{"label": "c2pa.actions", "data": map[string]any{"actions": actions}},
 			{"label": "cawg.metadata", "data": map[string]any{
 				"@context":   map[string]string{"dc": "http://purl.org/dc/elements/1.1/"},
-				"dc:creator": signer.DID(), "dc:title": "Peer policy source",
+				"dc:creator": signer.DID(), "dc:title": title,
 				"dc:date": "1970-01-01T00:00:00.000Z",
 			}},
+		}
+		if livestream != nil {
+			assertions = append(assertions, map[string]any{"label": "place.stream.livestream", "data": livestream})
 		}
 		if allowedBroadcasters != nil {
 			assertions = append(assertions, map[string]any{
@@ -93,15 +101,25 @@ func TestMoqPeerPreservesPrimarySourcePolicy(t *testing.T) {
 	}
 	// A batch may start with a higher-ID track before the next piece supplies
 	// the lowest-ID video. Both pieces keep their original signed policy.
-	higherPublic := sign(t, signer, higherVideo, true, nil)
-	higherPrivate := sign(t, signer, higherVideo, false, nil)
-	higherRestricted := sign(t, signer, higherVideo, true, []string{"did:web:restricted.example"})
+	higherPublic := sign(t, signer, higherVideo, true, nil, nil)
+	higherPrivate := sign(t, signer, higherVideo, false, nil, nil)
+	higherRestricted := sign(t, signer, higherVideo, true, []string{"did:web:restricted.example"}, nil)
 	lower := bytes.Join([][]byte{base["video1"], audio}, nil)
-	public := sign(t, signer, lower, true, nil)
-	private := sign(t, signer, lower, false, nil)
+	public := sign(t, signer, lower, true, nil, nil)
+	private := sign(t, signer, lower, false, nil, nil)
+	seenAt := "2026-10-30T00:00:01.000Z"
+	heartbeatAt := "2026-10-30T00:00:02.000Z"
+	live := placestream.Livestream{Title: "Peer policy source", CreatedAt: "2026-10-30T00:00:00.000Z", LastSeenAt: &seenAt}
+	heartbeat := live
+	heartbeat.LastSeenAt = &heartbeatAt
+	retitled := heartbeat
+	retitled.Title = "Updated stream title"
+	higherLive := sign(t, signer, higherVideo, true, nil, &live)
+	lowerHeartbeat := sign(t, signer, lower, true, nil, &heartbeat)
+	lowerRetitled := sign(t, signer, lower, true, nil, &retitled)
 	nodeSigner, err := media.NewEphemeralMediaSigner("peer-policy-node")
 	require.NoError(t, err)
-	node := sign(t, nodeSigner, remap(base["video1"], 1, 100), false, nil)
+	node := sign(t, nodeSigner, remap(base["video1"], 1, 100), false, nil, nil)
 	t.Run("independent node metadata", func(t *testing.T) {
 		valid, err := media.ValidateMP4MediaC2PA(ctx, bytes.Join([][]byte{node, public}, nil))
 		require.NoError(t, err)
@@ -120,6 +138,8 @@ func TestMoqPeerPreservesPrimarySourcePolicy(t *testing.T) {
 		{"private to public", higherPrivate, public, false},
 		{"public to private", higherPublic, private, false},
 		{"distribution policy change", higherRestricted, public, false},
+		{"livestream heartbeat", higherLive, lowerHeartbeat, true},
+		{"stream title update", higherLive, lowerRetitled, true},
 	} {
 		t.Run(input.name, func(t *testing.T) {
 			source := bytes.Join([][]byte{input.first, input.lowest}, nil)
@@ -160,6 +180,8 @@ func TestMoqPeerPreservesPrimarySourcePolicy(t *testing.T) {
 			require.Equal(t, *primary.Manifest.Label, *before.Manifest.Label, "the lowest track's first asset is the stable source deduplication identity")
 			require.Equal(t, *before.Manifest.Label, *after.Manifest.Label, "the primary source deduplication identity must survive replication")
 			require.Equal(t, primary.Meta.MetadataConfiguration, before.Meta.MetadataConfiguration, "the primary asset's signed metadata stays intact")
+			require.Equal(t, primary.Meta.Title, before.Meta.Title)
+			require.Equal(t, primary.Meta.Livestream, before.Meta.Livestream)
 		})
 	}
 }

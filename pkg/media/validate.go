@@ -555,9 +555,8 @@ func ValidateMP4MediaC2PA(ctx context.Context, buf []byte) (*ValidationResult, e
 	if err != nil {
 		return nil, err
 	}
-	// A batch spanning a source metadata change stays private. Node-signed
+	// A batch spanning a source policy change stays private. Node-signed
 	// addenda have independent metadata and cannot change source policy.
-	reference := *meta
 	for i := range doc.Segments {
 		segment := &doc.Segments[i]
 		if segment == primary || segment.Cert != primary.Cert {
@@ -567,8 +566,11 @@ func ValidateMP4MediaC2PA(ctx context.Context, buf []byte) (*ValidationResult, e
 		if err != nil {
 			return nil, fmt.Errorf("track %d segment metadata: %w", segment.TrackID, err)
 		}
-		other.StartTime = reference.StartTime
-		if !reflect.DeepEqual(reference, *other) {
+		if meta.Published != other.Published || meta.Creator != other.Creator ||
+			!reflect.DeepEqual(meta.ContentWarnings, other.ContentWarnings) ||
+			!reflect.DeepEqual(meta.ContentRights, other.ContentRights) ||
+			!reflect.DeepEqual(meta.DistributionPolicy, other.DistributionPolicy) ||
+			!reflect.DeepEqual(meta.MetadataConfiguration, other.MetadataConfiguration) {
 			meta.Published = false
 		}
 	}

@@ -76,6 +76,157 @@ func renditionOf(t *testing.T, ctx context.Context, segment []byte) []byte {
 	return rendition
 }
 
+func TestMoqPlaybackGroupsFollowVideoSyncFrames(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
+	defer cancel()
+	segments := signedSegments(t, ctx)
+	video := make([][][]byte, 2)
+	var init bytes.Buffer
+	for i := range video {
+		tracks, err := media.MuxlTracks(ctx, segments[i])
+		require.NoError(t, err)
+		video[i], _, err = cmafFragments(tracks["video1"])
+		require.NoError(t, err)
+		require.Greater(t, len(video[i]), 3, "the real GoP contains key and delta fragments")
+		if i == 0 {
+			require.NoError(t, muxl.RunMuxlWrapInit(ctx, bytes.NewReader(tracks["video1"]), &init))
+		}
+	}
+	// Re-sign real encoded fragments at admission boundaries without changing
+	// their sample flags or timestamps. Each output's signature covers its own
+	// exact bytes, including portions that start between video keyframes.
+	sign := func(fragments [][]byte, startsWithSync bool) []byte {
+		input := bytes.Join(append([][]byte{init.Bytes()}, fragments...), nil)
+		signer, err := media.NewEphemeralMediaSigner("test-streamer")
+		require.NoError(t, err)
+		events := make(chan *muxl.MuxlEvent, 16)
+		done := make(chan error, 1)
+		go func() {
+			done <- signer.SignSegmentStream(ctx, bytes.NewReader(input), events)
+			close(events)
+		}()
+		var signed []*muxl.MuxlEvent
+		for event := range events {
+			if event.Type == "signed-segment" {
+				signed = append(signed, event)
+			}
+		}
+		require.NoError(t, <-done)
+		require.Len(t, signed, 1)
+		require.Equal(t, startsWithSync, slices.Contains(signed[0].Samples["1"].SyncIndices, uint32(1)))
+		require.NotEmpty(t, signed[0].Tracks["1"])
+		return signed[0].Tracks["1"]
+	}
+	opening := sign(video[0][:2], true)
+	continuation := sign(video[0][2:], false)
+	initialDelta := sign(video[0][1:], false)
+	nextGoP := sign(video[1], true)
+	hidden := sign(video[0][2:3], false)
+	afterHidden := sign(video[0][3:], false)
+	interval := moqLivenessInterval
+	moqLivenessInterval = 10 * time.Millisecond
+	t.Cleanup(func() { moqLivenessInterval = interval })
+	for _, input := range []struct {
+		name   string
+		first  []byte
+		second []byte
+		hidden []byte
+		groups [][]byte
+	}{
+		{
+			name:   "GoP crosses admission batches",
+			first:  opening,
+			second: bytes.Join([][]byte{continuation, nextGoP}, nil),
+			groups: [][]byte{bytes.Join([][]byte{opening, continuation}, nil), nextGoP},
+		},
+		{
+			name:   "publication gap waits for sync",
+			first:  opening,
+			hidden: hidden,
+			second: bytes.Join([][]byte{afterHidden, nextGoP}, nil),
+			groups: [][]byte{opening, nextGoP},
+		},
+		{
+			name:   "mid-GoP join waits for sync",
+			first:  initialDelta,
+			second: nextGoP,
+			groups: [][]byte{nextGoP},
+		},
+	} {
+		for _, ending := range []string{"session end", "cancel"} {
+			t.Run(input.name+"/"+ending, func(t *testing.T) {
+				serveCtx, stop := context.WithCancel(ctx)
+				defer stop()
+				b := bus.NewBus()
+				const streamer = "did:plc:video-groups"
+				publish := func(segment []byte, published bool) {
+					b.PublishSegment(ctx, streamer, media.PlaybackSourceRendition, &bus.Seg{
+						Muxl: segment, BatchDuration: time.Second, Published: published,
+					})
+				}
+				publish(input.first, true)
+				origin := official.NewOriginProducer()
+				requests, err := origin.Dynamic("", official.Route{})
+				require.NoError(t, err)
+				defer requests.Cancel()
+				done := make(chan struct{})
+				r := &WebsocketReplicator{bus: b, cli: &config.CLI{}}
+				go func() {
+					defer close(done)
+					request, err := requests.RequestedBroadcast(serveCtx)
+					if err == nil {
+						r.serveBroadcast(serveCtx, request)
+					}
+				}()
+				defer func() {
+					stop()
+					<-done
+				}()
+				consumer, err := origin.Consume().RequestBroadcast(ctx, "playback/"+streamer)
+				require.NoError(t, err)
+				track, err := subscribeMoqTrack(ctx, consumer, "video1", moqSourcePriority)
+				require.NoError(t, err)
+				defer track.Cancel()
+				if len(input.hidden) > 0 {
+					publish(input.hidden, false)
+				}
+				publish(input.second, true)
+				for i, want := range input.groups {
+					group, err := track.NextGroup(ctx)
+					require.NoError(t, err)
+					require.NotNil(t, group)
+					first, err := group.ReadFrame(ctx)
+					require.NoError(t, err)
+					require.NotNil(t, first)
+					if i == len(input.groups)-1 {
+						if ending == "session end" {
+							b.EndSession(ctx, streamer, media.PlaybackSourceRendition)
+						} else {
+							stop()
+						}
+						select {
+						case <-done:
+						case <-ctx.Done():
+							t.Fatal("playback publication outlived its session")
+						}
+					}
+					got := bytes.Clone(first.Payload)
+					for {
+						frame, err := group.ReadFrame(ctx)
+						require.NoError(t, err, "reading group %d after %d bytes", i, len(got))
+						if frame == nil {
+							break
+						}
+						got = append(got, frame.Payload...)
+					}
+					group.Cancel()
+					require.True(t, bytes.Equal(want, got), "group %d must preserve one real GoP's signed bytes in order: got %d bytes, want %d", i, len(got), len(want))
+				}
+			})
+		}
+	}
+}
+
 // A peer pulling a stream through the listener finds each MUXL track in
 // the broadcast's catalog as a CMAF track a hang player can decode, and
 // gets the bus's source segments back byte for byte, primed with the recent
@@ -169,26 +320,30 @@ func TestMoqServesTheBus(t *testing.T) {
 	require.NotNil(t, video.Description, "H.264 carries its avcC, which hang decoders need")
 
 	b.PublishSegment(ctx, streamer, media.RenditionsChannel, &bus.Seg{Muxl: rendition, Published: true})
-	require.Equal(t, rendition, next(renditions), "a rendition travels on its own track")
+	gotRendition := next(renditions)
+	require.True(t, bytes.Equal(rendition, gotRendition), "a rendition travels on its own track: got %d bytes, want %d", len(gotRendition), len(rendition))
 
 	// Browser playback can start from the verified source while canonical
 	// codec completion is still pending on the peer replication channel.
 	const earlyStreamer = "did:plc:early"
-	packets := make([]*bus.PacketizedSegment, len(segments))
+	durations := make([]time.Duration, len(segments))
 	shortest, longest := 0, 0
 	for i, segment := range segments {
-		packets[i], err = media.Packetize(ctx, &config.CLI{}, &bus.Seg{Muxl: segment}, 0)
+		var flat bytes.Buffer
+		require.NoError(t, muxl.RunMuxlWrap(ctx, bytes.NewReader(segment), "flat", &flat))
+		metadata, err := media.ParseSegmentMediaData(ctx, flat.Bytes())
 		require.NoError(t, err)
-		if packets[i].BatchDuration < packets[shortest].BatchDuration {
+		durations[i] = metadata.BatchDuration
+		if durations[i] < durations[shortest] {
 			shortest = i
 		}
-		if packets[i].BatchDuration > packets[longest].BatchDuration {
+		if durations[i] > durations[longest] {
 			longest = i
 		}
 	}
-	require.Less(t, packets[shortest].BatchDuration, packets[longest].BatchDuration, "fixture includes a shorter final batch")
+	require.Less(t, durations[shortest], durations[longest], "fixture includes a shorter final batch")
 	publishEarly := func(i int) {
-		b.PublishSegment(ctx, earlyStreamer, media.PlaybackSourceRendition, &bus.Seg{Muxl: segments[i], PacketizedData: packets[i], Published: true})
+		b.PublishSegment(ctx, earlyStreamer, media.PlaybackSourceRendition, &bus.Seg{Muxl: segments[i], BatchDuration: durations[i], Published: true})
 	}
 	b.PublishSegment(ctx, earlyStreamer, "playback-source", &bus.Seg{Muxl: segments[0], Published: false})
 	publishEarly(shortest)
@@ -205,38 +360,74 @@ func TestMoqServesTheBus(t *testing.T) {
 		require.Positive(t, timing.BatchDurationMs)
 		require.Equal(t, int64((duration+time.Millisecond-1)/time.Millisecond), timing.BatchDurationMs)
 	}
-	requireBatch(early, packets[shortest].BatchDuration)
-	earlyGot := make(chan []byte, 2)
-	earlyDone := make(chan error, 1)
-	go func() {
-		earlyDone <- consumeBroadcast(ctx, early,
-			func(segment []byte) error { earlyGot <- segment; return nil },
-			func(context.Context, []byte) error { return nil })
-	}()
+	requireBatch(early, durations[shortest])
+	earlyGot := map[string]chan []byte{}
+	earlyDone := make(chan error, 2)
+	for _, name := range []string{"video1", "audio2"} {
+		track, err := subscribeMoqTrack(ctx, early, name, moqSourcePriority)
+		require.NoError(t, err)
+		frames := make(chan []byte, 2)
+		earlyGot[name] = frames
+		go func() {
+			forward := func() error {
+				defer track.Cancel()
+				for group, err := range track.Groups(ctx) {
+					if err != nil {
+						return err
+					}
+					for frame, err := range group.Frames(ctx) {
+						if err != nil {
+							group.Cancel()
+							return err
+						}
+						select {
+						case frames <- frame.Payload:
+						case <-ctx.Done():
+							group.Cancel()
+							return ctx.Err()
+						}
+					}
+					group.Cancel()
+				}
+				return errors.New("playback track ended")
+			}
+			earlyDone <- forward()
+		}()
+	}
 	readEarly := func(i int) {
-		select {
-		case payload := <-earlyGot:
-			require.Equal(t, segments[i], payload, "browser playback serves only published source media before codec completion")
-		case err := <-earlyDone:
-			t.Fatalf("browser playback ended before the source arrived: %v", err)
-		case <-ctx.Done():
-			t.Fatal("browser playback waited for canonical codec completion")
+		tracks, err := media.MuxlTracks(ctx, segments[i])
+		require.NoError(t, err)
+		for name, want := range tracks {
+			var got []byte
+			for len(got) < len(want) {
+				select {
+				case payload := <-earlyGot[name]:
+					got = append(got, payload...)
+				case err := <-earlyDone:
+					t.Fatalf("browser playback ended before the source arrived: %v", err)
+				case <-ctx.Done():
+					t.Fatal("browser playback waited for canonical codec completion")
+				}
+			}
+			require.Equal(t, want, got, "browser playback serves only published source media before codec completion")
 		}
 	}
 	readEarly(shortest)
 	publishEarly(longest)
 	readEarly(longest)
-	requireBatch(early, packets[longest].BatchDuration)
+	requireBatch(early, durations[longest])
 	publishEarly(shortest)
 	readEarly(shortest)
-	requireBatch(early, packets[longest].BatchDuration)
+	requireBatch(early, durations[longest])
 	b.EndSession(ctx, earlyStreamer, media.PlaybackSourceRendition)
-	select {
-	case err := <-earlyDone:
-		require.Error(t, err)
-		require.False(t, errors.Is(err, context.DeadlineExceeded), "browser playback ends with the playback session")
-	case <-ctx.Done():
-		t.Fatal("browser playback outlived its session")
+	for range earlyGot {
+		select {
+		case err := <-earlyDone:
+			require.Error(t, err)
+			require.False(t, errors.Is(err, context.DeadlineExceeded), "browser playback ends with the playback session")
+		case <-ctx.Done():
+			t.Fatal("browser playback outlived its session")
+		}
 	}
 	publishEarly(shortest)
 	restartedClient, err := r.dialMoq(ctx, moqURL)
@@ -244,7 +435,7 @@ func TestMoqServesTheBus(t *testing.T) {
 	defer restartedClient.Close()
 	restarted, err := requestMoqBroadcast(ctx, restartedClient, "playback/"+earlyStreamer)
 	require.NoError(t, err)
-	requireBatch(restarted, packets[shortest].BatchDuration)
+	requireBatch(restarted, durations[shortest])
 	b.EndSession(ctx, earlyStreamer, media.PlaybackSourceRendition)
 
 	b.EndSession(ctx, streamer, moqSourceChannel)

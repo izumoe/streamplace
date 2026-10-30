@@ -179,13 +179,19 @@ func (r *WebsocketReplicator) serveTracks(ctx context.Context, streamer, sourceC
 			return
 		case seg := <-source.C:
 			if !seg.Published {
+				if sourceChannel == media.PlaybackSourceRendition {
+					if err := tracks.finishGroups(); err != nil {
+						log.Warn(ctx, "moq: could not finish playback groups", "streamer", streamer, "error", err)
+						return
+					}
+				}
 				continue
 			}
 			// CMAF passthrough has no native handoff-jitter measurement. Tell
 			// browser playback how much signed media arrives in one burst,
 			// before any catalog or media from that batch becomes reachable.
-			if sourceChannel == media.PlaybackSourceRendition && seg.PacketizedData != nil && seg.PacketizedData.BatchDuration > batchDuration {
-				batchDuration = seg.PacketizedData.BatchDuration
+			if sourceChannel == media.PlaybackSourceRendition && seg.BatchDuration > batchDuration {
+				batchDuration = seg.BatchDuration
 				milliseconds := batchDuration / time.Millisecond
 				if batchDuration%time.Millisecond != 0 {
 					milliseconds++
@@ -197,12 +203,20 @@ func (r *WebsocketReplicator) serveTracks(ctx context.Context, streamer, sourceC
 			}
 			n := sequence
 			sequence++
-			err = tracks.publish(ctx, broadcast, seg.Muxl, func(t *official.CMAFProducer) (*official.CMAFGroupProducer, error) { return t.CreateGroup(n) })
+			if sourceChannel == media.PlaybackSourceRendition {
+				err = tracks.publishPlayback(ctx, broadcast, seg.Muxl)
+			} else {
+				err = tracks.publish(ctx, broadcast, seg.Muxl, func(t *official.CMAFProducer) (*official.CMAFGroupProducer, error) { return t.CreateGroup(n) })
+			}
 		case seg := <-renditions.C:
 			if !seg.Published {
 				continue
 			}
-			err = tracks.publish(ctx, broadcast, seg.Muxl, (*official.CMAFProducer).AppendGroup)
+			if sourceChannel == media.PlaybackSourceRendition {
+				err = tracks.publishPlayback(ctx, broadcast, seg.Muxl)
+			} else {
+				err = tracks.publish(ctx, broadcast, seg.Muxl, (*official.CMAFProducer).AppendGroup)
+			}
 		}
 		if err == nil && publish != nil && sequence > 0 {
 			if err = publish(); err != nil {
@@ -223,15 +237,31 @@ func (r *WebsocketReplicator) serveTracks(ctx context.Context, streamer, sourceC
 type moqTrack struct {
 	*official.CMAFProducer
 	catalog []byte
+	group   *official.CMAFGroupProducer
 }
 
 // moqTracks are a broadcast's tracks, by MUXL rendition name.
 type moqTracks map[string]*moqTrack
 
 func (ts moqTracks) finish() {
+	_ = ts.finishGroups()
 	for _, t := range ts {
 		_ = t.Finish()
 	}
+}
+
+// A publication gap ends the current GoPs. Resumed video must wait for sync.
+func (ts moqTracks) finishGroups() error {
+	var result error
+	for name, t := range ts {
+		if t.group != nil {
+			if err := t.group.Finish(); err != nil {
+				result = errors.Join(result, fmt.Errorf("%s track: %w", name, err))
+			}
+			t.group = nil
+		}
+	}
+	return result
 }
 
 // publish writes each track of seg, a bare canonical segment, as a new
@@ -245,25 +275,9 @@ func (ts moqTracks) publish(ctx context.Context, broadcast *official.BroadcastPr
 		return fmt.Errorf("segment is not MUXL: %w", err)
 	}
 	for name, data := range tracks {
-		fragments, catalog, err := cmafFragments(data)
+		t, fragments, err := ts.track(ctx, broadcast, name, data, nil)
 		if err != nil {
-			return fmt.Errorf("track %s: %w", name, err)
-		}
-		t := ts[name]
-		if t != nil && !bytes.Equal(t.catalog, catalog) {
-			return fmt.Errorf("track %s changed its codec config", name)
-		}
-		if t == nil {
-			var init bytes.Buffer
-			if err := muxl.RunMuxlWrapInit(ctx, bytes.NewReader(data), &init); err != nil {
-				return fmt.Errorf("track %s init: %w", name, err)
-			}
-			producer, err := broadcast.PublishCMAF(name, init.Bytes())
-			if err != nil {
-				return fmt.Errorf("publishing track %s: %w", name, err)
-			}
-			t = &moqTrack{CMAFProducer: producer, catalog: catalog}
-			ts[name] = t
+			return err
 		}
 		g, err := group(t.CMAFProducer)
 		if err != nil {
@@ -279,6 +293,134 @@ func (ts moqTracks) publish(ctx context.Context, broadcast *official.BroadcastPr
 		}
 	}
 	return nil
+}
+
+// publishPlayback keeps each video's GoP open across admission batches.
+// Browser groups must begin at a real sync sample; peer groups instead keep
+// their shared admission sequence so consumeSource can reassemble them.
+func (ts moqTracks) publishPlayback(ctx context.Context, broadcast *official.BroadcastProducer, seg []byte) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	events := make(chan *muxl.MuxlEvent, 16)
+	done := make(chan error, 1)
+	go func() {
+		err := muxl.RunMuxlUnwrapEvents(ctx, bytes.NewReader(seg), events)
+		close(events)
+		done <- err
+	}()
+	var init *muxl.MuxlEvent
+	var publishErr error
+	for event := range events {
+		if publishErr != nil {
+			continue
+		}
+		if event.Type == "init" {
+			init = event
+			continue
+		}
+		write := func(name string, id uint32, video bool) error {
+			key := strconv.FormatUint(uint64(id), 10)
+			data := event.Tracks[key]
+			if len(data) == 0 {
+				return nil
+			}
+			t, fragments, err := ts.track(ctx, broadcast, name, data, init.TrackInits[key])
+			if err != nil {
+				return err
+			}
+			samples := event.Samples[key]
+			if len(fragments) != len(samples.Sizes) {
+				return fmt.Errorf("track %s has %d fragments for %d samples", name, len(fragments), len(samples.Sizes))
+			}
+			for i, fragment := range fragments {
+				sync := video && slices.Contains(samples.SyncIndices, uint32(i+1))
+				if sync && t.group != nil {
+					if err := t.group.Finish(); err != nil {
+						return fmt.Errorf("track %s group: %w", name, err)
+					}
+					t.group = nil
+				}
+				if t.group == nil {
+					if video && !sync {
+						continue
+					}
+					t.group, err = t.AppendGroup()
+					if err != nil {
+						return fmt.Errorf("track %s group: %w", name, err)
+					}
+				}
+				if err := t.group.WriteFragment(fragment); err != nil {
+					return fmt.Errorf("track %s: %w", name, err)
+				}
+			}
+			return nil
+		}
+		if init == nil || init.Catalog == nil {
+			publishErr = errors.New("segment has no MUXL catalog")
+		} else {
+			if init.Catalog.Video != nil {
+				for name, config := range init.Catalog.Video.Renditions {
+					if publishErr = write(name, config.TrackID(), true); publishErr != nil {
+						break
+					}
+				}
+			}
+			if publishErr == nil && init.Catalog.Audio != nil {
+				for name, config := range init.Catalog.Audio.Renditions {
+					if publishErr = write(name, config.TrackID(), false); publishErr != nil {
+						break
+					}
+				}
+			}
+		}
+		if publishErr != nil {
+			cancel()
+		}
+	}
+	if err := <-done; err != nil && publishErr == nil {
+		publishErr = err
+	}
+	if publishErr != nil {
+		return publishErr
+	}
+	if init != nil && init.Catalog != nil && init.Catalog.Audio != nil {
+		for name := range init.Catalog.Audio.Renditions {
+			if t := ts[name]; t != nil && t.group != nil {
+				if err := t.group.Finish(); err != nil {
+					return fmt.Errorf("track %s group: %w", name, err)
+				}
+				t.group = nil
+			}
+		}
+	}
+	return nil
+}
+
+func (ts moqTracks) track(ctx context.Context, broadcast *official.BroadcastProducer, name string, data, init []byte) (*moqTrack, [][]byte, error) {
+	fragments, catalog, err := cmafFragments(data)
+	if err != nil {
+		return nil, nil, fmt.Errorf("track %s: %w", name, err)
+	}
+	t := ts[name]
+	if t != nil && !bytes.Equal(t.catalog, catalog) {
+		return nil, nil, fmt.Errorf("track %s changed its codec config", name)
+	}
+	if t == nil {
+		if len(init) == 0 {
+			var buf bytes.Buffer
+			if err := muxl.RunMuxlWrapInit(ctx, bytes.NewReader(data), &buf); err != nil {
+				return nil, nil, fmt.Errorf("track %s init: %w", name, err)
+			}
+			init = buf.Bytes()
+		}
+		producer, err := broadcast.PublishCMAF(name, init)
+		if err != nil {
+			return nil, nil, fmt.Errorf("publishing track %s: %w", name, err)
+		}
+		t = &moqTrack{CMAFProducer: producer, catalog: catalog}
+		ts[name] = t
+	}
+	return t, fragments, nil
 }
 
 // cmafFragments splits one track's canonical segment into its CMAF
@@ -404,8 +546,13 @@ func consumeBroadcast(ctx context.Context, broadcast *official.BroadcastConsumer
 			if sourceTracks == nil && len(src) > 0 {
 				sourceTracks = src
 				g.Go(func() error { return consumeSource(gctx, broadcast, src, source) })
-			} else if !slices.Equal(src, sourceTracks) {
-				return fmt.Errorf("source tracks changed from %v to %v", sourceTracks, src)
+			} else {
+				// Retired catalog entries still have subscribed media to drain.
+				for _, name := range src {
+					if !slices.Contains(sourceTracks, name) {
+						return fmt.Errorf("source tracks changed from %v to %v", sourceTracks, src)
+					}
+				}
 			}
 			for _, name := range ren {
 				if renditions[name] {
@@ -419,9 +566,12 @@ func consumeBroadcast(ctx context.Context, broadcast *official.BroadcastConsumer
 				})
 			}
 		}
-		return errors.New("catalog ended")
+		return nil
 	})
-	return g.Wait()
+	if err := g.Wait(); err != nil {
+		return err
+	}
+	return errors.New("broadcast ended")
 }
 
 // moqTrackSets sorts a catalog's tracks, named by their MUXL rendition
@@ -450,10 +600,9 @@ func moqTrackSets(catalog *official.Catalog) (source, renditions []string) {
 	return source, renditions
 }
 
-// consumeSource reassembles the source segments from their tracks (names,
-// in track-id order) and hands each to handle. A segment's tracks share a
-// group sequence, which the first track leads; a track with no group at a
-// segment's sequence has no part in that segment.
+// consumeSource reassembles source batches in sequence order, keeping tracks
+// in track-id order. A track can end before the others without losing their
+// remaining batches; only tracks with a matching group contribute bytes.
 func consumeSource(ctx context.Context, broadcast *official.BroadcastConsumer, names []string, handle func([]byte) error) error {
 	tracks := make([]*official.TrackConsumer, len(names))
 	for i, name := range names {
@@ -464,7 +613,7 @@ func consumeSource(ctx context.Context, broadcast *official.BroadcastConsumer, n
 		defer track.Cancel()
 		tracks[i] = track
 	}
-	// Groups already read past the segment being assembled.
+	// The next unread group of each track.
 	ahead := make([]*official.GroupConsumer, len(tracks))
 	defer func() {
 		for _, group := range ahead {
@@ -474,30 +623,37 @@ func consumeSource(ctx context.Context, broadcast *official.BroadcastConsumer, n
 		}
 	}()
 	for {
-		lead, err := nextMoqGroup(ctx, tracks[0], names[0])
-		if err != nil {
-			return err
-		}
-		sequence := lead.Sequence()
-		segment, err := readMoqGroup(ctx, lead)
-		if err != nil {
-			return fmt.Errorf("%s track: %w", names[0], err)
-		}
-		for i := 1; i < len(tracks); i++ {
-			group := ahead[i]
-			ahead[i] = nil
-			for group == nil || group.Sequence() < sequence {
-				if group != nil {
-					group.Cancel()
-				}
-				if group, err = nextMoqGroup(ctx, tracks[i], names[i]); err != nil {
-					return err
-				}
-			}
-			if group.Sequence() > sequence {
-				ahead[i] = group
+		var sequence uint64
+		found := false
+		for i, track := range tracks {
+			if track == nil {
 				continue
 			}
+			if ahead[i] == nil {
+				group, err := track.NextGroup(ctx)
+				if err != nil {
+					return fmt.Errorf("%s track: %w", names[i], err)
+				}
+				if group == nil {
+					tracks[i] = nil
+					continue
+				}
+				ahead[i] = group
+			}
+			if !found || ahead[i].Sequence() < sequence {
+				sequence = ahead[i].Sequence()
+				found = true
+			}
+		}
+		if !found {
+			return nil
+		}
+		var segment []byte
+		for i, group := range ahead {
+			if group == nil || group.Sequence() != sequence {
+				continue
+			}
+			ahead[i] = nil
 			part, err := readMoqGroup(ctx, group)
 			if err != nil {
 				return fmt.Errorf("%s track: %w", names[i], err)
@@ -520,9 +676,12 @@ func consumeTrack(ctx context.Context, broadcast *official.BroadcastConsumer, na
 	}
 	defer track.Cancel()
 	for {
-		group, err := nextMoqGroup(ctx, track, name)
+		group, err := track.NextGroup(ctx)
 		if err != nil {
-			return err
+			return fmt.Errorf("%s track: %w", name, err)
+		}
+		if group == nil {
+			return nil
 		}
 		segment, err := readMoqGroup(ctx, group)
 		if err != nil {
@@ -541,17 +700,6 @@ func subscribeMoqTrack(ctx context.Context, broadcast *official.BroadcastConsume
 		return nil, fmt.Errorf("could not subscribe to %s: %w", name, err)
 	}
 	return track, nil
-}
-
-func nextMoqGroup(ctx context.Context, track *official.TrackConsumer, name string) (*official.GroupConsumer, error) {
-	group, err := track.NextGroup(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("%s track: %w", name, err)
-	}
-	if group == nil {
-		return nil, fmt.Errorf("%s track ended", name)
-	}
-	return group, nil
 }
 
 // moqMaxGroupBytes bounds a group read from a peer, which nothing has
