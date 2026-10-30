@@ -108,6 +108,12 @@ func (mm *MediaManager) nextIngestSession() uint64 {
 // PlaybackSourceRendition carries verified source media before codec completion.
 const PlaybackSourceRendition = "playback-source"
 
+// RTMPSourceRendition carries H264 video with completed AAC for multistream egress.
+const RTMPSourceRendition = "rtmp-source"
+
+// WebRTCSourceRendition carries compatible H264 and Opus source packets.
+const WebRTCSourceRendition = "webrtc-source"
+
 type NewSegmentNotification struct {
 	Segment *localdb.Segment
 	// Data is the presentation flat MP4 (ftyp+moov+mdat envelope) consumed by

@@ -177,7 +177,7 @@ func TestMoqServesTheBus(t *testing.T) {
 	packets := make([]*bus.PacketizedSegment, len(segments))
 	shortest, longest := 0, 0
 	for i, segment := range segments {
-		packets[i], err = media.Packetize(ctx, &config.CLI{}, &bus.Seg{Muxl: segment})
+		packets[i], err = media.Packetize(ctx, &config.CLI{}, &bus.Seg{Muxl: segment}, 0)
 		require.NoError(t, err)
 		if packets[i].BatchDuration < packets[shortest].BatchDuration {
 			shortest = i

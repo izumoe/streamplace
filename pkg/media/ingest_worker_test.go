@@ -178,7 +178,7 @@ func TestRunMP4IngestWorkerProducesValidSignedFrames(t *testing.T) {
 		}
 		require.Equal(t, ingestframe.CompletedSourceSegment, typ)
 		require.Contains(t, sources, label, "each completion follows its signed source")
-		opus, err := filterSegmentToCodec(ctx, payload, true)
+		opus, err := selectSegmentTracks(ctx, payload, 0, "", true)
 		require.NoError(t, err)
 		require.Equal(t, sources[label], opus, "completion preserves original signed source tracks")
 		require.True(t, hasAAC, "segment %d gains worker-transcoded AAC (got %v)", segs, codecs)

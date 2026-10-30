@@ -97,12 +97,11 @@ func (mm *MediaManager) mintVideoRenditions(ctx context.Context, srcSeg []byte, 
 	if cat == nil || cat.Video == nil {
 		return nil, fmt.Errorf("source segment has no video track")
 	}
-	var srcVideoTID, srcTimescale uint32
-	for _, v := range cat.Video.Renditions {
-		srcVideoTID = v.TrackID()
-		srcTimescale = v.Timescale()
-		break
+	primary, ok := primaryVideoTrack(cat, 0, "")
+	if !ok {
+		return nil, fmt.Errorf("source segment has no video track")
 	}
+	srcVideoTID, srcTimescale := primary.TrackID(), primary.Timescale()
 	sourceVideo := tracks[strconv.FormatUint(uint64(srcVideoTID), 10)]
 	if len(sourceVideo) == 0 {
 		return nil, fmt.Errorf("source video track %d missing", srcVideoTID)
@@ -181,7 +180,7 @@ func (mm *MediaManager) canonicalRenditionTrack(ctx context.Context, r Rendition
 	if err != nil {
 		return nil, 0, fmt.Errorf("unwrap canonical: %w", err)
 	}
-	cat, _ := catalogAndTracks(events)
+	cat := catalogFromEvents(events)
 	if cat == nil || cat.Video == nil || len(cat.Video.Renditions) == 0 {
 		return nil, 0, fmt.Errorf("no video track in rendition")
 	}
@@ -205,7 +204,7 @@ func (mm *MediaManager) canonicalRenditionTrack(ctx context.Context, r Rendition
 		// The catalog is the relabelled one from here on, or the lookup
 		// below misses the track and the rendition is retimed in the
 		// source's timescale.
-		if cat, _ = catalogAndTracks(events); cat == nil || cat.Video == nil {
+		if cat = catalogFromEvents(events); cat == nil || cat.Video == nil {
 			return nil, 0, fmt.Errorf("no video track in relabelled rendition")
 		}
 	}
@@ -232,10 +231,9 @@ func (mm *MediaManager) canonicalRenditionTrack(ctx context.Context, r Rendition
 // MP4s come out under (see canonicalRenditionTrack).
 type renditionTIDCache = sync.Map
 
-// PresentationWithOpus is a segment as a fragmented MP4 with video plus its
-// Opus audio only — what the transcoder is handed so the audio it muxes
-// back into each rendition is the one the WebRTC packetizer can take. A
-// single-codec AAC segment (none completed yet) comes back as is.
+// PresentationWithOpus returns the primary video and required Opus audio as
+// a fragmented MP4. The transcoder copies that audio into the H264 renditions
+// used for WebRTC playback.
 //
 // Fragmented, not flat: a flat MP4 carries a track duration, and qtdemux
 // clips samples that present past it — with B-frames the last P frame's
@@ -244,7 +242,7 @@ type renditionTIDCache = sync.Map
 // presentation has no duration to clip against and every sample gets
 // through.
 func PresentationWithOpus(ctx context.Context, seg []byte) ([]byte, error) {
-	opus, err := filterSegmentToCodec(ctx, seg, true)
+	opus, err := selectSegmentTracks(ctx, seg, 0, "", true)
 	if err != nil {
 		return nil, err
 	}

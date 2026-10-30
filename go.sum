@@ -773,6 +773,8 @@ github.com/ipld/go-codec-dagpb v1.7.0 h1:hpuvQjCSVSLnTnHXn+QAMR0mLmb1gA6wl10LExo
 github.com/ipld/go-codec-dagpb v1.7.0/go.mod h1:rD3Zg+zub9ZnxcLwfol/OTQRVjaLzXypgy4UqHQvilM=
 github.com/ipld/go-ipld-prime v0.21.0 h1:n4JmcpOlPDIxBcY037SVfpd1G+Sj1nKZah0m6QH9C2E=
 github.com/ipld/go-ipld-prime v0.21.0/go.mod h1:3RLqy//ERg/y5oShXXdx5YIp50cFGOanyMctpPjsvxQ=
+github.com/izumoe/muxl/go v0.3.7-0.20261029032505-24ec4fdc91d0 h1:GKxaRmYJfym0IrV+DTR+rJA7MvnwiuGoOT1dTf0d+6M=
+github.com/izumoe/muxl/go v0.3.7-0.20261029032505-24ec4fdc91d0/go.mod h1:aCyYTW3o6c1Kush9UJ/Yv6EYMUbj8l8GTD7cHKcSxw8=
 github.com/jackc/pgpassfile v1.0.0 h1:/6Hmqy13Ss2zCq62VdNG8tM1wchn8zjSGOBJ6icpsIM=
 github.com/jackc/pgpassfile v1.0.0/go.mod h1:CEx0iS5ambNFdcRtxPj5JhEz+xB6uRky5eyVu/W2HEg=
 github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 h1:iCEnooe7UlwOQYpKFhBabPMi4aNAfoODPEFNiAnClxo=
@@ -1248,8 +1250,6 @@ github.com/streamplace/moq/go/ffi v0.0.0-20261017225858-0014d50204dd h1:RrOws2E5
 github.com/streamplace/moq/go/ffi v0.0.0-20261017225858-0014d50204dd/go.mod h1:a+uEvcnNtY3e9T4/3UqjHBnyYHNLY8rZp+/m7tmL5n8=
 github.com/streamplace/moq/go/wrapper v0.0.0-20261017225858-0014d50204dd h1:eoAa4ApPlxQ6DUntQF+KP6gXWUxr0fH+f/5VGBLAe5w=
 github.com/streamplace/moq/go/wrapper v0.0.0-20261017225858-0014d50204dd/go.mod h1:byuivIHyq+guVzIq5jSpxZ1h6KXQ2jG4FuCSoFZDiOA=
-github.com/streamplace/muxl/go v0.3.6 h1:lyWnY15nft/0GK3LBA4OkD2aHrLV9RRqI+YcDRPFk3g=
-github.com/streamplace/muxl/go v0.3.6/go.mod h1:aCyYTW3o6c1Kush9UJ/Yv6EYMUbj8l8GTD7cHKcSxw8=
 github.com/streamplace/oatproxy v0.0.0-20260710202406-60d97b9d780b h1:eWbwCtBbMyrDTHLYIold07OR2hmvzXsbAUxi57ElMLk=
 github.com/streamplace/oatproxy v0.0.0-20260710202406-60d97b9d780b/go.mod h1:wpY+T/wE00jrUhgh2dKXbbE91D36u86KGlENK/hWFkE=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=

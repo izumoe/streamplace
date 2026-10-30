@@ -181,6 +181,18 @@ func GenerateRenditionsFrom(spseg *placestream.Segment, ladder []Rendition) (Ren
 		return nil, fmt.Errorf("no video stream found")
 	}
 	vid := spseg.Video[0]
+	for _, source := range spseg.Video {
+		if len(spseg.Video) > 1 && (source.Codec == "h264" || strings.HasPrefix(source.Codec, "avc1")) {
+			return nil, nil
+		}
+		if source.Width*source.Height > vid.Width*vid.Height || source.Width*source.Height == vid.Width*vid.Height && source.Width > vid.Width {
+			vid = source
+		}
+	}
+	var framerate FPS
+	if vid.Framerate != nil && vid.Framerate.Num > 0 && vid.Framerate.Den > 0 {
+		framerate = FPS{Num: uint(vid.Framerate.Num), Den: uint(vid.Framerate.Den)}
+	}
 	rs := []Rendition{}
 	for _, r := range ladder {
 		vidWidth := int64(vid.Width)
@@ -230,15 +242,15 @@ func GenerateRenditionsFrom(spseg *placestream.Segment, ladder []Rendition) (Ren
 		// 	outR.Width = r.Width
 		// 	outR.Height = int64(float64(vid.Width) * (9.0 / 16.0) * ratio)
 		// }
-		if vid.Framerate.Den > 0 {
-			vidFPS := float64(vid.Framerate.Num) / float64(vid.Framerate.Den)
+		if framerate.Den > 0 {
+			vidFPS := float64(framerate.Num) / float64(framerate.Den)
 			rFPS := float64(r.Framerate.Num) / float64(r.Framerate.Den)
 			delta := rFPS / vidFPS
 
 			if rFPS < vidFPS {
 				if delta < 0.75 {
-					outR.Framerate.Num = uint(vid.Framerate.Num)
-					outR.Framerate.Den = uint(vid.Framerate.Den * 2)
+					outR.Framerate.Num = uint(framerate.Num)
+					outR.Framerate.Den = uint(framerate.Den * 2)
 				}
 			}
 		}
@@ -246,6 +258,9 @@ func GenerateRenditionsFrom(spseg *placestream.Segment, ladder []Rendition) (Ren
 		outR.Bitrate = r.Bitrate
 		outR.Profile = r.Profile
 		rs = append(rs, outR)
+	}
+	if len(rs) == 0 && (vid.Codec == "av1" || strings.HasPrefix(vid.Codec, "av01")) {
+		rs = append(rs, Rendition{Name: fmt.Sprintf("%dp", vid.Height), Width: vid.Width, Height: vid.Height, Bitrate: 500_000, Profile: "baseline", Framerate: framerate})
 	}
 	return rs, nil
 }

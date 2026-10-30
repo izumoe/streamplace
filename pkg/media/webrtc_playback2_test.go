@@ -65,7 +65,7 @@ func TestWebRTCPlayback2CancelsBackloggedPlayback(t *testing.T) {
 
 			cancel()
 			require.NoError(t, client.Close())
-			subscriptions := spmetrics.SegmentSubscriptionsOpen.WithLabelValues(t.Name(), PlaybackSourceRendition)
+			subscriptions := spmetrics.SegmentSubscriptionsOpen.WithLabelValues(t.Name(), WebRTCSourceRendition)
 			var metric dto.Metric
 			require.Eventually(t, func() bool { return subscriptions.Write(&metric) == nil && metric.GetGauge().GetValue() == 0 }, time.Second, time.Millisecond,
 				"cancelled playback releases its segment subscription")
@@ -78,7 +78,7 @@ func playbackPacketFixture(tb testing.TB) *bus.PacketizedSegment {
 	gstinit.InitGST()
 	fixture, err := os.ReadFile(getFixture("sample-segment.mp4"))
 	require.NoError(tb, err)
-	packet, err := Packetize(context.Background(), &config.CLI{}, &bus.Seg{Data: fixture})
+	packet, err := Packetize(context.Background(), &config.CLI{}, &bus.Seg{Data: fixture}, 0)
 	require.NoError(tb, err)
 	require.NotEmpty(tb, packet.Audio)
 	require.Positive(tb, packet.Duration)
@@ -137,7 +137,7 @@ func startBackloggedPlayback(tb testing.TB, ctx context.Context, mm *MediaManage
 
 	seg := &bus.Seg{Published: true, PacketizedData: packet}
 	for range 2 {
-		mm.bus.PublishSegment(ctx, user, PlaybackSourceRendition, seg)
+		mm.bus.PublishSegment(ctx, user, WebRTCSourceRendition, seg)
 	}
 	answer, err := mm.WebRTCPlayback2(ctx, user, rendition, client.LocalDescription(), "")
 	require.NoError(tb, err)
@@ -145,12 +145,12 @@ func startBackloggedPlayback(tb testing.TB, ctx context.Context, mm *MediaManage
 	require.NoError(tb, client.SetRemoteDescription(*answer))
 
 	// Flood a connected reader while its sender is pacing actual samples.
-	subscriptions := spmetrics.SegmentSubscriptionsOpen.WithLabelValues(user, PlaybackSourceRendition)
+	subscriptions := spmetrics.SegmentSubscriptionsOpen.WithLabelValues(user, WebRTCSourceRendition)
 	var metric dto.Metric
 	require.Eventually(tb, func() bool { return subscriptions.Write(&metric) == nil && metric.GetGauge().GetValue() == 1 }, time.Second, time.Millisecond)
 	for range 16 {
 		for range 256 {
-			mm.bus.PublishSegment(ctx, user, PlaybackSourceRendition, seg)
+			mm.bus.PublishSegment(ctx, user, WebRTCSourceRendition, seg)
 		}
 		// Let the reader fill its queue before the next burst fills the bus.
 		time.Sleep(5 * time.Millisecond)

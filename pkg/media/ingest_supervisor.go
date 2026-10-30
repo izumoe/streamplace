@@ -203,6 +203,7 @@ func (mm *MediaManager) consumeWorkerFrames(ctx context.Context, fr *ingestframe
 		// playback. Release only this producer's own source-only cache.
 		if !canonical && lastSource != nil {
 			mm.bus.EndSessionIfCurrent(ctx, streamer, PlaybackSourceRendition, lastSource)
+			mm.bus.EndSessionIfCurrent(ctx, streamer, WebRTCSourceRendition, lastSource)
 		}
 	}()
 	for {

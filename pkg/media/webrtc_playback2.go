@@ -145,7 +145,7 @@ func (mm *MediaManager) WebRTCPlayback2(ctx context.Context, user string, rendit
 			}
 			busRendition := rendition
 			if audioOnly || rendition == "source" {
-				busRendition = PlaybackSourceRendition
+				busRendition = WebRTCSourceRendition
 			}
 			segChan := mm.bus.SubscribeSegmentBuf(ctx, user, busRendition, 1)
 			defer mm.bus.UnsubscribeSegment(ctx, user, busRendition, segChan)

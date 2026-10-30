@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -122,14 +123,23 @@ func (mm *MediaManager) consumeSourcePhase(ctx context.Context, segment []byte, 
 		vs.playbackPublished = earlyPlayback
 		return nil, mm.distributeSegment(ctx, vs, segment, playable)
 	}
-	seg := &bus.Seg{Filepath: vs.label, Data: playable, Published: vs.meta.Published}
-	packet, err := Packetize(ctx, mm.cli, seg)
-	if err != nil {
-		return nil, fmt.Errorf("packetize verified source: %w", err)
+	seg := &bus.Seg{
+		Filepath:      vs.label,
+		Data:          playable,
+		Muxl:          segment,
+		BatchDuration: vs.mediaData.BatchDuration,
+		Published:     vs.meta.Published,
 	}
-	seg.Muxl = segment
-	seg.PacketizedData = packet
+	packet, err := Packetize(ctx, mm.cli, seg, 0)
+	if err != nil {
+		log.Debug(ctx, "source has no compatible WebRTC packets", "error", err)
+	} else {
+		seg.PacketizedData = packet
+	}
 	mm.bus.PublishSegment(ctx, vs.repoDID, PlaybackSourceRendition, seg)
+	if seg.PacketizedData != nil {
+		mm.bus.PublishSegment(ctx, vs.repoDID, WebRTCSourceRendition, seg)
+	}
 	return seg, nil
 }
 
@@ -393,12 +403,13 @@ func (mm *MediaManager) isWarningBlocked(warning string) bool {
 
 type ValidationResult struct {
 	// Playable is the flat MP4 used to validate the source media.
-	Playable  []byte
-	Pub       *atcrypto.PublicKeyK256
-	Meta      *SegmentMetadata
-	MediaData *localdb.SegmentMediaData
-	Manifest  *c2patypes.Manifest
-	Cert      string
+	Playable         []byte
+	Pub              *atcrypto.PublicKeyK256
+	Meta             *SegmentMetadata
+	MediaData        *localdb.SegmentMediaData
+	Manifest         *c2patypes.Manifest
+	Cert             string
+	trackSigningKeys map[uint32]string
 }
 
 func ValidateMP4Media(ctx context.Context, buf []byte) (*ValidationResult, error) {
@@ -431,6 +442,12 @@ func ValidateMP4Media(ctx context.Context, buf []byte) (*ValidationResult, error
 	}
 	validationResult.MediaData = mediaData
 	validationResult.Playable = playable
+	for _, video := range mediaData.Video {
+		video.SigningKey = validationResult.trackSigningKeys[video.TrackID]
+	}
+	for _, audio := range mediaData.Audio {
+		audio.SigningKey = validationResult.trackSigningKeys[audio.TrackID]
+	}
 	return validationResult, nil
 }
 
@@ -496,10 +513,15 @@ func ValidateMP4MediaC2PA(ctx context.Context, buf []byte) (*ValidationResult, e
 		}
 	}
 
-	// The primary (first) segment carries the segment-level metadata + cert.
-	// All tracks share the same manifest body (segment == wrapper manifest at
-	// sign time), so this preserves the old wrapper-manifest semantics.
-	primary := doc.Segments[0]
+	// Track order can change during replication. The lowest track's first
+	// asset keeps the deduplication identity stable; source tracks precede
+	// node-signed addenda.
+	primary := &doc.Segments[0]
+	for i := range doc.Segments {
+		if doc.Segments[i].TrackID < primary.TrackID {
+			primary = &doc.Segments[i]
+		}
+	}
 
 	_, certSpan := tracer.Start(ctx, "ValidateMP4Media.ParseES256KCert")
 	pub, err := signers.ParseES256KCert([]byte(primary.Cert))
@@ -508,18 +530,55 @@ func ValidateMP4MediaC2PA(ctx context.Context, buf []byte) (*ValidationResult, e
 		return nil, err
 	}
 
+	certKeys := map[string]string{primary.Cert: pub.DIDKey()}
+	trackKeys := make(map[uint32]string)
+	for _, segment := range doc.Segments {
+		key, ok := certKeys[segment.Cert]
+		if !ok {
+			trackPub, err := signers.ParseES256KCert([]byte(segment.Cert))
+			if err != nil {
+				return nil, err
+			}
+			key = trackPub.DIDKey()
+			certKeys[segment.Cert] = key
+		}
+		if previous, seen := trackKeys[segment.TrackID]; seen && previous != key {
+			trackKeys[segment.TrackID] = ""
+		} else if !seen {
+			trackKeys[segment.TrackID] = key
+		}
+	}
+
 	assCtx, assSpan := tracer.Start(ctx, "ValidateMP4Media.ParseSegmentAssertions")
 	meta, err := ParseSegmentAssertions(assCtx, &primary.Manifest)
 	assSpan.End()
 	if err != nil {
 		return nil, err
 	}
+	// A batch spanning a source metadata change stays private. Node-signed
+	// addenda have independent metadata and cannot change source policy.
+	reference := *meta
+	for i := range doc.Segments {
+		segment := &doc.Segments[i]
+		if segment == primary || segment.Cert != primary.Cert {
+			continue
+		}
+		other, err := ParseSegmentAssertions(ctx, &segment.Manifest)
+		if err != nil {
+			return nil, fmt.Errorf("track %d segment metadata: %w", segment.TrackID, err)
+		}
+		other.StartTime = reference.StartTime
+		if !reflect.DeepEqual(reference, *other) {
+			meta.Published = false
+		}
+	}
 
 	return &ValidationResult{
-		Pub:       pub,
-		Meta:      meta,
-		MediaData: nil, // filled in by ValidateMP4MediaData
-		Manifest:  &primary.Manifest,
-		Cert:      primary.Cert,
+		Pub:              pub,
+		Meta:             meta,
+		MediaData:        nil, // filled in by ValidateMP4MediaData
+		Manifest:         &primary.Manifest,
+		Cert:             primary.Cert,
+		trackSigningKeys: trackKeys,
 	}, nil
 }

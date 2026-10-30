@@ -247,19 +247,27 @@ func (t *streamTranscoder) Feed(src []byte, token any) error {
 		return err
 	}
 	first := !t.started
-	t.started = true
 	t.mu.Unlock()
+	// Native completion needs one cut-clock video and the audio it decodes.
+	// The queued job retains every original signed source track unchanged.
+	selected, err := selectSegmentTracks(t.ctx, src, 0, "", t.target == "aac")
+	if err != nil {
+		return fmt.Errorf("select audio completion tracks: %w", err)
+	}
 
 	// Synthesize and write the init (ftyp+moov) once, then the segment bytes —
 	// the same init-then-blind-concat the RTMP push feeder uses.
 	if first {
 		var init bytes.Buffer
-		if err := muxl.RunMuxlWrapInit(t.ctx, bytes.NewReader(src), &init); err != nil {
+		if err := muxl.RunMuxlWrapInit(t.ctx, bytes.NewReader(selected), &init); err != nil {
 			return fmt.Errorf("synthesize transcoder init: %w", err)
 		}
 		if _, err := t.feedW.Write(init.Bytes()); err != nil {
 			return err
 		}
+		t.mu.Lock()
+		t.started = true
+		t.mu.Unlock()
 	}
 	// Enqueue the job before feeding the bytes so the consumer has the source
 	// ready by the time its (lagging) transcoded twin emerges.
@@ -268,7 +276,7 @@ func (t *streamTranscoder) Feed(src []byte, token any) error {
 	case <-t.ctx.Done():
 		return t.ctx.Err()
 	}
-	if _, err := t.feedW.Write(src); err != nil {
+	if _, err := t.feedW.Write(selected); err != nil {
 		return err
 	}
 	return nil
@@ -418,26 +426,20 @@ func (t *streamTranscoder) run(feedR *io.PipeReader) error {
 // finishTranscodedSegment assembles one completed dual-codec segment: relabel
 // the freshly-segmented transcoded audio (the audio track transTID within
 // transSeg) to a free track id so it won't collide with the source tracks, sign
-// it as a c2pa.transcoded derivative of the source segment's audio (node
-// identity), and append it to the source segment. The relabel is a lossless
+// each canonical audio asset as a c2pa.transcoded derivative of the source
+// audio (node identity), and append it to the source segment. The relabel is a lossless
 // re-container (no re-encode), so the continuous encoder's gaplessness is
 // preserved.
 //
-// transSeg is the FULL emitted transcoded segment (video + transcoded audio),
-// not the audio track alone. The relabel goes through muxl's canonicalize,
-// which re-segments its input; with audio only there are no keyframes to anchor
-// on, so it falls back to a ~1s cadence and splits each ~2s GoP's audio in two —
-// and only the first survived extraction, silently halving the transcoded track
-// (every output segment carried ~1s of audio against ~2s of video, audible as
-// the audio cutting out for the back half of each segment). Carrying the
-// passed-through video as the cut clock makes canonicalize emit one segment per
-// GoP, exactly like the source track.
+// transSeg includes the video so its keyframes anchor audio re-segmentation.
+// Every resulting canonical audio asset is signed independently and names all
+// original source audio assets as ingredients.
 func (mm *MediaManager) finishTranscodedSegment(ctx context.Context, srcSeg, transSeg []byte, transTID uint32, cert, keyPEM []byte) ([]byte, error) {
 	events, err := unwrapMuxlEvents(ctx, srcSeg)
 	if err != nil {
 		return nil, fmt.Errorf("unwrap source segment: %w", err)
 	}
-	cat, tracks := catalogAndTracks(events)
+	cat := catalogFromEvents(events)
 	if cat == nil || cat.Audio == nil {
 		return nil, fmt.Errorf("source segment has no audio track")
 	}
@@ -451,17 +453,14 @@ func (mm *MediaManager) finishTranscodedSegment(ctx context.Context, srcSeg, tra
 		maxTID = maxU32(maxTID, a.TrackID())
 		srcAudioTID = a.TrackID()
 	}
-	sourceAudio := tracks[strconv.FormatUint(uint64(srcAudioTID), 10)]
+	sourceAudio := concatTrackAcrossSegments(events, strconv.FormatUint(uint64(srcAudioTID), 10))
 	if len(sourceAudio) == 0 {
 		return nil, fmt.Errorf("source audio track %d missing", srcAudioTID)
 	}
 	freeTID := maxTID + 1
 
-	// Relabel transTID → freeTID: wrap the full segment to fMP4, canonicalize
-	// with the remap (the video keyframe anchors one segment per GoP), extract
-	// the relabeled audio track. Pure re-container; no re-encode. Concatenate the
-	// track across every emitted segment so nothing is dropped if canonicalize
-	// ever splits the GoP (see catalogAndTracks / concatTrackAcrossSegments).
+	// Relabel transTID → freeTID without re-encoding. Keep the full video cut
+	// clock while re-containering, then sign each relabeled audio asset.
 	var fmp4 bytes.Buffer
 	if err := muxl.RunMuxlWrap(ctx, bytes.NewReader(transSeg), "fmp4", &fmp4); err != nil {
 		return nil, fmt.Errorf("wrap transcoded segment: %w", err)
@@ -474,25 +473,39 @@ func (mm *MediaManager) finishTranscodedSegment(ctx context.Context, srcSeg, tra
 	if err != nil {
 		return nil, fmt.Errorf("unwrap relabeled audio: %w", err)
 	}
-	output := concatTrackAcrossSegments(canonEvents, freeTID)
-	if len(output) == 0 {
+	audioID := strconv.FormatUint(uint64(freeTID), 10)
+	var pieces [][]byte
+	size := len(srcSeg)
+	manifest := transcodeManifest(mm.cli.BroadcasterDID())
+	for _, event := range canonEvents {
+		output := event.Tracks[audioID]
+		if len(output) == 0 {
+			continue
+		}
+		// Each canonical asset needs its own signature, even when the lossless
+		// re-container splits one completed batch across video boundaries.
+		signed, err := muxl.RunMuxlSignTranscode(ctx, muxl.TranscodeInput{
+			Output:   output,
+			Source:   sourceAudio,
+			CertPEM:  cert,
+			KeyPEM:   keyPEM,
+			Manifest: manifest,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("sign transcoded track: %w", err)
+		}
+		pieces = append(pieces, signed)
+		size += len(signed)
+	}
+	if len(pieces) == 0 {
 		return nil, fmt.Errorf("relabeled audio track %d missing", freeTID)
 	}
 
-	signed, err := muxl.RunMuxlSignTranscode(ctx, muxl.TranscodeInput{
-		Output:   output,
-		Source:   sourceAudio,
-		CertPEM:  cert,
-		KeyPEM:   keyPEM,
-		Manifest: transcodeManifest(mm.cli.BroadcasterDID()),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("sign transcoded track: %w", err)
-	}
-
-	completed := make([]byte, 0, len(srcSeg)+len(signed))
+	completed := make([]byte, 0, size)
 	completed = append(completed, srcSeg...)
-	completed = append(completed, signed...)
+	for _, piece := range pieces {
+		completed = append(completed, piece...)
+	}
 	return completed, nil
 }
 

@@ -14,8 +14,9 @@ import (
 
 type Seg struct {
 	Filepath          string
-	Data              []byte // presentation flat MP4
-	Muxl              []byte // bare canonical .m4s (blindly concatenatable)
+	Data              []byte        // presentation flat MP4
+	Muxl              []byte        // bare canonical .m4s (blindly concatenatable)
+	BatchDuration     time.Duration // sample PTS span across all signed source tracks
 	PacketizedData    *PacketizedSegment
 	Published         bool
 	PlaybackPublished bool

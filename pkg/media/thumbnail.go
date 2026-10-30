@@ -5,15 +5,16 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/go-gst/go-gst/pkg/gst"
 	app "github.com/go-gst/go-gst/pkg/gstapp"
-	"stream.place/streamplace/pkg/bus"
 	"stream.place/streamplace/pkg/gstpipeline"
 	"stream.place/streamplace/pkg/log"
+	"stream.place/streamplace/pkg/muxl"
 )
 
 // ThumbnailFromSegment generates a thumbnail from a single VOD segment.
@@ -145,150 +146,26 @@ func thumbnailFromMP4(ctx context.Context, flat []byte, w io.Writer, format stri
 }
 
 func Thumbnail(ctx context.Context, r io.Reader, w io.Writer, format string) error {
-	ctx = log.WithLogValues(ctx, "function", "Thumbnail")
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	var encoder string
-	switch format {
-	case "jpeg":
-		encoder = "jpegenc"
-	case "png":
-		encoder = "pngenc snapshot=true"
-	default:
-		log.Error(ctx, "media.Thumbnail: expected jpeg or png as format and received %s", format)
-		encoder = "pngenc snapshot=true"
-	}
-
-	// Read all data from the reader to create a Seg for ConcatDemuxBin
 	data, err := io.ReadAll(r)
 	if err != nil {
-		return fmt.Errorf("error reading input data: %w", err)
+		return fmt.Errorf("read thumbnail source: %w", err)
 	}
-
-	seg := &bus.Seg{
-		Data: data,
-	}
-
-	pipelineSlice := []string{
-		"decodebin name=decode ! videoconvert ! videoscale ! videorate ! capsfilter name=capsfilter caps=video/x-raw,width=[1,1280],height=[1,720],pixel-aspect-ratio=1/1,framerate=1/999999 ! ",
-		encoder,
-		" ! appsink sync=false name=appsink",
-		"fakesink name=audiofakesink sync=false",
-	}
-
-	launched, err := gst.ParseLaunch(strings.Join(pipelineSlice, "\n"))
+	canonical, err := muxl.RunMuxlCanonicalize(ctx, data, nil)
 	if err != nil {
-		return fmt.Errorf("error creating Thumbnail pipeline: %w", err)
+		return fmt.Errorf("canonicalize thumbnail source: %w", err)
 	}
-	pipeline, ok := launched.(gst.Pipeline)
+	events, err := unwrapMuxlEvents(ctx, canonical)
+	if err != nil {
+		return err
+	}
+	cat := catalogFromEvents(events)
+	video, ok := primaryVideoTrack(cat, 0, "")
 	if !ok {
-		return fmt.Errorf("error creating Thumbnail pipeline: parsed description is not a pipeline")
+		return fmt.Errorf("thumbnail source has no video")
 	}
-
-	demuxBin, err := ConcatDemuxBin(ctx, seg, false)
-	if err != nil {
-		return fmt.Errorf("failed to create demux bin: %w", err)
+	var presentation bytes.Buffer
+	if err := muxl.RunMuxlWrap(ctx, bytes.NewReader(concatTrackAcrossSegments(events, strconv.FormatUint(uint64(video.TrackID()), 10))), "fmp4", &presentation); err != nil {
+		return err
 	}
-
-	if !pipeline.Add(demuxBin) {
-		return fmt.Errorf("failed to add demux bin to pipeline")
-	}
-
-	demuxBinPadVideoSrc := demuxBin.GetStaticPad("video_0")
-	if demuxBinPadVideoSrc == nil {
-		return fmt.Errorf("failed to get demux bin video src pad")
-	}
-
-	demuxBinPadAudioSrc := demuxBin.GetStaticPad("audio_0")
-	if demuxBinPadAudioSrc == nil {
-		return fmt.Errorf("failed to get demux bin audio src pad")
-	}
-
-	decode := pipeline.GetByName("decode")
-	if decode == nil {
-		return fmt.Errorf("failed to get decodebin element")
-	}
-
-	audioFakeSink := pipeline.GetByName("audiofakesink")
-	if audioFakeSink == nil {
-		return fmt.Errorf("failed to get audio fakesink element")
-	}
-
-	linked := demuxBinPadVideoSrc.Link(decode.GetStaticPad("sink"))
-	if linked != gst.PadLinkOK {
-		return fmt.Errorf("failed to link demux bin video src to decodebin: %v", linked)
-	}
-
-	linked = demuxBinPadAudioSrc.Link(audioFakeSink.GetStaticPad("sink"))
-	if linked != gst.PadLinkOK {
-		return fmt.Errorf("failed to link demux bin audio src to fakesink: %v", linked)
-	}
-
-	defer func() {
-		if pipeline.SetState(gst.StateNull) == gst.StateChangeFailure {
-			log.Error(ctx, "failed to set pipeline state to null")
-		}
-		if !pipeline.Remove(demuxBin) {
-			log.Error(ctx, "failed to remove demux bin from pipeline")
-		}
-	}()
-
-	appsink := pipeline.GetByName("appsink")
-	if appsink == nil {
-		return fmt.Errorf("failed to get appsink element")
-	}
-
-	errCh := make(chan error)
-	go func() {
-		err := gstpipeline.HandleBusMessages(ctx, pipeline)
-		errCh <- err
-		close(errCh)
-	}()
-
-	thumbCh := make(chan struct{})
-
-	appsink.(app.AppSink).SetCallbacks(&app.AppSinkCallbacks{
-		NewSample: func(sink app.AppSink) gst.FlowReturn {
-			sample := sink.PullSample()
-			if sample == nil {
-				return gst.FlowOK
-			}
-
-			// Retrieve the buffer from the sample.
-			info, ok := sample.GetBuffer().Map(gst.MapRead)
-			if !ok {
-				log.Error(ctx, "failed to map buffer")
-				return gst.FlowError
-			}
-			defer info.Unmap()
-
-			bs := info.Data()
-			_, err := w.Write(bs)
-			log.Debug(ctx, "wrote buffer", "length", len(bs))
-
-			if err != nil {
-				log.Error(ctx, "error writing to output", "error", err)
-				return gst.FlowError
-			}
-
-			close(thumbCh)
-
-			return gst.FlowOK
-		},
-	})
-
-	if pipeline.SetState(gst.StatePlaying) == gst.StateChangeFailure {
-		return fmt.Errorf("error setting pipeline state to playing")
-	}
-
-	<-thumbCh
-	// signals the pipeline to clean up cleanly
-	pipeline.PostMessage(gst.NewMessageError(pipeline, gstpipeline.ErrPipelineDone.Error(), gstpipeline.ErrPipelineDone))
-
-	busErr := <-errCh
-
-	log.Debug(ctx, "thumbnail done")
-
-	return busErr
+	return thumbnailFromMP4(ctx, presentation.Bytes(), w, format)
 }

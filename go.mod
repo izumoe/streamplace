@@ -31,6 +31,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.20.9
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.114.4
 	github.com/bluenviron/gortmplib v1.0.4
+	github.com/bluenviron/mediacommon/v2 v2.9.6
 	github.com/bluesky-social/indigo v0.0.0-20260629160527-dfe5578fd537
 	github.com/caddyserver/certmagic v0.25.6
 	github.com/cenkalti/backoff v2.2.1+incompatible
@@ -199,7 +200,6 @@ require (
 	github.com/bits-and-blooms/bitset v1.24.6 // indirect
 	github.com/bkielbasa/cyclop v1.2.3 // indirect
 	github.com/blizzy78/varnamelen v0.8.0 // indirect
-	github.com/bluenviron/mediacommon/v2 v2.9.6 // indirect
 	github.com/bombsimon/wsl/v4 v4.7.0 // indirect
 	github.com/bombsimon/wsl/v5 v5.9.0 // indirect
 	github.com/breml/bidichk v0.3.4 // indirect
@@ -547,3 +547,5 @@ replace (
 	moq.dev/moq => github.com/streamplace/moq/go/wrapper v0.0.0-20261017225858-0014d50204dd
 	moq.dev/moq-ffi => github.com/streamplace/moq/go/ffi v0.0.0-20261017225858-0014d50204dd
 )
+
+replace github.com/streamplace/muxl/go => github.com/izumoe/muxl/go v0.3.7-0.20261029032505-24ec4fdc91d0

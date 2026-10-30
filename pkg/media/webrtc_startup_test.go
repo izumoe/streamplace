@@ -41,7 +41,7 @@ func TestWebRTCPlaybackStartsWithLatestCachedSegment(t *testing.T) {
 				for range 50 {
 					packet.Audio = append(packet.Audio, bus.PacketizedSample{Data: data, Duration: 20 * time.Millisecond})
 				}
-				manager.bus.PublishSegment(ctx, t.Name(), PlaybackSourceRendition, &bus.Seg{Published: true, PacketizedData: packet})
+				manager.bus.PublishSegment(ctx, t.Name(), WebRTCSourceRendition, &bus.Seg{Published: true, PacketizedData: packet})
 			}
 			receiver := createPlaybackReceiver(t, ctx, manager.webrtcAPI, renditions.AudioRendition.Name)
 			defer receiver.Close()
@@ -77,7 +77,7 @@ func TestWebRTCPlaybackCancelsPendingHandshake(t *testing.T) {
 	answer, err := manager.WebRTCPlayback2(ctx, t.Name(), renditions.AudioRendition.Name, receiver.LocalDescription(), "")
 	require.NoError(t, err)
 	require.NotNil(t, answer)
-	subscriptions := spmetrics.SegmentSubscriptionsOpen.WithLabelValues(t.Name(), PlaybackSourceRendition)
+	subscriptions := spmetrics.SegmentSubscriptionsOpen.WithLabelValues(t.Name(), WebRTCSourceRendition)
 	require.Never(t, func() bool {
 		var metric dto.Metric
 		return subscriptions.Write(&metric) != nil || metric.GetGauge().GetValue() != 0
@@ -104,7 +104,7 @@ func TestWebRTCPlaybackPacesAfterUpstreamIdle(t *testing.T) {
 		packet.Audio = append(packet.Audio, bus.PacketizedSample{Data: fixture.Audio[0].Data, Duration: 20 * time.Millisecond})
 	}
 	publish := func() {
-		manager.bus.PublishSegment(ctx, t.Name(), PlaybackSourceRendition, &bus.Seg{Published: true, PacketizedData: packet})
+		manager.bus.PublishSegment(ctx, t.Name(), WebRTCSourceRendition, &bus.Seg{Published: true, PacketizedData: packet})
 	}
 	publish()
 	receiver := createPlaybackReceiver(t, ctx, manager.webrtcAPI, renditions.AudioRendition.Name)
@@ -146,7 +146,7 @@ func TestWebRTCPlaybackPacesAfterUpstreamIdle(t *testing.T) {
 	require.GreaterOrEqual(t, readGoP(), 120*time.Millisecond, "upstream idle must not make the next 200ms GoP arrive as an overdue burst")
 	cancel()
 	require.NoError(t, receiver.Close())
-	subscriptions := spmetrics.SegmentSubscriptionsOpen.WithLabelValues(t.Name(), PlaybackSourceRendition)
+	subscriptions := spmetrics.SegmentSubscriptionsOpen.WithLabelValues(t.Name(), WebRTCSourceRendition)
 	require.Eventually(t, func() bool {
 		var metric dto.Metric
 		return subscriptions.Write(&metric) == nil && metric.GetGauge().GetValue() == 0

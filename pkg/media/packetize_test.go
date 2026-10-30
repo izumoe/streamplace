@@ -73,7 +73,7 @@ func innerTestPacketize(t *testing.T, filename string, expectedVideo int, expect
 		Filepath: filename,
 	}
 
-	packet, err := Packetize(context.Background(), &config.CLI{}, testSeg)
+	packet, err := Packetize(context.Background(), &config.CLI{}, testSeg, 0)
 	require.NoError(t, err)
 	require.NotNil(t, packet)
 	require.Equal(t, expectedVideo, len(packet.Video))
@@ -88,12 +88,12 @@ func TestPacketizeCanonicalSegment(t *testing.T) {
 	withNoGSTLeaks(t, func() {
 		flat, canonical := packetizeFixture(t)
 		ctx := context.Background()
-		want, err := Packetize(ctx, &config.CLI{}, &bus.Seg{Data: flat})
+		want, err := Packetize(ctx, &config.CLI{}, &bus.Seg{Data: flat}, 0)
 		require.NoError(t, err)
 		got, err := Packetize(ctx, &config.CLI{}, &bus.Seg{
 			Data: []byte("stale presentation"),
 			Muxl: canonical,
-		})
+		}, 0)
 		require.NoError(t, err)
 		require.Equal(t, want, got, "canonical and presentation samples have the same bytes and durations")
 		require.NotEmpty(t, got.Video)
@@ -162,7 +162,7 @@ func TestPacketizePreservesVideoTimeline(t *testing.T) {
 							source += time.Duration(float64(event.Durations[trackID]) / float64(track.Timescale()) * float64(time.Second))
 						}
 						require.Positive(t, source)
-						packet, err := Packetize(ctx, &config.CLI{}, &bus.Seg{Muxl: segment})
+						packet, err := Packetize(ctx, &config.CLI{}, &bus.Seg{Muxl: segment}, 0)
 						require.NoError(t, err)
 						require.NotEmpty(t, packet.Video)
 						require.NotEmpty(t, packet.Audio)
@@ -182,7 +182,7 @@ func TestPacketizePreservesVideoTimeline(t *testing.T) {
 func TestPacketizeMeasuresPublicationBatch(t *testing.T) {
 	withNoGSTLeaks(t, func() {
 		flat, _ := packetizeFixture(t)
-		packet, err := Packetize(context.Background(), &config.CLI{}, &bus.Seg{Data: flat})
+		packet, err := Packetize(context.Background(), &config.CLI{}, &bus.Seg{Data: flat}, 0)
 		require.NoError(t, err)
 		require.GreaterOrEqual(t, packet.BatchDuration, packet.Duration,
 			"a complete publication batch includes the full audio timeline")
@@ -197,7 +197,7 @@ func TestPacketizeMeasuresPublicationBatch(t *testing.T) {
 			withNoGSTLeaks(t, func() {
 				flat := runSynthPipeline(t, context.Background(), fmt.Sprintf(
 					"videotestsrc num-buffers=30 ! video/x-raw,width=160,height=120,framerate=30/1 ! x264enc tune=zerolatency speed-preset=ultrafast ! h264parse ! mp4mux name=mux ! appsink name=sink audiotestsrc num-buffers=50 samplesperbuffer=960 timestamp-offset=%d ! audio/x-raw,rate=48000,channels=1 ! audioconvert ! opusenc ! mux.", offset))
-				packet, err := Packetize(context.Background(), &config.CLI{}, &bus.Seg{Data: flat})
+				packet, err := Packetize(context.Background(), &config.CLI{}, &bus.Seg{Data: flat}, 0)
 				require.NoError(t, err)
 				require.InDelta(t, packet.Duration+offset, packet.BatchDuration, float64(40*time.Millisecond),
 					"batch span includes the gap before a later audio track; audio pacing duration stays separate")
@@ -238,12 +238,12 @@ func BenchmarkPacketize(b *testing.B) {
 		b.Run(tc.name, func(b *testing.B) {
 			ctx := context.Background()
 			cli := &config.CLI{}
-			_, err := Packetize(ctx, cli, tc.seg)
+			_, err := Packetize(ctx, cli, tc.seg, 0)
 			require.NoError(b, err)
 			b.ReportAllocs()
 			b.SetBytes(int64(len(tc.seg.Data) + len(tc.seg.Muxl)))
 			for b.Loop() {
-				packet, err := Packetize(ctx, cli, tc.seg)
+				packet, err := Packetize(ctx, cli, tc.seg, 0)
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -440,7 +440,7 @@ func TestPacketizeTrailingCaptionSEI(t *testing.T) {
 		const frames = 60
 		flat, seiCount := makeTrailingCaptionSEIFlatMP4(t, ctx, frames, 7)
 
-		packet, err := Packetize(context.Background(), &config.CLI{}, &bus.Seg{Data: flat})
+		packet, err := Packetize(context.Background(), &config.CLI{}, &bus.Seg{Data: flat}, 0)
 		require.NoError(t, err)
 		require.NotNil(t, packet)
 
@@ -538,7 +538,7 @@ func TestPacketizeSingleTrackSegment(t *testing.T) {
 			defer cancel()
 			flat := runSynthPipeline(t, ctx,
 				"videotestsrc num-buffers=30 ! video/x-raw,width=320,height=240,framerate=30/1 ! x264enc tune=zerolatency speed-preset=ultrafast ! h264parse ! mp4mux fragment-duration=500 ! appsink name=sink")
-			packet, err := Packetize(context.Background(), &config.CLI{}, &bus.Seg{Data: flat})
+			packet, err := Packetize(context.Background(), &config.CLI{}, &bus.Seg{Data: flat}, 0)
 			require.NoError(t, err)
 			require.Equal(t, 30, len(packet.Video))
 			require.Empty(t, packet.Audio)
@@ -554,7 +554,7 @@ func TestPacketizeSingleTrackSegment(t *testing.T) {
 			defer cancel()
 			flat := runSynthPipeline(t, ctx,
 				"audiotestsrc num-buffers=48 samplesperbuffer=1024 ! audio/x-raw,rate=48000,channels=2 ! audioconvert ! opusenc ! mp4mux fragment-duration=500 ! appsink name=sink")
-			packet, err := Packetize(context.Background(), &config.CLI{}, &bus.Seg{Data: flat})
+			packet, err := Packetize(context.Background(), &config.CLI{}, &bus.Seg{Data: flat}, 0)
 			require.NoError(t, err)
 			require.Empty(t, packet.Video)
 			require.NotEmpty(t, packet.Audio)
@@ -572,7 +572,7 @@ func TestPacketizeInvalid(t *testing.T) {
 		require.NoError(t, err)
 		packet, err := Packetize(context.Background(), &config.CLI{}, &bus.Seg{
 			Data: randomData,
-		})
+		}, 0)
 		require.Error(t, err)
 		require.Nil(t, packet)
 	})

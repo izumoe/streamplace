@@ -102,6 +102,20 @@ func TestMintVideoRenditions(t *testing.T) {
 	valid, err := ValidateMP4Media(ctx, completed)
 	require.NoError(t, err, "source + renditions validates as one segment")
 	require.NotNil(t, valid.Manifest.Label)
+	sourceValid, err := ValidateMP4MediaC2PA(ctx, src)
+	require.NoError(t, err)
+	nodePub, err := signers.ParseES256KCert(cert)
+	require.NoError(t, err)
+	for _, video := range valid.MediaData.Video {
+		want := nodePub.DIDKey()
+		if video.TrackID < renditionTrackBase {
+			want = sourceValid.Pub.DIDKey()
+		}
+		require.Equal(t, want, video.SigningKey, "each video is attributed to its own verified certificate")
+	}
+	for _, audio := range valid.MediaData.Audio {
+		require.Equal(t, sourceValid.Pub.DIDKey(), audio.SigningKey)
+	}
 
 	// Two video tracks at the fixed rendition ids, sized as transcoded.
 	events, err := unwrapMuxlEvents(ctx, addendum)

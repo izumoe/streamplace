@@ -15,6 +15,7 @@ import (
 	"stream.place/streamplace/pkg/gstinit"
 	"stream.place/streamplace/pkg/localdb"
 	"stream.place/streamplace/pkg/media"
+	"stream.place/streamplace/pkg/muxl"
 	"stream.place/streamplace/pkg/placestream"
 )
 
@@ -147,6 +148,28 @@ func TestSourcePlaybackWithoutEarlyPhaseUsesCanonicalSamples(t *testing.T) {
 	require.Same(t, seg, got)
 	require.NotEmpty(t, got.PacketizedData.Video)
 	require.NotEmpty(t, got.PacketizedData.Audio)
+}
+
+func TestAV1SourcePublishesCanonicalWithoutWebRTC(t *testing.T) {
+	gstinit.InitGST()
+	ctx := context.Background()
+	ss := &StreamSession{cli: &config.CLI{}, bus: bus.NewBus()}
+	const creator = "did:example:av1"
+	canonical := ss.bus.SubscribeSegment(ctx, creator, "source")
+	defer ss.bus.UnsubscribeSegment(ctx, creator, "source", canonical)
+	raw := ss.bus.SubscribeSegment(ctx, creator, media.PlaybackSourceRendition)
+	defer ss.bus.UnsubscribeSegment(ctx, creator, media.PlaybackSourceRendition, raw)
+	data, err := os.ReadFile(filepath.Join("..", "..", "test", "fixtures", "av1-aac-frag.mp4"))
+	require.NoError(t, err)
+	source, err := muxl.RunMuxlCanonicalize(ctx, data, nil)
+	require.NoError(t, err)
+	seg := &bus.Seg{Muxl: source, Data: data, Published: true, BatchDuration: time.Second}
+	metadata := &placestream.Segment{Creator: creator, Video: []placestream.Segment_Video{{Codec: "av1"}}}
+	require.NoError(t, ss.AddToWebRTC(ctx, metadata, "source", seg, nil))
+	require.Len(t, canonical.C, 1, "peer distribution does not depend on WebRTC compatibility")
+	require.Same(t, seg, <-canonical.C)
+	require.Len(t, raw.C, 1, "native MoQ receives AV1 without H264 packetization")
+	require.Equal(t, source, (<-raw.C).Muxl)
 }
 
 func TestExceedsMaxBitrate(t *testing.T) {

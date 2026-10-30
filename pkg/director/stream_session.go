@@ -124,19 +124,7 @@ func (ss *StreamSession) Start(ctx context.Context, notif *media.NewSegmentNotif
 	if err != nil {
 		return err
 	}
-	if spseg.Duration == nil {
-		return fmt.Errorf("segment duration is required to calculate bitrate")
-	}
-	dur := time.Duration(*spseg.Duration)
-	byteLen := len(notif.Data)
-	bitrate := int(float64(byteLen) / dur.Seconds() * 8)
-	sourceRendition := renditions.Rendition{
-		Name:    "source",
-		Bitrate: bitrate,
-		Width:   spseg.Video[0].Width,
-		Height:  spseg.Video[0].Height,
-	}
-	allRenditions = append([]renditions.Rendition{sourceRendition}, allRenditions...)
+	allRenditions = append([]renditions.Rendition{{Name: "source"}}, allRenditions...)
 	allRenditions = append(allRenditions, renditions.AudioRendition)
 
 	close(ss.started)
@@ -184,6 +172,8 @@ func (ss *StreamSession) Start(ctx context.Context, notif *media.NewSegmentNotif
 				ss.bus.EndSession(ctx, spseg.Creator, r.Name)
 			}
 			ss.bus.EndSession(ctx, spseg.Creator, media.PlaybackSourceRendition)
+			ss.bus.EndSession(ctx, spseg.Creator, media.WebRTCSourceRendition)
+			ss.bus.EndSession(ctx, spseg.Creator, media.RTMPSourceRendition)
 			// Signal background workers to stop
 			if notif.Local {
 				ss.Go(ctx, func() error {
@@ -320,6 +310,7 @@ func (ss *StreamSession) NewSegment(ctx context.Context, notif *media.NewSegment
 			Muxl:              notif.Muxl,
 			Published:         notif.Metadata.Published,
 			PlaybackPublished: notif.PlaybackPublished,
+			BatchDuration:     notif.Segment.MediaData.BatchDuration,
 		}, sourceTurn)
 	})
 
@@ -984,7 +975,7 @@ func (ss *StreamSession) Transcode(ctx context.Context, spseg *placestream.Segme
 			Published: notif.Metadata.Published,
 		}
 		pg.Go(func() error {
-			packet, err := media.Packetize(ctx, ss.cli, playback[i])
+			packet, err := media.Packetize(ctx, ss.cli, playback[i], 0)
 			if err != nil {
 				log.Error(ctx, "failed to packetize rendition segment", "error", err)
 				playback[i] = nil
@@ -1013,6 +1004,21 @@ func (ss *StreamSession) Transcode(ctx context.Context, spseg *placestream.Segme
 			Published: notif.Metadata.Published,
 		})
 	}
+	compatibleSource := false
+	for _, video := range spseg.Video {
+		compatibleSource = compatibleSource || video.Codec == "" || video.Codec == "h264" || strings.HasPrefix(video.Codec, "avc1")
+	}
+	if !compatibleSource && len(playback) > 0 {
+		if playback[0] != nil {
+			ss.bus.PublishSegment(ctx, spseg.Creator, media.WebRTCSourceRendition, playback[0])
+		}
+		if len(addendum) > 0 {
+			combined := make([]byte, 0, len(notif.Muxl)+len(addendum))
+			combined = append(combined, notif.Muxl...)
+			combined = append(combined, addendum...)
+			ss.bus.PublishSegment(ctx, spseg.Creator, media.RTMPSourceRendition, &bus.Seg{Muxl: combined, Published: notif.Metadata.Published})
+		}
+	}
 	for i, seg := range playback {
 		if seg == nil {
 			continue
@@ -1035,21 +1041,40 @@ func (ss *StreamSession) AddPlaybackSegment(ctx context.Context, spseg *placestr
 
 func (ss *StreamSession) AddToWebRTC(ctx context.Context, spseg *placestream.Segment, rendition string, seg *bus.Seg, tn *turn) error {
 	defer tn.release()
-	if !seg.PlaybackPublished {
-		packet, err := media.Packetize(ctx, ss.cli, seg)
-		if err != nil {
-			return fmt.Errorf("failed to packetize segment: %w", err)
-		}
-		seg.PacketizedData = packet
+	compatible := len(spseg.Video) == 0
+	for _, video := range spseg.Video {
+		compatible = compatible || video.Codec == "" || video.Codec == "h264" || strings.HasPrefix(video.Codec, "avc1")
 	}
+	earlyPackets := seg.PlaybackPublished && len(spseg.Audio) == 0
+	for _, audio := range spseg.Audio {
+		earlyPackets = earlyPackets || seg.PlaybackPublished && audio.Codec == "opus"
+	}
+	if compatible && !earlyPackets {
+		packet, err := media.Packetize(ctx, ss.cli, seg, 0)
+		if err != nil {
+			log.Debug(ctx, "source has no compatible WebRTC packets", "error", err)
+		} else {
+			seg.PacketizedData = packet
+		}
+	}
+
 	if !tn.wait(ctx) {
 		log.Warn(ctx, "segment abandoned by later segments, not published", "rendition", rendition)
 		return nil
 	}
 	ss.bus.PublishSegment(ctx, spseg.Creator, rendition, seg)
-	if rendition == "source" && !seg.PlaybackPublished {
-		ss.bus.PublishSegment(ctx, spseg.Creator, media.PlaybackSourceRendition, seg)
+	if rendition == "source" {
+		if !seg.PlaybackPublished {
+			ss.bus.PublishSegment(ctx, spseg.Creator, media.PlaybackSourceRendition, seg)
+		}
+		if seg.PacketizedData != nil {
+			ss.bus.PublishSegment(ctx, spseg.Creator, media.WebRTCSourceRendition, seg)
+		}
+		if compatible {
+			ss.bus.PublishSegment(ctx, spseg.Creator, media.RTMPSourceRendition, seg)
+		}
 	}
+
 	return nil
 }
 
@@ -1207,9 +1232,9 @@ func (ss *StreamSession) StartMultistreamTarget(ctx context.Context, targetView 
 		// it runs in-process. The on/off + status flow is identical either way.
 		var err error
 		if ss.cli.IsolatedIngest {
-			err = ss.mm.RTMPPushIsolated(ctx, ss.repoDID, "source", targetView)
+			err = ss.mm.RTMPPushIsolated(ctx, ss.repoDID, media.RTMPSourceRendition, targetView)
 		} else {
-			err = ss.mm.RTMPPush(ctx, ss.repoDID, "source", targetView)
+			err = ss.mm.RTMPPush(ctx, ss.repoDID, media.RTMPSourceRendition, targetView)
 		}
 		if err != nil {
 			log.Error(ctx, "failed to push to RTMP server", "error", err)

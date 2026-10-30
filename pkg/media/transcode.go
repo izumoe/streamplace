@@ -89,7 +89,7 @@ func (mm *MediaManager) audioCompletionTarget(ctx context.Context, seg []byte) (
 		log.Warn(ctx, "codec-completion inspect: unwrap failed", "error", err)
 		return "", false
 	}
-	cat, _ := catalogAndTracks(events)
+	cat := catalogFromEvents(events)
 	if cat == nil || cat.Audio == nil || cat.Video == nil {
 		return "", false
 	}
@@ -114,7 +114,7 @@ func (mm *MediaManager) audioCompletionTarget(ctx context.Context, seg []byte) (
 
 // buildAudioTranscodePipeline constructs the audio-transcode pipeline shared by
 // the per-segment ([transcodeAudioSegment]) and continuous ([streamTranscoder])
-// paths: an `appsrc` of fMP4 → qtdemux → video (h264parse passthrough) + audio
+// paths: an `appsrc` of fMP4 → qtdemux → encoded video passthrough + audio
 // (decode → re-encode to target) → fragmented mp4mux → `appsink`. Video rides
 // along only so muxl can anchor the canonical segment on the video keyframe;
 // callers keep the original signed video and use only the transcoded audio
@@ -142,7 +142,7 @@ func buildAudioTranscodePipeline(target string) (gst.Pipeline, error) {
 
 	launched, err := gst.ParseLaunch(strings.Join([]string{
 		"appsrc name=src ! qtdemux name=demux",
-		"demux.video_0 ! " + constants.Queue2Big + " name=vq ! h264parse name=vparse",
+		"demux.video_0 ! " + constants.Queue2Big + " name=vq ! parsebin name=vparse ! identity name=vout",
 		"demux.audio_0 ! " + audioChain,
 	}, "\n"))
 	if err != nil {
@@ -185,12 +185,13 @@ func buildAudioTranscodePipeline(target string) (gst.Pipeline, error) {
 	if vparse == nil {
 		return nil, fmt.Errorf("vparse element not found")
 	}
-	// The passed-through video is muxl's cut clock for the transcoded
-	// audio: it must cut exactly where the source segments were cut,
-	// at IDRs only (see installIDRKeyframeProbe), or the audio chunks
-	// and the source segments pair up out of step and the completed
-	// track drifts from the video.
-	installIDRKeyframeProbe(context.Background(), vparse.GetStaticPad("src"), "completion")
+	// Only H264 needs the IDR correction. AV1's parser supplies its own sync
+	// flags; interpreting its OBUs as H264 NALs would erase every cut point.
+	vparse.ConnectPadAdded(func(_ gst.Element, pad gst.Pad) {
+		if caps := padCaps(pad); caps != nil && caps.GetStructure(0).GetName() == "video/x-h264" {
+			installIDRKeyframeProbe(context.Background(), pad, "completion")
+		}
+	})
 	aenc := pipeline.GetByName("aenc")
 	if aenc == nil {
 		return nil, fmt.Errorf("aenc element not found")
@@ -213,7 +214,7 @@ func buildAudioTranscodePipeline(target string) (gst.Pipeline, error) {
 	const tsStep = gst.ClockTime(1_000_000) // 1 ms — ≥1 tick at any sane video timescale
 	var lastTS gst.ClockTime
 	haveLast := false
-	vparseSrc := vparse.GetStaticPad("src")
+	vparseSrc := pipeline.GetByName("vout").GetStaticPad("src")
 	vparseSrc.AddProbe(gst.PadProbeTypeBuffer, func(_ gst.Pad, info *gst.PadProbeInfo) gst.PadProbeReturn {
 		buf := info.GetBuffer()
 		if buf == nil {
@@ -275,25 +276,34 @@ func collectMuxlEvents(run func(chan *muxl.MuxlEvent) error) ([]*muxl.MuxlEvent,
 	return out, <-errCh
 }
 
-// catalogAndTracks pulls the catalog (from the init event) and the per-track
-// bytes (from the first segment/signed-segment event) out of a muxl event
-// stream.
-func catalogAndTracks(events []*muxl.MuxlEvent) (*muxl.MuxlCatalog, map[string][]byte) {
+func catalogFromEvents(events []*muxl.MuxlEvent) *muxl.MuxlCatalog {
 	var cat *muxl.MuxlCatalog
+	for _, ev := range events {
+		if ev.Type == "init" && ev.Catalog != nil {
+			cat = ev.Catalog
+		}
+	}
+	return cat
+}
+
+// catalogAndTracks returns the catalog and every track's signed fragments in
+// event order. Tracks appearing once retain their original byte slice.
+func catalogAndTracks(events []*muxl.MuxlEvent) (*muxl.MuxlCatalog, map[string][]byte) {
 	var tracks map[string][]byte
 	for _, ev := range events {
-		switch ev.Type {
-		case "init":
-			if ev.Catalog != nil {
-				cat = ev.Catalog
+		if ev.Type != "segment" && ev.Type != "signed-segment" {
+			continue
+		}
+		for id := range ev.Tracks {
+			if tracks == nil {
+				tracks = make(map[string][]byte, len(ev.Tracks))
 			}
-		case "segment", "signed-segment":
-			if tracks == nil && len(ev.Tracks) > 0 {
-				tracks = ev.Tracks
+			if _, found := tracks[id]; !found {
+				tracks[id] = concatTrackAcrossSegments(events, id)
 			}
 		}
 	}
-	return cat, tracks
+	return catalogFromEvents(events), tracks
 }
 
 func maxU32(a, b uint32) uint32 {
@@ -352,14 +362,24 @@ func MuxlTracks(ctx context.Context, seg []byte) (map[string][]byte, error) {
 	return out, nil
 }
 
-// concatTrackAcrossSegments returns one track's bytes concatenated across EVERY
-// segment event in a muxl event stream. catalogAndTracks deliberately returns
-// only the first segment's tracks, so it silently drops data whenever a wrapper
-// holds more than one segment — which canonicalize produces when it re-segments
-// its input into multiple GoPs. Use this when the input may span several.
-func concatTrackAcrossSegments(events []*muxl.MuxlEvent, tid uint32) []byte {
-	key := strconv.FormatUint(uint64(tid), 10)
-	var out []byte
+// concatTrackAcrossSegments returns a track's fragments in event order without
+// changing their bytes. A track appearing once is returned without a copy.
+func concatTrackAcrossSegments(events []*muxl.MuxlEvent, key string) []byte {
+	var first []byte
+	size := 0
+	for _, ev := range events {
+		if ev.Type == "segment" || ev.Type == "signed-segment" {
+			track := ev.Tracks[key]
+			if len(first) == 0 {
+				first = track
+			}
+			size += len(track)
+		}
+	}
+	if size == len(first) {
+		return first
+	}
+	out := make([]byte, 0, size)
 	for _, ev := range events {
 		if ev.Type == "segment" || ev.Type == "signed-segment" {
 			out = append(out, ev.Tracks[key]...)
@@ -368,61 +388,76 @@ func concatTrackAcrossSegments(events []*muxl.MuxlEvent, tid uint32) []byte {
 	return out
 }
 
-// filterSegmentToCodec returns a bare canonical .m4s containing every video
-// track plus the single audio track matching the requested codec (Opus when
-// wantOpus, else AAC) — how an output consumer "asks for the audio it needs"
-// from a dual-codec segment. Track bytes are carried verbatim (signatures
-// intact) in ascending track-id order. If no audio matches the requested
-// codec, any one audio track is kept (degraded but playable); with no audio
-// info at all, the segment is returned unchanged.
-func filterSegmentToCodec(ctx context.Context, seg []byte, wantOpus bool) ([]byte, error) {
+// primaryVideoTrack selects the largest compatible picture, with a stable ID
+// tie-break. An explicit ID never falls back to another track.
+func primaryVideoTrack(cat *muxl.MuxlCatalog, id uint32, codec string) (muxl.MuxlVideoConfig, bool) {
+	var best muxl.MuxlVideoConfig
+	found := false
+	if cat == nil || cat.Video == nil {
+		return best, false
+	}
+	for _, video := range cat.Video.Renditions {
+		if id != 0 && video.TrackID() != id || !strings.HasPrefix(video.Codec, codec) {
+			continue
+		}
+		area := uint64(video.CodedWidth) * uint64(video.CodedHeight)
+		bestArea := uint64(best.CodedWidth) * uint64(best.CodedHeight)
+		if !found || area > bestArea || area == bestArea && (video.CodedWidth > best.CodedWidth || video.CodedWidth == best.CodedWidth && video.TrackID() < best.TrackID()) {
+			best, found = video, true
+		}
+	}
+	return best, found
+}
+
+// selectSegmentTracks preserves one video and its requested audio codec,
+// carrying every fragment's signed bytes unchanged. ID zero selects primary.
+func selectSegmentTracks(ctx context.Context, seg []byte, videoID uint32, videoCodec string, wantOpus bool) ([]byte, error) {
 	events, err := unwrapMuxlEvents(ctx, seg)
 	if err != nil {
-		return nil, fmt.Errorf("unwrap segment for codec filter: %w", err)
+		return nil, fmt.Errorf("unwrap segment for track selection: %w", err)
 	}
-	cat, tracks := catalogAndTracks(events)
-	if cat == nil {
-		return seg, nil
-	}
-
+	cat := catalogFromEvents(events)
 	keep := map[uint32]bool{}
-	if cat.Video != nil {
-		for _, v := range cat.Video.Renditions {
-			keep[v.TrackID()] = true
+	if cat != nil && cat.Video != nil && len(cat.Video.Renditions) > 0 {
+		video, ok := primaryVideoTrack(cat, videoID, videoCodec)
+		if !ok {
+			return nil, fmt.Errorf("no compatible video track %d (%s)", videoID, videoCodec)
 		}
+		keep[video.TrackID()] = true
+	} else if videoID != 0 {
+		return nil, fmt.Errorf("video track %d missing", videoID)
 	}
-	if cat.Audio != nil && len(cat.Audio.Renditions) > 0 {
+	if cat != nil && cat.Audio != nil && len(cat.Audio.Renditions) > 0 {
 		var chosen uint32
 		found := false
-		for _, a := range cat.Audio.Renditions {
-			if (wantOpus && isOpusCodec(a.Codec)) || (!wantOpus && isAACCodec(a.Codec)) {
-				chosen, found = a.TrackID(), true
-				break
+		for _, audio := range cat.Audio.Renditions {
+			if (wantOpus && isOpusCodec(audio.Codec)) || (!wantOpus && isAACCodec(audio.Codec)) {
+				if !found || audio.TrackID() < chosen {
+					chosen, found = audio.TrackID(), true
+				}
 			}
 		}
-		if !found { // no exact codec match — keep some audio rather than none
-			for _, a := range cat.Audio.Renditions {
-				chosen, found = a.TrackID(), true
-				break
-			}
+		if !found {
+			return nil, fmt.Errorf("requested audio codec unavailable (opus=%t)", wantOpus)
 		}
-		if found {
-			keep[chosen] = true
-		}
+		keep[chosen] = true
 	}
-
 	ids := make([]uint32, 0, len(keep))
 	for id := range keep {
 		ids = append(ids, id)
 	}
 	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
-
 	var out []byte
-	for _, id := range ids {
-		out = append(out, tracks[strconv.FormatUint(uint64(id), 10)]...)
+	for _, event := range events {
+		if event.Type != "segment" && event.Type != "signed-segment" {
+			continue
+		}
+		for _, id := range ids {
+			out = append(out, event.Tracks[strconv.FormatUint(uint64(id), 10)]...)
+		}
 	}
 	if len(out) == 0 {
-		return seg, nil
+		return nil, fmt.Errorf("segment has no selected tracks")
 	}
 	return out, nil
 }

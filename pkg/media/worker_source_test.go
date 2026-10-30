@@ -18,7 +18,7 @@ import (
 	"stream.place/streamplace/pkg/ingestframe"
 )
 
-func workerSourceForTest(t *testing.T) (string, []byte) {
+func workerSourceForTest(t *testing.T, fixture string) (string, []byte) {
 	t.Helper()
 	ms := newBareSegmentSigner(t)
 	var manifest map[string]any
@@ -41,7 +41,7 @@ func workerSourceForTest(t *testing.T) (string, []byte) {
 	var err error
 	ms.PrebuiltManifest, err = json.Marshal(manifest)
 	require.NoError(t, err)
-	segments := allSignedBareSegments(t, context.Background(), ms, getFixture("h264-opus-frag.mp4"))
+	segments := allSignedBareSegments(t, context.Background(), ms, getFixture(fixture))
 	require.NotEmpty(t, segments)
 	return ms.did, segments[0]
 }
@@ -50,7 +50,7 @@ func workerSourceForTest(t *testing.T) (string, []byte) {
 // without starting canonical archival, HLS, or director side effects.
 func TestWorkerSourceFramePublishesBeforeCompletion(t *testing.T) {
 	ctx := context.Background()
-	streamer, source := workerSourceForTest(t)
+	streamer, source := workerSourceForTest(t, "h264-opus-frag.mp4")
 	mm := &MediaManager{
 		cli:         &config.CLI{BroadcasterHost: "node.test", AllowedStreams: []string{streamer}},
 		bus:         bus.NewBus(),
@@ -58,6 +58,8 @@ func TestWorkerSourceFramePublishesBeforeCompletion(t *testing.T) {
 	}
 	playback := mm.bus.SubscribeSegment(ctx, streamer, PlaybackSourceRendition)
 	defer mm.bus.UnsubscribeSegment(ctx, streamer, PlaybackSourceRendition, playback)
+	webrtc := mm.bus.SubscribeSegment(ctx, streamer, WebRTCSourceRendition)
+	defer mm.bus.UnsubscribeSegment(ctx, streamer, WebRTCSourceRendition, webrtc)
 	var frames bytes.Buffer
 	w := ingestframe.NewWriter(&frames)
 	require.NoError(t, w.SourceSegment(source))
@@ -79,6 +81,8 @@ func TestWorkerSourceFramePublishesBeforeCompletion(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, *valid.Manifest.Label, got.Filepath)
 	require.True(t, got.Published)
+	require.Len(t, webrtc.C, 1, "compatible packets retain the low-latency WHEP path")
+	require.Same(t, got, <-webrtc.C, "both channels share immutable source ownership")
 	require.NotNil(t, got.PacketizedData)
 	require.NotEmpty(t, got.PacketizedData.Video)
 	require.NotEmpty(t, got.PacketizedData.Audio)
@@ -87,6 +91,7 @@ func TestWorkerSourceFramePublishesBeforeCompletion(t *testing.T) {
 	require.Nil(t, window)
 	require.False(t, published)
 	require.False(t, mm.bus.HasSegments(streamer, PlaybackSourceRendition), "source-only end cannot leave a live playback cache")
+	require.False(t, mm.bus.HasSegments(streamer, WebRTCSourceRendition), "source-only end releases compatible playback too")
 }
 
 // A phase frame is subject to the same signature, identity and distribution
@@ -95,7 +100,7 @@ func TestWorkerSourceFrameAdmission(t *testing.T) {
 	previousVerbosity := flag.Lookup("v").Value.String()
 	require.NoError(t, flag.Set("v", "3"))
 	t.Cleanup(func() { require.NoError(t, flag.Set("v", previousVerbosity)) })
-	streamer, source := workerSourceForTest(t)
+	streamer, source := workerSourceForTest(t, "h264-opus-frag.mp4")
 	tests := []struct {
 		name   string
 		change func(*config.CLI, *string, *[]byte)
@@ -129,11 +134,14 @@ func TestWorkerSourceFrameAdmission(t *testing.T) {
 				mm := &MediaManager{cli: cli, bus: bus.NewBus()}
 				playback := mm.bus.SubscribeSegment(context.Background(), named, PlaybackSourceRendition)
 				defer mm.bus.UnsubscribeSegment(context.Background(), named, PlaybackSourceRendition, playback)
+				webrtc := mm.bus.SubscribeSegment(context.Background(), named, WebRTCSourceRendition)
+				defer mm.bus.UnsubscribeSegment(context.Background(), named, WebRTCSourceRendition, webrtc)
 				var frames bytes.Buffer
 				require.NoError(t, ingestframe.NewWriter(&frames).WriteFrame(phase, segment))
 				_, err := mm.consumeWorkerFrames(context.Background(), ingestframe.NewReader(&frames), named, nil, nil)
 				require.NoError(t, err, "one rejected GoP does not stop the stream")
 				require.Empty(t, playback.C)
+				require.Empty(t, webrtc.C)
 				require.Empty(t, mm.BufferedSegments(streamer))
 				if tc.error != "" {
 					require.Contains(t, logs.String(), tc.error)
@@ -149,7 +157,7 @@ func TestWorkerSourceFrameAdmission(t *testing.T) {
 // when main did not receive its source frame during a restart.
 func TestWorkerCompletedSourceFrameDistributes(t *testing.T) {
 	ctx := context.Background()
-	streamer, source := workerSourceForTest(t)
+	streamer, source := workerSourceForTest(t, "h264-opus-frag.mp4")
 	for _, bitrateGuard := range []bool{false, true} {
 		name := "early playback"
 		if bitrateGuard {
@@ -189,7 +197,7 @@ func TestWorkerCompletedSourceFrameDistributes(t *testing.T) {
 
 func TestWorkerEmitsSourceBeforeCodecCompletion(t *testing.T) {
 	ctx := context.Background()
-	_, source := workerSourceForTest(t)
+	_, source := workerSourceForTest(t, "h264-opus-frag.mp4")
 	ms := newBareSegmentSigner(t)
 	key, err := signers.MarshalES256KPrivateKeyPEM(ms.Signer)
 	require.NoError(t, err)
@@ -282,13 +290,15 @@ func TestWorkerWatchdogRequiresCodecCompletion(t *testing.T) {
 
 func TestWorkerSourceOnlyTeardownPreservesNewerPlayback(t *testing.T) {
 	ctx := context.Background()
-	streamer, source := workerSourceForTest(t)
+	streamer, source := workerSourceForTest(t, "h264-opus-frag.mp4")
 	mm := &MediaManager{
 		cli: &config.CLI{BroadcasterHost: "node.test", AllowedStreams: []string{streamer}},
 		bus: bus.NewBus(),
 	}
 	playback := mm.bus.SubscribeSegment(ctx, streamer, PlaybackSourceRendition)
 	defer mm.bus.UnsubscribeSegment(ctx, streamer, PlaybackSourceRendition, playback)
+	webrtc := mm.bus.SubscribeSegment(ctx, streamer, WebRTCSourceRendition)
+	defer mm.bus.UnsubscribeSegment(ctx, streamer, WebRTCSourceRendition, webrtc)
 	consume := func() (*io.PipeWriter, <-chan error) {
 		reader, writer := io.Pipe()
 		done := make(chan error, 1)
@@ -298,10 +308,17 @@ func TestWorkerSourceOnlyTeardownPreservesNewerPlayback(t *testing.T) {
 		}()
 		t.Cleanup(func() { writer.Close(); reader.Close() })
 		require.NoError(t, ingestframe.NewWriter(writer).SourceSegment(source))
+		var raw *bus.Seg
 		select {
-		case <-playback.C:
+		case raw = <-playback.C:
 		case <-time.After(time.Second):
 			t.Fatal("source frame was not published")
+		}
+		select {
+		case compatible := <-webrtc.C:
+			require.Same(t, raw, compatible)
+		case <-time.After(time.Second):
+			t.Fatal("compatible source frame was not published")
 		}
 		return writer, done
 	}
@@ -312,7 +329,9 @@ func TestWorkerSourceOnlyTeardownPreservesNewerPlayback(t *testing.T) {
 	require.NoError(t, older.Close())
 	require.ErrorIs(t, <-olderDone, io.ErrUnexpectedEOF)
 	require.True(t, mm.bus.HasSegments(streamer, PlaybackSourceRendition), "older worker teardown cannot clear a newer worker's source")
+	require.True(t, mm.bus.HasSegments(streamer, WebRTCSourceRendition), "older worker teardown cannot clear newer compatible packets")
 	require.NoError(t, newer.Close())
 	require.NoError(t, <-newerDone)
 	require.False(t, mm.bus.HasSegments(streamer, PlaybackSourceRendition), "last source-only worker must release its live cache")
+	require.False(t, mm.bus.HasSegments(streamer, WebRTCSourceRendition), "last source-only worker must release compatible packets")
 }

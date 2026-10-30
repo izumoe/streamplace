@@ -96,7 +96,7 @@ func (mm *MediaManager) writeRTMPSource(ctx context.Context, user, rendition str
 			// RTMP wants AAC: select video + the AAC audio track from the
 			// dual-codec segment and feed only those, so flvmux gets AAC with no
 			// transcode.
-			aacSeg, err := filterSegmentToCodec(ctx, seg.Muxl, false)
+			aacSeg, err := selectSegmentTracks(ctx, seg.Muxl, 0, "avc1", false)
 			if err != nil {
 				return fmt.Errorf("select AAC audio: %w", err)
 			}

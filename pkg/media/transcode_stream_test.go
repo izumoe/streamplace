@@ -182,6 +182,38 @@ func audioDurationsSeconds(t *testing.T, ctx context.Context, seg []byte) (opusS
 	return opusSec, aacSec
 }
 
+func TestAudioCompletionSignsEveryCanonicalPiece(t *testing.T) {
+	ctx := t.Context()
+	ms := newBareSegmentSigner(t)
+	pieces := allSignedBareSegments(t, ctx, ms, getFixture("h264-opus-frag.mp4"))
+	require.GreaterOrEqual(t, len(pieces), 2)
+	source := bytes.Join(pieces, nil)
+	fixture, err := os.ReadFile(getFixture("h264-opus-frag.mp4"))
+	require.NoError(t, err)
+	// Signing after a lossless re-container must cover every canonical asset,
+	// including when the audio spans more than one video keyframe boundary.
+	output, err := muxl.RunMuxlCanonicalize(ctx, fixture, nil)
+	require.NoError(t, err)
+	events, err := unwrapMuxlEvents(ctx, output)
+	require.NoError(t, err)
+	audioID, ok := audioTrackID(catalogFromEvents(events))
+	require.True(t, ok)
+	count := 0
+	for _, event := range events {
+		if len(event.Tracks[strconv.FormatUint(uint64(audioID), 10)]) != 0 {
+			count++
+		}
+	}
+	require.GreaterOrEqual(t, count, 2, "fixture must cross a canonical audio boundary")
+	cert, key := nodeSignerForTest(t)
+	mm := &MediaManager{cli: &config.CLI{BroadcasterHost: "test.example.com"}}
+	completed, err := mm.finishTranscodedSegment(ctx, source, output, audioID, cert, key)
+	require.NoError(t, err)
+	require.True(t, bytes.HasPrefix(completed, source), "all original signed source assets remain unchanged")
+	_, err = ValidateMP4MediaC2PA(ctx, completed)
+	require.NoError(t, err, "each derived canonical audio asset must carry its own valid signature")
+}
+
 // TestStreamTranscoderGapless feeds every segment of one stream through the
 // continuous transcoder and checks the result: each completed segment carries
 // both codecs and verifies, and the transcoded (AAC) track's total duration
