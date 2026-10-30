@@ -773,8 +773,8 @@ github.com/ipld/go-codec-dagpb v1.7.0 h1:hpuvQjCSVSLnTnHXn+QAMR0mLmb1gA6wl10LExo
 github.com/ipld/go-codec-dagpb v1.7.0/go.mod h1:rD3Zg+zub9ZnxcLwfol/OTQRVjaLzXypgy4UqHQvilM=
 github.com/ipld/go-ipld-prime v0.21.0 h1:n4JmcpOlPDIxBcY037SVfpd1G+Sj1nKZah0m6QH9C2E=
 github.com/ipld/go-ipld-prime v0.21.0/go.mod h1:3RLqy//ERg/y5oShXXdx5YIp50cFGOanyMctpPjsvxQ=
-github.com/izumoe/muxl/go v0.3.7-0.20261029032505-24ec4fdc91d0 h1:GKxaRmYJfym0IrV+DTR+rJA7MvnwiuGoOT1dTf0d+6M=
-github.com/izumoe/muxl/go v0.3.7-0.20261029032505-24ec4fdc91d0/go.mod h1:aCyYTW3o6c1Kush9UJ/Yv6EYMUbj8l8GTD7cHKcSxw8=
+github.com/izumoe/muxl/go v0.3.7-0.20261030223243-fc0cef124a2e h1:0gJj5+qEexP39ofMrd6Kujtw++4VwfkXW1V9IrwxalM=
+github.com/izumoe/muxl/go v0.3.7-0.20261030223243-fc0cef124a2e/go.mod h1:aCyYTW3o6c1Kush9UJ/Yv6EYMUbj8l8GTD7cHKcSxw8=
 github.com/jackc/pgpassfile v1.0.0 h1:/6Hmqy13Ss2zCq62VdNG8tM1wchn8zjSGOBJ6icpsIM=
 github.com/jackc/pgpassfile v1.0.0/go.mod h1:CEx0iS5ambNFdcRtxPj5JhEz+xB6uRky5eyVu/W2HEg=
 github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 h1:iCEnooe7UlwOQYpKFhBabPMi4aNAfoODPEFNiAnClxo=

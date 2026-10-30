@@ -108,15 +108,8 @@ func muxlSignSegmentElem(ctx context.Context, cli *config.CLI, signStream SignSe
 		r.Close()
 	}()
 
-	// The signer and its event drain run on a non-cancellable ctx: cancelling
-	// ctx is the FLUSH signal, not an abort — it closes the input pipe above,
-	// the signer sees EOF, signs the final GoP, and exits cleanly. If the
-	// cancelled ctx reached muxl's event parser instead, the parser would
-	// abandon the stream mid-write and the signer wasm would deadlock against
-	// the unread stdout pipe — done would never close and the caller's drain
-	// (`cancel(); <-done`) would hang forever. That was rare while ingest was
-	// clock-paced (everything had drained by EOS); at full speed EOS+cancel
-	// land while GoPs are still in flight, and the abort path lost every time.
+	// Cancellation closes the input pipe to flush the final GoP. Keep the
+	// signer and event drain alive until that GoP reaches the caller.
 	drainCtx := context.WithoutCancel(ctx)
 
 	// Stream the fMP4 through the per-segment signer; each event carries one

@@ -474,6 +474,40 @@ func (mm *MediaManager) finishTranscodedSegment(ctx context.Context, srcSeg, tra
 		return nil, fmt.Errorf("unwrap relabeled audio: %w", err)
 	}
 	audioID := strconv.FormatUint(uint64(freeTID), 10)
+	var outputTimescale uint32
+	outputCatalog := catalogFromEvents(canonEvents)
+	if outputCatalog != nil && outputCatalog.Audio != nil {
+		for _, audio := range outputCatalog.Audio.Renditions {
+			if audio.TrackID() == freeTID {
+				outputTimescale = audio.Timescale()
+				break
+			}
+		}
+	}
+	sourceClock, sourceOK := primaryVideoTrack(cat, 0, "")
+	outputClock, outputOK := primaryVideoTrack(outputCatalog, 0, "")
+	if !sourceOK || !outputOK || outputClock.Timescale() == 0 || outputTimescale == 0 {
+		return nil, fmt.Errorf("audio completion has no video clock")
+	}
+	var sourceVideo, outputVideo []byte
+	for _, event := range events {
+		if sourceVideo = event.Tracks[strconv.FormatUint(uint64(sourceClock.TrackID()), 10)]; len(sourceVideo) > 0 {
+			break
+		}
+	}
+	for _, event := range canonEvents {
+		if outputVideo = event.Tracks[strconv.FormatUint(uint64(outputClock.TrackID()), 10)]; len(outputVideo) > 0 {
+			break
+		}
+	}
+	// The passed-through video keeps the encoder's running-time origin.
+	// Audio packet boundaries can straddle a cut, so retain their relative
+	// timestamps and convert only that common origin into audio ticks.
+	delta, ok := retimeDelta(sourceVideo, sourceClock.Timescale(), outputVideo, outputClock.Timescale())
+	if !ok {
+		return nil, fmt.Errorf("align transcoded audio timeline")
+	}
+	delta = int64(float64(delta) * float64(outputTimescale) / float64(outputClock.Timescale()))
 	var pieces [][]byte
 	size := len(srcSeg)
 	manifest := transcodeManifest(mm.cli.BroadcasterDID())
@@ -482,6 +516,7 @@ func (mm *MediaManager) finishTranscodedSegment(ctx context.Context, srcSeg, tra
 		if len(output) == 0 {
 			continue
 		}
+		shiftTfdt(output, delta)
 		// Each canonical asset needs its own signature, even when the lossless
 		// re-container splits one completed batch across video boundaries.
 		signed, err := muxl.RunMuxlSignTranscode(ctx, muxl.TranscodeInput{
