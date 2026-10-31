@@ -162,12 +162,19 @@ test("media memory through subscriber and ingest teardown", async ({
     publisherStarted = true;
     const viewer = await viewers.newPage();
     await viewer.goto(`${server}/embed/${encodeURIComponent(did)}/`);
-    await expect(
-      viewer.locator('[data-playback-transport="moq"] canvas'),
-    ).toHaveCSS("opacity", "1");
+    const picture = viewer.locator('[data-playback-transport="moq"] canvas');
+    await expect(picture).toHaveCSS("opacity", "1");
     expect(
       (await phase("ingest-and-subscribers", seconds)).length,
     ).toBeGreaterThan(0);
+    const pixels = () =>
+      picture.evaluate((canvas) => (canvas as HTMLCanvasElement).toDataURL());
+    const previous = await pixels();
+    await expect
+      .poll(async () => (await pixels()) !== previous, {
+        message: "MoQ picture must keep advancing after cache collection",
+      })
+      .toBe(true);
     await viewers.close();
     // This is the harness's isolated peer, identified by its exact exported
     // address. Stop its replication subscription as well as browser playback.

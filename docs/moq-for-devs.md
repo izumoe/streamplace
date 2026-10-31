@@ -327,7 +327,8 @@ records idle memory, two minutes of ingest with browser and peer subscribers,
 one minute with both subscribers stopped, and 90 seconds after ingest stops.
 `E2E_MEMORY_SECONDS` changes the active playback duration. The peer is the
 harness's isolated replication node; this test stops it, so do not combine it
-with other specs. The test also verifies that the ingest worker exits.
+with other specs. The test also verifies late painted-picture progress and that
+the ingest worker exits.
 
 Results include `media-memory.jsonl` with each process's `/proc` status and
 `smaps_rollup`, node Go memory metrics, loaded-library mappings, and a Go heap
