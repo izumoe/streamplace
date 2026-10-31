@@ -235,6 +235,13 @@ Manual selection, known-rate budgets and the lowest-resolution stalled fallback
 keep their existing behavior. Our CMAF catalog has no measured rendition rates,
 so Auto uses quality preference; it cannot make bandwidth-based choices yet.
 
+The patch also waits for native `VideoDecoder` pending requests to drain before
+pulling more media from the existing bounded consumer. The native `dequeue`
+event and the SDK's effect cancellation handle pause, close and codec errors.
+This caps pending coded requests at one, preserving accepted codec work and the
+decoded presentation buffer. It does not bound end-to-end latency or discard
+frames outside the consumer's existing age policy.
+
 The readable source, regression tests and packaging configuration are in
 `patches/moq-watch-0.6.6-source.patch`, against upstream commit
 [`9da79786c2392271e51313f4fc24487f47d36975`](https://github.com/moq-dev/moq/commit/9da79786c2392271e51313f4fc24487f47d36975).
@@ -255,7 +262,7 @@ git -C "$moq_sdk_dir" apply "$PWD/patches/moq-watch-0.6.6-source.patch"
   cd "$moq_sdk_dir"
   bun install --frozen-lockfile --filter moq --filter @moq/watch
   cd js/watch
-  bun run test ./src/video/source.test.ts
+  bun run test ./src/video/source.test.ts ./src/video/decoder.test.ts
   bun run build
 )
 pnpm patch @moq/watch@0.6.6 --edit-dir .build/moq-watch-package
@@ -265,10 +272,18 @@ pnpm patch-commit .build/moq-watch-package
 
 The unpatched normal build reproduced all 138 published package files byte for
 byte. The patch build keeps the published shared-chunk filename and disables
-source maps. Copy only that generated chunk: its runtime diff is the selection
-condition and removal of its source-map reference, so the original unused map
-does not misrepresent the patched code. All other compiled bytes, including
-audio and synchronization, remain identical. The generated chunk's SHA-256 is
-`52dbdcba459b4b9af7b1d9cb3e13c13a155c84d56129d166afbfdfb8f2685f08`.
+source maps. Copy only that generated chunk: its runtime changes are rendition
+selection, video decoder backpressure and removal of its source-map reference,
+so the original unused map does not misrepresent the patched code. Audio,
+synchronization and all other generated regions remain identical. The generated
+chunk's SHA-256 is
+`3f78cac34ff764b0871293b009c6e79c87a72f26326d14fb4b69ccc7788e5470`.
 `moq-quality.test.ts` checks the installed package so a missing patch fails the
 ordinary web test suite.
+
+The real MoQ playback test reproduced 89 pending decode requests, then passed
+with at most one while video, PCM audio output, pause/resume and decoder cleanup
+remained functional. Its existing receiver-thread pressure also exercises the
+native path. The multitrack test verifies actual H264 and supported AV1 decoding
+and switching. These checks establish queue behavior, not long-run latency
+stability; source aging and shared host load require separate measurements.

@@ -1,3 +1,165 @@
+diff --git a/js/watch/src/video/decoder.test.ts b/js/watch/src/video/decoder.test.ts
+index b1565a597..ba8eaa294 100644
+--- a/js/watch/src/video/decoder.test.ts
++++ b/js/watch/src/video/decoder.test.ts
+@@ -180,24 +180,48 @@ function sample(group: number, timestamp: number, discontinuity = 0): Read {
+ 	};
+ }
+ 
+-async function guardedPlayback(kind: "legacy" | "cmaf", reads: Read[]) {
++async function guardedPlayback(kind: "legacy" | "cmaf", reads: Read[], deferred = false) {
+ 	const originalDecoder = Object.getOwnPropertyDescriptor(globalThis, "VideoDecoder");
+ 	const originalChunk = Object.getOwnPropertyDescriptor(globalThis, "EncodedVideoChunk");
+ 	const submitted: number[] = [];
+ 	const next = spyOn(Container.Consumer.prototype, "next").mockImplementation(async () => reads.shift());
+-	class Codec {
++	const codecs: Codec[] = [];
++	class Codec extends EventTarget {
+ 		state = "configured";
++		decodeQueueSize = 0;
++		pending: number[] = [];
+ 		readonly callbacks: VideoDecoderInit;
+ 		constructor(callbacks: VideoDecoderInit) {
++			super();
+ 			this.callbacks = callbacks;
++			codecs.push(this);
+ 		}
+ 		configure() {}
+ 		decode(chunk: EncodedVideoChunk) {
+ 			submitted.push(chunk.timestamp);
+-			this.callbacks.output(new Picture(chunk.timestamp) as unknown as VideoFrame);
++			if (deferred) {
++				this.pending.push(chunk.timestamp);
++				this.decodeQueueSize++;
++			} else {
++				this.callbacks.output(new Picture(chunk.timestamp) as unknown as VideoFrame);
++			}
++		}
++		complete() {
++			const timestamp = this.pending.shift();
++			if (timestamp === undefined || this.state === "closed") return;
++			this.decodeQueueSize--;
++			this.callbacks.output(new Picture(timestamp) as unknown as VideoFrame);
++			this.dispatchEvent(new Event("dequeue"));
+ 		}
+ 		close() {
+ 			this.state = "closed";
++			this.decodeQueueSize = 0;
++			this.pending.length = 0;
++			this.dispatchEvent(new Event("dequeue"));
++		}
++		fail(error: DOMException) {
++			this.close();
++			this.callbacks.error(error);
+ 		}
+ 	}
+ 	Object.defineProperty(globalThis, "VideoDecoder", { configurable: true, value: Codec });
+@@ -229,6 +253,7 @@ async function guardedPlayback(kind: "legacy" | "cmaf", reads: Read[]) {
+ 		decoder,
+ 		enabled,
+ 		submitted,
++		codecs,
+ 		close() {
+ 			decoder.close();
+ 			source.close();
+@@ -289,3 +314,36 @@ for (const kind of ["legacy", "cmaf"] as const) {
+ 		}
+ 	});
+ }
++
++for (const kind of ["legacy", "cmaf"] as const) {
++	for (const stop of ["pause", "closed", "error"] as const) {
++		it(`${kind} resumes from unread media after ${stop} cancels a busy decoder`, async () => {
++			const errors: unknown[][] = [];
++			const consoleError = spyOn(console, "error").mockImplementation((...args) => errors.push(args));
++			const playback = await guardedPlayback(kind, [sample(10, 1000), sample(11, 2000), sample(12, 3000)], true);
++			try {
++				// Media stays in the consumer while the codec has not accepted its pending work.
++				expect(playback.decoder.out.stats.peek()?.frameCount).toBe(1);
++				const first = playback.codecs[0]!;
++				const failure = new DOMException("lost codec", "EncodingError");
++				if (stop === "closed") first.close();
++				else if (stop === "error") first.fail(failure);
++				else playback.enabled.set(false);
++				await settle();
++				playback.enabled.set(false);
++				await microtasks();
++				playback.enabled.set(true);
++				await microtasks();
++				expect(first.state).toBe("closed");
++				expect(playback.codecs).toHaveLength(2);
++				playback.codecs[1]!.complete();
++				await microtasks();
++				expect(playback.decoder.out.timestamp.peek()).toBe(Time.Milli(2));
++				expect(errors).toEqual(stop === "error" ? [["video decoder error", failure]] : []);
++			} finally {
++				playback.close();
++				consoleError.mockRestore();
++			}
++		});
++	}
++}
+diff --git a/js/watch/src/video/decoder.ts b/js/watch/src/video/decoder.ts
+index 2d91fdb0d..74795ec3b 100644
+--- a/js/watch/src/video/decoder.ts
++++ b/js/watch/src/video/decoder.ts
+@@ -399,6 +399,24 @@ class DecoderTrack {
+ 		}
+ 	}
+ 
++	// Leave coded work in the bounded consumer until the codec can accept more.
++	async #waitForDecoder(effect: Effect, decoder: VideoDecoder): Promise<boolean> {
++		while (decoder.decodeQueueSize > 0) {
++			if (effect.abort.aborted || decoder.state !== "configured") return false;
++			const dequeued = new Promise<boolean>((resolve) => {
++				const ready = () => resolve(true);
++				effect.event(decoder, "dequeue", ready, { once: true });
++				// A codec can accept work between the first check and listener registration.
++				if (decoder.decodeQueueSize === 0 || decoder.state !== "configured") {
++					decoder.removeEventListener("dequeue", ready);
++					resolve(true);
++				}
++			});
++			if (!(await effect.race(dequeued))) return false;
++		}
++		return !effect.abort.aborted && decoder.state === "configured";
++	}
++
+ 	#runLegacy(effect: Effect, sub: Moq.Track.Subscriber, decoder: VideoDecoder): void {
+ 		const format =
+ 			this.config.container.kind === "loc"
+@@ -433,8 +451,10 @@ class DecoderTrack {
+ 
+ 		effect.spawn(async () => {
+ 			for (;;) {
++				if (decoder.decodeQueueSize > 0 && !(await this.#waitForDecoder(effect, decoder))) break;
++				if (effect.abort.aborted || decoder.state !== "configured") break;
+ 				const next = await nextMedia(consumer);
+-				if (!next) break;
++				if (!next || effect.abort.aborted || decoder.state !== "configured") break;
+ 
+ 				// Publisher rewound: flush queued/in-flight video and re-anchor before decoding.
+ 				if (this.#onDiscontinuity(next.discontinuity)) previous = undefined;
+@@ -516,8 +536,10 @@ class DecoderTrack {
+ 
+ 		effect.spawn(async () => {
+ 			for (;;) {
++				if (decoder.decodeQueueSize > 0 && !(await this.#waitForDecoder(effect, decoder))) break;
++				if (effect.abort.aborted || decoder.state !== "configured") break;
+ 				const next = await nextMedia(consumer);
+-				if (!next) break;
++				if (!next || effect.abort.aborted || decoder.state !== "configured") break;
+ 
+ 				// Publisher rewound: flush queued/in-flight video and re-anchor before decoding.
+ 				if (this.#onDiscontinuity(next.discontinuity)) previous = undefined;
+@@ -547,7 +569,6 @@ class DecoderTrack {
+ 
+ 				previous = frame.timestamp;
+ 
+-				if (decoder.state === "closed") break;
+ 				latest = next.group;
+ 				decoder.decode(
+ 					new EncodedVideoChunk({
 diff --git a/js/watch/src/video/source.test.ts b/js/watch/src/video/source.test.ts
 index 869a8930f..44b839752 100644
 --- a/js/watch/src/video/source.test.ts

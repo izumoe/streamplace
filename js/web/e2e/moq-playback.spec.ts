@@ -12,6 +12,17 @@ declare global {
   interface Window {
     loseMoqConnection?: () => Promise<void>;
     moqCodecSupport?: { codec: string; supported: boolean }[];
+    moqVideoPressure?: {
+      longTasks: { at: number; duration: number }[];
+      taskLag: { at: number; lag: number }[];
+    };
+    moqVideoDecoders?: {
+      decoder: VideoDecoder;
+      maxPending: number;
+      queues: { at: number; pending: number }[];
+      outputs: number;
+      errors: string[];
+    }[];
   }
 }
 
@@ -234,6 +245,69 @@ test("MoQ plays real video and audio, pauses, and releases resources on transpor
     .toBe(`playback/${process.env.ACCOUNT_DID}`);
 
   await page.addInitScript(observeAudioOutput);
+  await page.addInitScript(() => {
+    window.moqVideoDecoders = [];
+    const pressure = (window.moqVideoPressure = {
+      longTasks: [] as { at: number; duration: number }[],
+      taskLag: [] as { at: number; lag: number }[],
+    });
+    if (PerformanceObserver.supportedEntryTypes.includes("longtask")) {
+      new PerformanceObserver((list) =>
+        pressure.longTasks.push(
+          ...list.getEntries().map((entry) => ({
+            at: performance.timeOrigin + entry.startTime,
+            duration: entry.duration,
+          })),
+        ),
+      ).observe({ type: "longtask" });
+    }
+    let lastTask = performance.now();
+    setInterval(() => {
+      const at = performance.now();
+      pressure.taskLag.push({
+        at: performance.timeOrigin + at,
+        lag: at - lastTask - 250,
+      });
+      lastTask = at;
+    }, 250);
+    const NativeDecoder = window.VideoDecoder;
+    window.VideoDecoder = new Proxy(NativeDecoder, {
+      construct(target, args, newTarget) {
+        const options = args[0] as VideoDecoderInit;
+        let record: NonNullable<Window["moqVideoDecoders"]>[number];
+        const decoder = Reflect.construct(
+          target,
+          [
+            {
+              ...options,
+              output(frame: VideoFrame) {
+                record.outputs++;
+                return options.output(frame);
+              },
+              error(error: DOMException) {
+                record.errors.push(String(error));
+                return options.error(error);
+              },
+            },
+          ],
+          newTarget,
+        ) as VideoDecoder;
+        record = { decoder, maxPending: 0, queues: [], outputs: 0, errors: [] };
+        window.moqVideoDecoders!.push(record);
+        const decode = decoder.decode;
+        decoder.decode = function (chunk) {
+          const result = Reflect.apply(decode, this, [chunk]);
+          record.maxPending = Math.max(record.maxPending, this.decodeQueueSize);
+          record.queues.push({
+            at: performance.timeOrigin + performance.now(),
+            pending: this.decodeQueueSize,
+          });
+          return result;
+        };
+        return decoder;
+      },
+    });
+  });
 
   const player = await openLivePlayer(page);
   await expect(player).toHaveAttribute("data-playback-transport", "moq");
@@ -294,6 +368,7 @@ test("MoQ plays real video and audio, pauses, and releases resources on transpor
       before,
       after,
       blockedMs,
+      startedAt: performance.timeOrigin + start,
       headroomMs,
       positions: buffer.positions.slice(positionCount),
     };
@@ -313,6 +388,29 @@ test("MoQ plays real video and audio, pauses, and releases resources on transpor
     ),
     "the native audio cursor advances throughout receiver pressure",
   ).toBe(true);
+  const decoded = await page.evaluate(() =>
+    window.moqVideoDecoders!.map(({ maxPending, queues, outputs, errors }) => ({
+      maxPending,
+      queues,
+      outputs,
+      errors,
+    })),
+  );
+  await testInfo.attach("native-video-decode-pressure", {
+    body: JSON.stringify({
+      decoded,
+      pressure: await page.evaluate(() => window.moqVideoPressure),
+      controlledPressureStartedAt: audioDuringStall.startedAt,
+      controlledPressureMs: audioDuringStall.blockedMs,
+    }),
+    contentType: "application/json",
+  });
+  expect(decoded.some(({ outputs }) => outputs > 0)).toBe(true);
+  expect(decoded.every(({ errors }) => errors.length === 0)).toBe(true);
+  // Keep coded work in the bounded media consumer until the codec can accept it.
+  expect(
+    Math.max(...decoded.map(({ maxPending }) => maxPending)),
+  ).toBeLessThanOrEqual(1);
 
   await player.hover();
   await player.locator('button[title="Pause"]').click();
@@ -352,6 +450,15 @@ test("MoQ plays real video and audio, pauses, and releases resources on transpor
     .toBe(true);
   await expect
     .poll(() => [...established].every((id) => closed.has(id)))
+    .toBe(true);
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        window.moqVideoDecoders!.every(
+          ({ decoder }) => decoder.state === "closed",
+        ),
+      ),
+    )
     .toBe(true);
   const video = player.locator("video");
   await expectVideoAdvancing(video);

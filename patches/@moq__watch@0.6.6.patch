@@ -1,8 +1,146 @@
 diff --git a/player-B6mw85kT.js b/player-B6mw85kT.js
-index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..f394355cb073d9969ff291179174eb2b14cf89e3 100644
+index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..af2b527197a882cc1776518e270cf7dd62206d6e 100644
 --- a/player-B6mw85kT.js
 +++ b/player-B6mw85kT.js
-@@ -2162,7 +2162,7 @@ var $ = class {
+@@ -1755,7 +1755,7 @@ var et = r.Milli(500), Q = class {
+ 				try {
+ 					let n = this.#t, i = r.Milli.fromMicro(t.timestamp);
+ 					if (i < (this.timestamp.peek() ?? 0) || this.sync.out.reference.peek() === void 0 || (this.frame.peek() === void 0 && this.frame.set(t.clone()), !await e.race(this.sync.wait(i).then(() => !0))) || n !== this.#t || i < (this.timestamp.peek() ?? 0)) return;
+-					this.timestamp.set(i), this.#c(i), this.frame.update((e) => (e?.close(), t.clone()));
++					this.timestamp.set(i), this.#l(i), this.frame.update((e) => (e?.close(), t.clone()));
+ 				} finally {
+ 					t.close();
+ 				}
+@@ -1766,9 +1766,20 @@ var et = r.Milli(500), Q = class {
+ 		});
+ 		e.cleanup(() => {
+ 			n.state !== "closed" && n.close();
+-		}), this.config.container.kind === "cmaf" ? this.#a(e, t, n) : this.#i(e, t, n);
++		}), this.config.container.kind === "cmaf" ? this.#o(e, t, n) : this.#a(e, t, n);
++	}
++	async #i(e, t) {
++		for (; t.decodeQueueSize > 0;) {
++			if (e.abort.aborted || t.state !== "configured") return !1;
++			let n = new Promise((n) => {
++				let r = () => n(!0);
++				e.event(t, "dequeue", r, { once: !0 }), (t.decodeQueueSize === 0 || t.state !== "configured") && (t.removeEventListener("dequeue", r), n(!0));
++			});
++			if (!await e.race(n)) return !1;
++		}
++		return !e.abort.aborted && t.state === "configured";
+ 	}
+-	#i(e, t, n) {
++	#a(e, t, n) {
+ 		let i = this.config.container.kind === "loc" ? new u.Loc.Format("video") : new u.Legacy.Format(this.config), a = new u.Consumer(t, {
+ 			format: i,
+ 			maxAge: this.sync.out.maxAge
+@@ -1786,29 +1797,29 @@ var et = r.Milli(500), Q = class {
+ 		});
+ 		let o, s;
+ 		e.spawn(async () => {
+-			for (;;) {
+-				let e = await v(a);
+-				if (!e) break;
+-				this.#o(e.discontinuity) && (o = void 0);
+-				let { frame: t } = e;
+-				if (!t) continue;
+-				let i = s !== void 0 && e.group < s;
++			for (; !(n.decodeQueueSize > 0 && !await this.#i(e, n) || e.abort.aborted || n.state !== "configured");) {
++				let t = await v(a);
++				if (!t || e.abort.aborted || n.state !== "configured") break;
++				this.#s(t.discontinuity) && (o = void 0);
++				let { frame: i } = t;
++				if (!i) continue;
++				let c = s !== void 0 && t.group < s;
+ 				if (this.stats.update((e) => ({
+-					frameCount: (e?.frameCount ?? 0) + +!i,
+-					bytesReceived: (e?.bytesReceived ?? 0) + t.payload.byteLength
+-				})), i) continue;
+-				let c = r.Milli.fromMicro(t.timestamp);
+-				this.sync.received(c, "video");
+-				let l = new EncodedVideoChunk({
+-					type: t.keyframe ? "key" : "delta",
+-					data: t.payload,
+-					timestamp: t.timestamp
++					frameCount: (e?.frameCount ?? 0) + +!c,
++					bytesReceived: (e?.bytesReceived ?? 0) + i.payload.byteLength
++				})), c) continue;
++				let l = r.Milli.fromMicro(i.timestamp);
++				this.sync.received(l, "video");
++				let u = new EncodedVideoChunk({
++					type: i.keyframe ? "key" : "delta",
++					data: i.payload,
++					timestamp: i.timestamp
+ 				});
+-				o !== void 0 && e.continuous && this.#s(r.Milli.fromMicro(o), r.Milli.fromMicro(t.timestamp)), o = t.timestamp, s = e.group, n.decode(l);
++				o !== void 0 && t.continuous && this.#c(r.Milli.fromMicro(o), r.Milli.fromMicro(i.timestamp)), o = i.timestamp, s = t.group, n.decode(u);
+ 			}
+ 		});
+ 	}
+-	#a(e, t, n) {
++	#o(e, t, n) {
+ 		let i = this.config.container;
+ 		if (i.kind !== "cmaf") return;
+ 		let a = g(i.init), o = u.Cmaf.decodeInitSegment(a), s = this.config.description ? d.Hex.toBytes(this.config.description) : o.description, c = new u.Consumer(t, {
+@@ -1828,31 +1839,30 @@ var et = r.Milli(500), Q = class {
+ 		});
+ 		let l, f;
+ 		e.spawn(async () => {
+-			for (;;) {
+-				let e = await v(c);
+-				if (!e) break;
+-				this.#o(e.discontinuity) && (l = void 0);
+-				let { frame: t } = e;
+-				if (!t) continue;
+-				let i = f !== void 0 && e.group < f;
++			for (; !(n.decodeQueueSize > 0 && !await this.#i(e, n) || e.abort.aborted || n.state !== "configured");) {
++				let t = await v(c);
++				if (!t || e.abort.aborted || n.state !== "configured") break;
++				this.#s(t.discontinuity) && (l = void 0);
++				let { frame: i } = t;
++				if (!i) continue;
++				let a = f !== void 0 && t.group < f;
+ 				if (this.stats.update((e) => ({
+-					frameCount: (e?.frameCount ?? 0) + +!i,
+-					bytesReceived: (e?.bytesReceived ?? 0) + t.payload.byteLength
+-				})), i) continue;
+-				let a = r.Milli.fromMicro(t.timestamp);
+-				if (this.sync.received(a, "video"), l !== void 0 && e.continuous && this.#s(r.Milli.fromMicro(l), r.Milli.fromMicro(t.timestamp)), l = t.timestamp, n.state === "closed") break;
+-				f = e.group, n.decode(new EncodedVideoChunk({
+-					type: t.keyframe ? "key" : "delta",
+-					data: t.payload,
+-					timestamp: t.timestamp
++					frameCount: (e?.frameCount ?? 0) + +!a,
++					bytesReceived: (e?.bytesReceived ?? 0) + i.payload.byteLength
++				})), a) continue;
++				let o = r.Milli.fromMicro(i.timestamp);
++				this.sync.received(o, "video"), l !== void 0 && t.continuous && this.#c(r.Milli.fromMicro(l), r.Milli.fromMicro(i.timestamp)), l = i.timestamp, f = t.group, n.decode(new EncodedVideoChunk({
++					type: i.keyframe ? "key" : "delta",
++					data: i.payload,
++					timestamp: i.timestamp
+ 				}));
+ 			}
+ 		});
+ 	}
+-	#o(e) {
++	#s(e) {
+ 		return e !== this.#t && (this.#t = e, this.timestamp.set(void 0), this.#e.set([]), this.sync.reset(), !0);
+ 	}
+-	#s(e, t) {
++	#c(e, t) {
+ 		e > t || this.#e.mutate((n) => {
+ 			for (let i of n) if (i.start <= t && i.end >= e) {
+ 				i.start = r.Milli.min(i.start, e), i.end = r.Milli.max(i.end, t);
+@@ -1864,7 +1874,7 @@ var et = r.Milli(500), Q = class {
+ 			}), n.sort((e, t) => e.start - t.start);
+ 		});
+ 	}
+-	#c(e) {
++	#l(e) {
+ 		this.#e.mutate((t) => {
+ 			for (; t.length > 0;) {
+ 				if (t[0].end >= e) {
+@@ -2162,7 +2172,7 @@ var $ = class {
  		if (n.length === 0) return;
  		if (n.length === 1) return n[0][0];
  		let r = [];
@@ -11,7 +149,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..f394355cb073d9969ff291179174eb2b
  		let i = r.map((e) => e(n)), a = i.map((e) => new Set(e));
  		for (let e of i[0]) if (a.every((t) => t.has(e))) return e;
  		console.warn("conflicting rendition filters, no rendition satisfies all criteria");
-@@ -2266,5 +2266,3 @@ var $ = class {
+@@ -2266,5 +2276,3 @@ var $ = class {
  };
  //#endregion
  export { L as _, He as a, X as c, Y as d, K as f, R as g, Ne as h, Q as i, q as l, U as m, $ as n, Ve as o, G as p, it as r, ze as s, ut as t, J as u, P as v };
