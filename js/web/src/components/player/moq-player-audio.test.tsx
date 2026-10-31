@@ -97,6 +97,7 @@ vi.mock("@moq/watch", async (original) => {
       ...sdk.Net,
       Connection: class {
         error = new Signal(undefined);
+        probe = new Signal(undefined);
         close() {}
       },
     },

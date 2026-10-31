@@ -1,18 +1,299 @@
+diff --git a/js/watch/src/media.test.ts b/js/watch/src/media.test.ts
+index 5f0f00ef0..d4de36020 100644
+--- a/js/watch/src/media.test.ts
++++ b/js/watch/src/media.test.ts
+@@ -1,44 +1,34 @@
+-import { expect, test } from "bun:test";
++import { expect, spyOn, test } from "bun:test";
+ import { Container } from "@moq/hang";
+ import * as Moq from "@moq/net";
+ import { Time } from "@moq/net";
+-import { Effect, Once, Signal } from "@moq/signals";
++import { Effect, Signal } from "@moq/signals";
+ import { nextMedia, subscribeMedia } from "./media";
+ 
+ const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+ 
+-test("media max age is present on the initial subscription and later updates", async () => {
+-	let initial: Moq.Track.Subscription | undefined;
+-	const updates: Moq.Track.Subscription[] = [];
+-	const subscriber = {
+-		close: () => undefined,
+-		update: (subscription: Moq.Track.Subscription) => updates.push(subscription),
+-	} as unknown as Moq.Track.Subscriber;
+-	const broadcast = {
+-		closed: new Once<Error | null>(),
+-		track: () => ({
+-			subscribe: (subscription: Moq.Track.Subscription) => {
+-				initial = subscription;
+-				return subscriber;
+-			},
+-		}),
+-	} as unknown as Moq.Broadcast.Consumer;
++test("media subscriptions propagate priority and max age to the producer", async () => {
++	const broadcast = new Moq.Broadcast.Producer();
++	const track = broadcast.createTrack("media");
++	const handle = broadcast.consume();
+ 	const maxAge = new Signal(Time.Milli(250));
++	const priority = new Signal(61);
+ 	const effect = new Effect();
+-
+-	subscribeMedia(effect, {
+-		broadcast,
+-		track: "media",
+-		priority: 7,
+-		maxAge,
+-	});
+-	expect(initial).toEqual({ priority: 7, maxAge: Time.Milli(250) });
+-
+-	maxAge.set(Time.Milli(500));
+-	await flush();
+-	expect(updates.at(-1)).toEqual({ priority: 7, maxAge: Time.Milli(500) });
+-
+-	effect.close();
++	try {
++		subscribeMedia(effect, { broadcast: handle, track: "media", priority, maxAge });
++		expect(track.subscription.peek()).toMatchObject({ priority: 61, maxAge: Time.Milli(250) });
++		priority.set(60);
++		maxAge.set(Time.Milli(500));
++		await flush();
++		expect(track.subscription.peek()).toMatchObject({ priority: 60, maxAge: Time.Milli(500) });
++		effect.close();
++		await flush();
++		expect(track.subscription.peek()).toBeUndefined();
++	} finally {
++		effect.close();
++		handle.close();
++		broadcast.close();
++	}
+ });
+ 
+ for (const end of [
+@@ -49,15 +39,19 @@ for (const end of [
+ 	new Error("decoder failed"),
+ ]) {
+ 	test(`media subscription end: ${end}`, async () => {
++		const debug = spyOn(console, "debug").mockImplementation(() => undefined);
+ 		const track = new Moq.Track.Producer("test");
+ 		const consumer = new Container.Consumer(track.subscribe(), { format: new Container.Legacy.Format("data") });
+ 		try {
+ 			const pending = nextMedia(consumer);
+ 			track.close(end);
+-			if (end instanceof Moq.Error.Stream) expect(await pending).toBeUndefined();
+-			else await expect(pending).rejects.toBe(end);
++			if (end instanceof Moq.Error.Stream) {
++				expect(await pending).toBeUndefined();
++				expect(debug).toHaveBeenCalledWith("media subscription ended", end);
++			} else await expect(pending).rejects.toBe(end);
+ 		} finally {
+ 			consumer.close();
++			debug.mockRestore();
+ 		}
+ 	});
+ }
+diff --git a/js/watch/src/media.ts b/js/watch/src/media.ts
+index baa0224bd..959d47120 100644
+--- a/js/watch/src/media.ts
++++ b/js/watch/src/media.ts
+@@ -1,7 +1,7 @@
+ import type { Container } from "@moq/hang";
+ import type * as Moq from "@moq/net";
+ import { Error as NetError, type Time } from "@moq/net";
+-import type { Effect, Getter } from "@moq/signals";
++import { type Effect, type Getter, getter } from "@moq/signals";
+ 
+ /**
+  * Open a media subscription with its max age on the initial request and every update.
+@@ -13,17 +13,18 @@ export function subscribeMedia(
+ 	props: {
+ 		broadcast: Moq.Broadcast.Consumer;
+ 		track: string;
+-		priority: number;
++		priority: Getter<number> | number;
+ 		maxAge: Getter<Time.Milli>;
+ 	},
+ ): Moq.Track.Subscriber | undefined {
+ 	if (effect.get(props.broadcast.closed) !== undefined) return;
+-	const subscription = () => ({ priority: props.priority, maxAge: props.maxAge.peek() });
++	const priority = getter(props.priority);
++	const subscription = () => ({ priority: priority.peek(), maxAge: props.maxAge.peek() });
+ 	const subscriber = props.broadcast.track(props.track).subscribe(subscription());
+ 	effect.cleanup(() => subscriber.close());
+ 
+ 	effect.run((inner) => {
+-		subscriber.update({ priority: props.priority, maxAge: inner.get(props.maxAge) });
++		subscriber.update({ priority: inner.get(priority), maxAge: inner.get(props.maxAge) });
+ 	});
+ 
+ 	return subscriber;
+diff --git a/js/watch/src/player.test.ts b/js/watch/src/player.test.ts
+index 81d23ff49..64ad58354 100644
+--- a/js/watch/src/player.test.ts
++++ b/js/watch/src/player.test.ts
+@@ -1,4 +1,5 @@
+ import { expect, mock, test } from "bun:test";
++import * as Catalog from "@moq/hang/catalog";
+ import { Signal } from "@moq/signals";
+ 
+ // Bun does not run Vite's worklet loader; these tests never create an AudioContext.
+@@ -49,3 +50,102 @@ test("Player owns the shared pipeline and feeds output policy into decoders", as
+ 		player.close();
+ 	}
+ });
++
++test("automatic video reserves the selected, downloaded audio bitrate", async () => {
++	const descriptors = new Map(
++		["VideoDecoder", "AudioDecoder", "AudioContext"].map((key) => [
++			key,
++			Object.getOwnPropertyDescriptor(globalThis, key),
++		]),
++	);
++	// Only capability probing and a pending worklet load run without an active broadcast.
++	const codec = {
++		async isConfigSupported() {
++			return { supported: true };
++		},
++	};
++	class Context extends EventTarget {
++		state = "running";
++		audioWorklet = { addModule: () => new Promise<void>(() => {}) };
++		async close() {}
++	}
++	Object.defineProperties(globalThis, {
++		VideoDecoder: { configurable: true, value: codec },
++		AudioDecoder: { configurable: true, value: codec },
++		AudioContext: { configurable: true, value: Context },
++	});
++	const audio = Catalog.AudioConfigSchema.parse({
++		codec: "opus",
++		sampleRate: 48_000,
++		numberOfChannels: 2,
++		container: { kind: "legacy" },
++	});
++	const catalog = new Signal(
++		Catalog.RootSchema.parse({
++			video: {
++				renditions: {
++					low: {
++						codec: "avc1.64001e",
++						bitrate: 500_000,
++						codedWidth: 426,
++						codedHeight: 240,
++						container: { kind: "legacy" },
++					},
++					high: {
++						codec: "avc1.640028",
++						bitrate: 1_500_000,
++						codedWidth: 1280,
++						codedHeight: 720,
++						container: { kind: "legacy" },
++					},
++				},
++			},
++			audio: {
++				renditions: {
++					audio,
++				},
++			},
++		}),
++	);
++	const muted = new Signal(false);
++	const target = new Signal<import("./video").Target | undefined>(undefined);
++	const probe = new Signal({ estimatedRecvRate: 2_000_000 });
++	const player = new Player({ catalogFormat: "manual", catalog, muted, target, probe, visible: "always" });
++	const settle = async () => {
++		for (let i = 0; i < 5; i++) await new Promise((resolve) => setTimeout(resolve, 0));
++	};
++	try {
++		await settle();
++		expect(player.video.source.out.track.peek()).toBe("high");
++		catalog.set(
++			Catalog.RootSchema.parse({
++				...catalog.peek(),
++				audio: { renditions: { audio: { ...audio, bitrate: 200_000 } } },
++			}),
++		);
++		await settle();
++		expect(Number(player.audio.source.out.config.peek()?.bitrate)).toBe(200_000);
++		expect(player.video.source.out.track.peek()).toBe("low");
++		muted.set(true);
++		await settle();
++		expect(player.video.source.out.track.peek()).toBe("high");
++		muted.set(false);
++		target.set({ bitrate: 1_500_000 });
++		await settle();
++		expect(player.video.source.out.track.peek()).toBe("high");
++		target.set({ name: "high" });
++		probe.set({ estimatedRecvRate: 100_000 });
++		await settle();
++		expect(player.video.source.out.track.peek()).toBe("high");
++		target.set(undefined);
++		await settle();
++		expect(player.video.source.out.track.peek()).toBe("low");
++		expect(player.video.source.in.target.peek()?.bitrate).toBe(0);
++	} finally {
++		player.close();
++		for (const [key, descriptor] of descriptors) {
++			if (descriptor) Object.defineProperty(globalThis, key, descriptor);
++			else Reflect.deleteProperty(globalThis, key);
++		}
++	}
++});
+diff --git a/js/watch/src/player.ts b/js/watch/src/player.ts
+index 997f04c81..9a3e92654 100644
+--- a/js/watch/src/player.ts
++++ b/js/watch/src/player.ts
+@@ -99,16 +99,27 @@ export class Player {
+ 		this.broadcast = new Broadcast(this.in);
+ 		this.#signals.cleanup(() => this.broadcast.close());
+ 
++		const audioSource = new Audio.Source({
++			broadcast: this.broadcast,
++			supported: Audio.Decoder.supported,
++		});
++		const videoTarget = this.#signals.computed((effect) => {
++			const target = effect.get(this.in.target);
++			if (target?.name || target?.bitrate != null) return target;
++			const estimate = effect.get(this.in.probe)?.estimatedRecvRate;
++			if (estimate == null) return target;
++			// The connection budget covers both streams; muted audio isn't downloaded.
++			const audioBitrate = effect.get(this.#audioEnabled)
++				? effect.get(audioSource.out.config)?.bitrate
++				: undefined;
++			return { ...target, bitrate: Math.max(0, Math.round(estimate * 0.8) - (audioBitrate ?? 0)) };
++		});
+ 		const videoSource = new Video.Source({
+ 			broadcast: this.broadcast,
+-			target: this.in.target,
++			target: videoTarget,
+ 			supported: Video.Decoder.supported,
+ 			probe: this.in.probe,
+ 		});
+-		const audioSource = new Audio.Source({
+-			broadcast: this.broadcast,
+-			supported: Audio.Decoder.supported,
+-		});
+ 		this.#signals.cleanup(() => {
+ 			videoSource.close();
+ 			audioSource.close();
 diff --git a/js/watch/src/video/decoder.test.ts b/js/watch/src/video/decoder.test.ts
-index b1565a597..ba8eaa294 100644
+index b1565a597..a62194449 100644
 --- a/js/watch/src/video/decoder.test.ts
 +++ b/js/watch/src/video/decoder.test.ts
-@@ -180,24 +180,48 @@ function sample(group: number, timestamp: number, discontinuity = 0): Read {
+@@ -180,24 +180,53 @@ function sample(group: number, timestamp: number, discontinuity = 0): Read {
  	};
  }
  
 -async function guardedPlayback(kind: "legacy" | "cmaf", reads: Read[]) {
-+async function guardedPlayback(kind: "legacy" | "cmaf", reads: Read[], deferred = false) {
++async function guardedPlayback(kind: "legacy" | "cmaf", reads: Read[], deferred = false, realTracks = false) {
  	const originalDecoder = Object.getOwnPropertyDescriptor(globalThis, "VideoDecoder");
  	const originalChunk = Object.getOwnPropertyDescriptor(globalThis, "EncodedVideoChunk");
  	const submitted: number[] = [];
- 	const next = spyOn(Container.Consumer.prototype, "next").mockImplementation(async () => reads.shift());
+-	const next = spyOn(Container.Consumer.prototype, "next").mockImplementation(async () => reads.shift());
 -	class Codec {
++	const next = realTracks
++		? undefined
++		: spyOn(Container.Consumer.prototype, "next").mockImplementation(async () => reads.shift());
 +	const codecs: Codec[] = [];
 +	class Codec extends EventTarget {
  		state = "configured";
@@ -23,8 +304,12 @@ index b1565a597..ba8eaa294 100644
 +			super();
  			this.callbacks = callbacks;
 +			codecs.push(this);
++		}
++		config?: VideoDecoderConfig;
++		configure(config: VideoDecoderConfig) {
++			this.config = config;
  		}
- 		configure() {}
+-		configure() {}
  		decode(chunk: EncodedVideoChunk) {
  			submitted.push(chunk.timestamp);
 -			this.callbacks.output(new Picture(chunk.timestamp) as unknown as VideoFrame);
@@ -54,15 +339,38 @@ index b1565a597..ba8eaa294 100644
  		}
  	}
  	Object.defineProperty(globalThis, "VideoDecoder", { configurable: true, value: Codec });
-@@ -229,6 +253,7 @@ async function guardedPlayback(kind: "legacy" | "cmaf", reads: Read[]) {
+@@ -220,7 +249,10 @@ async function guardedPlayback(kind: "legacy" | "cmaf", reads: Read[]) {
+ 		out: { catalog },
+ 		relativeBroadcast: () => consumer,
+ 	} as unknown as Broadcast);
+-	const source = new Source({ broadcast, supported: async () => true });
++	const target = new Signal({ name: "video" });
++	const tracks = { video: producer.createTrack("video"), other: producer.createTrack("other") };
++	if (realTracks) catalog.set({ video: { renditions: { video, other: config({ codec: "av01.0.01M.08" }) } } });
++	const source = new Source({ broadcast, target, supported: async () => true });
+ 	const sync = new Sync({ delay: "instant" });
+ 	const enabled = new Signal(true);
+ 	const decoder = new Decoder({ source, sync, enabled });
+@@ -229,13 +261,17 @@ async function guardedPlayback(kind: "legacy" | "cmaf", reads: Read[]) {
  		decoder,
  		enabled,
  		submitted,
 +		codecs,
++		target,
++		tracks,
++		catalog,
  		close() {
  			decoder.close();
  			source.close();
-@@ -289,3 +314,36 @@ for (const kind of ["legacy", "cmaf"] as const) {
+ 			sync.close();
+ 			consumer.close();
+ 			producer.close();
+-			next.mockRestore();
++			next?.mockRestore();
+ 			for (const [name, original] of [
+ 				["VideoDecoder", originalDecoder],
+ 				["EncodedVideoChunk", originalChunk],
+@@ -289,3 +325,88 @@ for (const kind of ["legacy", "cmaf"] as const) {
  		}
  	});
  }
@@ -99,11 +407,147 @@ index b1565a597..ba8eaa294 100644
 +		});
 +	}
 +}
++
++it("prioritizes the pending rendition until its picture replaces the active rendition", async () => {
++	const playback = await guardedPlayback("legacy", [], false, true);
++	try {
++		const first = new Container.Legacy.Producer(playback.tracks.video, new Container.Legacy.Format("video"));
++		first.encode(new Uint8Array([1]), Time.Micro(1000), true);
++		await settle();
++		expect(playback.decoder.out.timestamp.peek()).toBe(Time.Milli(1));
++		expect(playback.tracks.video.subscription.peek()?.priority).toBe(Catalog.PRIORITY.video);
++		playback.target.set({ name: "other" });
++		await settle();
++		expect(playback.tracks.other.subscription.peek()?.priority).toBe(Catalog.PRIORITY.video + 1);
++		expect(playback.codecs.map((codec) => codec.config?.codec)).toEqual(["avc1.640028", "av01.0.01M.08"]);
++		expect(playback.tracks.video.subscription.peek()?.priority).toBe(Catalog.PRIORITY.video);
++		const second = new Container.Legacy.Producer(playback.tracks.other, new Container.Legacy.Format("video"));
++		second.encode(new Uint8Array([1]), Time.Micro(1000), true);
++		await settle();
++		expect(playback.tracks.other.subscription.peek()?.priority).toBe(Catalog.PRIORITY.video);
++		expect(playback.tracks.video.subscription.peek()).toBeUndefined();
++	} finally {
++		playback.close();
++	}
++});
++
++it("returning to the active rendition cancels pending without recreating its codec", async () => {
++	const playback = await guardedPlayback("legacy", [], false, true);
++	try {
++		const first = new Container.Legacy.Producer(playback.tracks.video, new Container.Legacy.Format("video"));
++		first.encode(new Uint8Array([1]), Time.Micro(1000), true);
++		await settle();
++		const active = playback.codecs[0];
++		playback.target.set({ name: "other" });
++		await settle();
++		expect(playback.codecs).toHaveLength(2);
++		playback.target.set({ name: "video" });
++		await settle();
++		expect(playback.codecs).toHaveLength(2);
++		expect(active.state).toBe("configured");
++		expect(playback.codecs[1].state).toBe("closed");
++		expect(playback.tracks.other.subscription.peek()).toBeUndefined();
++		first.encode(new Uint8Array([1]), Time.Micro(2000), true);
++		await settle();
++		expect(playback.decoder.out.timestamp.peek()).toBe(Time.Milli(2));
++		playback.catalog.set({ video: { renditions: { video: config({ description: "00" }) } } });
++		await settle();
++		// The same track with a different codec configuration still needs a new decoder.
++		expect(playback.codecs).toHaveLength(3);
++		expect(active.state).toBe("closed");
++	} finally {
++		playback.close();
++	}
++});
 diff --git a/js/watch/src/video/decoder.ts b/js/watch/src/video/decoder.ts
-index 2d91fdb0d..74795ec3b 100644
+index 2d91fdb0d..32166cc3e 100644
 --- a/js/watch/src/video/decoder.ts
 +++ b/js/watch/src/video/decoder.ts
-@@ -399,6 +399,24 @@ class DecoderTrack {
+@@ -96,7 +96,7 @@ export class Decoder {
+ 	// subscribed to. One value so a later source that reuses the track name still notifies:
+ 	// the name alone would compare equal, and the jitter effect would keep the previous catalog.
+ 	#pending = new Signal<{ track: string; catalog: Getter<Catalog.Root | undefined> } | undefined>(undefined);
+-	readonly #identity: Computed<PlaybackIdentity | undefined>;
++	readonly #identity: Computed<(PlaybackIdentity & { track: string }) | undefined>;
+ 
+ 	#signals = new Effect();
+ 
+@@ -118,7 +118,8 @@ export class Decoder {
+ 		this.#signals.cleanup(this.sync.register(this.out.jitter));
+ 		this.#identity = this.#signals.computed((effect) => {
+ 			const config = effect.get(this.source.out.config);
+-			return config ? playbackIdentity(config) : undefined;
++			const track = effect.get(this.source.out.track);
++			return config && track ? { ...playbackIdentity(config), track } : undefined;
+ 		});
+ 
+ 		this.#signals.run(this.#runJitter.bind(this));
+@@ -146,19 +147,15 @@ export class Decoder {
+ 	}
+ 
+ 	#runPending(effect: Effect): void {
+-		const values = effect.getAll([
+-			this.in.enabled,
+-			this.source.in.broadcast,
+-			this.source.out.track,
+-			this.#identity,
+-		]);
++		const values = effect.getAll([this.in.enabled, this.source.in.broadcast, this.#identity]);
+ 		if (!values) {
+ 			// Close the active track when disabled (e.g. paused or not visible).
+ 			// The pending cleanup won't do this because it was already promoted to #active.
+ 			this.#active.set(undefined);
+ 			return;
+ 		}
+-		const [_, broadcast, track, identity] = values;
++		const [_, broadcast, identity] = values;
++		const { track } = identity;
+ 
+ 		// Honor a per-rendition `broadcast` override: subscribe on the resolved source
+ 		// broadcast instead of the catalog's own broadcast.
+@@ -171,6 +168,16 @@ export class Decoder {
+ 			return;
+ 		}
+ 
++		const current = this.#active.peek();
++		if (
++			current?.broadcast === active &&
++			current.track === track &&
++			decoderConfigKey(current.config) === decoderConfigKey(identity.decoder)
++		) {
++			this.#pending.set(undefined);
++			return;
++		}
++
+ 		// Start a new pending effect.
+ 		let pending: DecoderTrack | undefined = new DecoderTrack({
+ 			sync: this.sync,
+@@ -199,6 +206,7 @@ export class Decoder {
+ 
+ 			// Upgrade the pending track to active.
+ 			// #runActive will be in charge of it now.
++			pending.priority.set(Catalog.PRIORITY.video);
+ 			this.#active.set(pending);
+ 			this.#pending.set(undefined);
+ 			pending = undefined;
+@@ -291,6 +299,7 @@ interface DecoderTrackProps {
+ }
+ 
+ class DecoderTrack {
++	priority = new Signal(Catalog.PRIORITY.video + 1);
+ 	sync: Sync;
+ 	broadcast: Moq.Broadcast.Consumer;
+ 	track: string;
+@@ -328,7 +337,7 @@ class DecoderTrack {
+ 		const sub = subscribeMedia(effect, {
+ 			broadcast: this.broadcast,
+ 			track: this.track,
+-			priority: Catalog.PRIORITY.video,
++			priority: this.priority,
+ 			maxAge: this.sync.out.maxAge,
+ 		});
+ 		if (!sub) return;
+@@ -399,6 +408,24 @@ class DecoderTrack {
  		}
  	}
  
@@ -128,7 +572,7 @@ index 2d91fdb0d..74795ec3b 100644
  	#runLegacy(effect: Effect, sub: Moq.Track.Subscriber, decoder: VideoDecoder): void {
  		const format =
  			this.config.container.kind === "loc"
-@@ -433,8 +451,10 @@ class DecoderTrack {
+@@ -433,8 +460,10 @@ class DecoderTrack {
  
  		effect.spawn(async () => {
  			for (;;) {
@@ -140,7 +584,7 @@ index 2d91fdb0d..74795ec3b 100644
  
  				// Publisher rewound: flush queued/in-flight video and re-anchor before decoding.
  				if (this.#onDiscontinuity(next.discontinuity)) previous = undefined;
-@@ -516,8 +536,10 @@ class DecoderTrack {
+@@ -516,8 +545,10 @@ class DecoderTrack {
  
  		effect.spawn(async () => {
  			for (;;) {
@@ -152,7 +596,7 @@ index 2d91fdb0d..74795ec3b 100644
  
  				// Publisher rewound: flush queued/in-flight video and re-anchor before decoding.
  				if (this.#onDiscontinuity(next.discontinuity)) previous = undefined;
-@@ -547,7 +569,6 @@ class DecoderTrack {
+@@ -547,7 +578,6 @@ class DecoderTrack {
  
  				previous = frame.timestamp;
  
@@ -161,7 +605,7 @@ index 2d91fdb0d..74795ec3b 100644
  				decoder.decode(
  					new EncodedVideoChunk({
 diff --git a/js/watch/src/video/source.test.ts b/js/watch/src/video/source.test.ts
-index 869a8930f..44b839752 100644
+index 869a8930f..03bf2b83e 100644
 --- a/js/watch/src/video/source.test.ts
 +++ b/js/watch/src/video/source.test.ts
 @@ -4,7 +4,7 @@ import { Path } from "@moq/net";
@@ -173,11 +617,53 @@ index 869a8930f..44b839752 100644
  
  const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
  
-@@ -173,6 +173,60 @@ describe("Source error signal", () => {
+@@ -173,6 +173,102 @@ describe("Source error signal", () => {
  	});
  });
  
 +describe("Source bitrate selection", () => {
++	it("prefers resolution among affordable codecs while respecting dimension limits", async () => {
++		const target = new Signal<Target | undefined>({ bitrate: 2_000_000 });
++		const source = new Source({
++			broadcast: mockBroadcast({
++				low: config("avc1.64001e", { bitrate: 1_500_000, codedWidth: 426, codedHeight: 240 }),
++				high: config("av01.0.04M.08", { bitrate: 1_000_000, codedWidth: 1280, codedHeight: 720 }),
++			}),
++			target,
++			supported: async () => true,
++		});
++		try {
++			await settle();
++			expect(source.out.track.peek()).toBe("high");
++			target.set({ bitrate: 2_000_000, height: 240 });
++			await settle();
++			expect(source.out.track.peek()).toBe("low");
++			target.set({ bitrate: 500_000 });
++			await settle();
++			expect(source.out.track.peek()).toBe("high");
++		} finally {
++			source.close();
++		}
++	});
++
++	it("honors a zero video budget instead of replacing it with the connection estimate", async () => {
++		const source = new Source({
++			broadcast: mockBroadcast({
++				low: config("avc1.64001e", { bitrate: 500_000 }),
++				high: config("avc1.640028", { bitrate: 1_500_000 }),
++			}),
++			probe: new Signal({ estimatedRecvRate: 5_000_000 }),
++			target: { bitrate: 0 },
++			supported: async () => true,
++		});
++		try {
++			await settle();
++			expect(source.out.track.peek()).toBe("low");
++		} finally {
++			source.close();
++		}
++	});
++
 +	it("keeps resolution preference when a probe arrives without rendition bitrates", async () => {
 +		const probe = new Signal<{ estimatedRecvRate: number } | undefined>(undefined);
 +		const target = new Signal<Target | undefined>(undefined);
@@ -235,10 +721,169 @@ index 869a8930f..44b839752 100644
  	it("moves to an unstalled rendition when the selected one is throttled", async () => {
  		const state = mutableBroadcast({
 diff --git a/js/watch/src/video/source.ts b/js/watch/src/video/source.ts
-index b6e4ac831..c56abdd2f 100644
+index b6e4ac831..55823cfa8 100644
 --- a/js/watch/src/video/source.ts
 +++ b/js/watch/src/video/source.ts
-@@ -391,7 +391,7 @@ export class Source {
+@@ -45,7 +45,7 @@ export type SourceInput = {
+ 
+ 	// The connection's PROBE estimates, used to auto-select a rendition when the target has no
+ 	// explicit bitrate. Usually wired from a `Connection`'s `probe`.
+-	// Optional: without it auto-selection falls back to the preference order alone.
++	// Optional: without it auto-selection chooses the best quality allowed by the target.
+ 	probe: Getter<Moq.Connection.Probe | undefined>;
+ };
+ 
+@@ -62,38 +62,35 @@ type SourceOutput = {
+ };
+ 
+ /**
+- * A filter that returns matching renditions sorted by preference (most preferred first).
++ * A filter that returns matching rendition names.
+  * Must return at least one rendition.
+  */
+ type RenditionFilter = (entries: [string, Catalog.VideoConfig][]) => string[];
+ 
+ /**
+- * Filter and rank renditions by a maximum pixel count.
+- * Returns renditions within budget (largest first for best quality).
++ * Filter renditions by a maximum pixel count.
++ * Returns renditions within budget.
+  * Over-budget and unknown-resolution renditions are excluded.
+  * If nothing is within budget, falls back to the single smallest rendition.
+  */
+ function byPixels(target: number): RenditionFilter {
+ 	return (entries) => {
+-		const within: { name: string; size: number }[] = [];
++		const within: string[] = [];
+ 		const rest: { name: string; size: number }[] = [];
+ 
+ 		for (const [name, config] of entries) {
+ 			if (config.codedWidth && config.codedHeight) {
+ 				const size = config.codedWidth * config.codedHeight;
+ 				if (size <= target) {
+-					within.push({ name, size });
++					within.push(name);
+ 				} else {
+ 					rest.push({ name, size });
+ 				}
+ 			}
+ 		}
+ 
+-		// Best quality within budget
+-		within.sort((a, b) => b.size - a.size);
+-
+ 		if (within.length > 0) {
+-			return within.map((e) => e.name);
++			return within;
+ 		}
+ 
+ 		// Degrade to smallest over-budget resolution.
+@@ -108,33 +105,29 @@ function byPixels(target: number): RenditionFilter {
+ }
+ 
+ /**
+- * Filter and rank renditions by maximum coded dimensions.
++ * Filter renditions by maximum coded dimensions.
+  * Returns renditions where codedWidth <= width AND codedHeight <= height
+- * (each cap is optional). Within-budget renditions rank by area (largest first).
++ * (each cap is optional).
+  * If nothing fits, falls back to the single smallest over-budget rendition.
+  */
+ function byDimensions(width?: number, height?: number): RenditionFilter {
+ 	return (entries) => {
+-		const within: { name: string; size: number }[] = [];
++		const within: string[] = [];
+ 		const rest: { name: string; size: number }[] = [];
+ 
+ 		for (const [name, config] of entries) {
+ 			if (!config.codedWidth || !config.codedHeight) continue;
+-			const size = config.codedWidth * config.codedHeight;
+ 			const fitsWidth = width == null || config.codedWidth <= width;
+ 			const fitsHeight = height == null || config.codedHeight <= height;
+ 			if (fitsWidth && fitsHeight) {
+-				within.push({ name, size });
++				within.push(name);
+ 			} else {
+-				rest.push({ name, size });
++				rest.push({ name, size: config.codedWidth * config.codedHeight });
+ 			}
+ 		}
+ 
+-		// Best quality within budget
+-		within.sort((a, b) => b.size - a.size);
+-
+ 		if (within.length > 0) {
+-			return within.map((e) => e.name);
++			return within;
+ 		}
+ 
+ 		// Degrade to smallest over-budget rendition.
+@@ -149,29 +142,26 @@ function byDimensions(width?: number, height?: number): RenditionFilter {
+ }
+ 
+ /**
+- * Filter and rank renditions by a maximum bitrate budget.
+- * Returns renditions within budget (highest bitrate first for best quality).
++ * Filter renditions by a maximum bitrate budget.
++ * Returns renditions within budget.
+  * Over-budget and unknown-bitrate renditions are excluded.
+  * If nothing is within budget, falls back to the single lowest-bitrate rendition.
+  */
+ function byBitrate(target: number): RenditionFilter {
+ 	return (entries) => {
+-		const within: { name: string; bitrate: number }[] = [];
++		const within: string[] = [];
+ 		const rest: { name: string; bitrate: number }[] = [];
+ 
+ 		for (const [name, config] of entries) {
+ 			if (config.bitrate != null && config.bitrate <= target) {
+-				within.push({ name, bitrate: config.bitrate });
++				within.push(name);
+ 			} else if (config.bitrate != null) {
+ 				rest.push({ name, bitrate: config.bitrate });
+ 			}
+ 		}
+ 
+-		// Best quality within budget
+-		within.sort((a, b) => b.bitrate - a.bitrate);
+-
+ 		if (within.length > 0) {
+-			return within.map((e) => e.name);
++			return within;
+ 		}
+ 
+ 		// Degrade to lowest over-budget bitrate.
+@@ -186,7 +176,7 @@ function byBitrate(target: number): RenditionFilter {
+ }
+ 
+ /**
+- * Pick the best rendition when no filters are active.
++ * Pick the best quality among eligible renditions.
+  * Prefers the largest resolution, falls back to highest bitrate,
+  * then falls back to the first entry.
+  */
+@@ -352,7 +342,7 @@ export class Source {
+ 
+ 		// Auto-select: use recv bandwidth if no explicit bitrate target.
+ 		let effectiveTarget = target;
+-		if (!target?.bitrate) {
++		if (target?.bitrate == null) {
+ 			const estimate = effect.get(this.in.probe)?.estimatedRecvRate;
+ 			if (estimate != null) {
+ 				// Apply a safety margin (80%) to avoid oscillation.
+@@ -371,10 +361,7 @@ export class Source {
+ 	}
+ 
+ 	/**
+-	 * Select the best rendition using a generic filter system.
+-	 *
+-	 * Each enabled filter returns matching renditions sorted by preference.
+-	 * The first rendition present in every filter's output is selected.
++	 * Select the best quality among renditions accepted by every enabled filter.
+ 	 * If no rendition satisfies all filters, a warning is logged.
+ 	 */
+ 	#select(renditions: Record<string, Catalog.VideoConfig>, target?: Target): string | undefined {
+@@ -391,7 +378,7 @@ export class Source {
  		if (target?.width != null || target?.height != null) {
  			filters.push(byDimensions(target.width, target.height));
  		}
@@ -247,6 +892,28 @@ index b6e4ac831..c56abdd2f 100644
  			filters.push(byBitrate(target.bitrate));
  		}
  
+@@ -400,17 +387,10 @@ export class Source {
+ 			return bestRendition(entries);
+ 		}
+ 
+-		// Run each filter to get ranked preference lists.
+-		const rankings = filters.map((f) => f(entries));
+-
+-		// Select the first rendition (in the first ranking's order) present in all rankings.
+-		const sets = rankings.map((r) => new Set(r));
+-
+-		for (const name of rankings[0]) {
+-			if (sets.every((s) => s.has(name))) {
+-				return name;
+-			}
+-		}
++		// A rendition's cost determines affordability, not its quality across codecs.
++		const sets = filters.map((filter) => new Set(filter(entries)));
++		const matches = entries.filter(([name]) => sets.every((set) => set.has(name)));
++		if (matches.length > 0) return bestRendition(matches);
+ 
+ 		console.warn("conflicting rendition filters, no rendition satisfies all criteria");
+ 		return undefined;
 diff --git a/js/watch/vite.config.ts b/js/watch/vite.config.ts
 index 2ceb18c7c..d8a25f97a 100644
 --- a/js/watch/vite.config.ts

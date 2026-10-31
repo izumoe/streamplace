@@ -99,6 +99,10 @@ export type PlayerStats = {
   fps?: number;
   /** Current stream bitrate in bits per second. */
   bitrate?: number;
+  /** Selected video rendition's conservative catalog estimate, in bits per second. */
+  renditionBitrate?: number;
+  /** Connection's estimated available bandwidth, in bits per second. */
+  availableBandwidth?: number;
   /** hls.js's time-to-first-byte estimate in milliseconds (HLS-specific). */
   ttfbEstimate?: number;
   /** Current level index (-1 for auto in HLS). */
@@ -730,6 +734,18 @@ function StatsOverlay({
         />
         {stats.bitrate !== undefined && (
           <Row label={t("player-stats-bitrate")} value={bitrateDisplay} />
+        )}
+        {stats.renditionBitrate !== undefined && (
+          <Row
+            label={t("player-stats-rendition-bitrate")}
+            value={`${Math.round(stats.renditionBitrate / 1000)} Kbps`}
+          />
+        )}
+        {stats.availableBandwidth !== undefined && (
+          <Row
+            label={t("player-stats-available-bandwidth")}
+            value={`${Math.round(stats.availableBandwidth / 1000)} Kbps`}
+          />
         )}
         {stats.ttfbEstimate !== undefined && stats.ttfbEstimate > 0 && (
           <Row label="TTFB" value={`${Math.round(stats.ttfbEstimate)} ms`} />

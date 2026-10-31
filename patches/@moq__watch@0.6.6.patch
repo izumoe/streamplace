@@ -1,8 +1,188 @@
 diff --git a/player-B6mw85kT.js b/player-B6mw85kT.js
-index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..af2b527197a882cc1776518e270cf7dd62206d6e 100644
+index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..e8b70fc6d68f5921f632fc8cd1dd5944f5d3c510 100644
 --- a/player-B6mw85kT.js
 +++ b/player-B6mw85kT.js
-@@ -1755,7 +1755,7 @@ var et = r.Milli(500), Q = class {
+@@ -17,16 +17,16 @@ function g(e) {
+ //#region src/media.ts
+ function _(e, t) {
+ 	if (e.get(t.broadcast.closed) !== void 0) return;
+-	let n = t.broadcast.track(t.track).subscribe({
+-		priority: t.priority,
++	let n = o(t.priority), r = t.broadcast.track(t.track).subscribe({
++		priority: n.peek(),
+ 		maxAge: t.maxAge.peek()
+ 	});
+-	return e.cleanup(() => n.close()), e.run((e) => {
+-		n.update({
+-			priority: t.priority,
++	return e.cleanup(() => r.close()), e.run((e) => {
++		r.update({
++			priority: e.get(n),
+ 			maxAge: e.get(t.maxAge)
+ 		});
+-	}), n;
++	}), r;
+ }
+ async function v(e) {
+ 	try {
+@@ -1341,7 +1341,7 @@ function Y(e, t) {
+ 	let s = r.find((e) => e > t.startTime);
+ 	s !== void 0 && t.endTime > s && (t.endTime = s);
+ }
+-function X(e, t) {
++function ze(e, t) {
+ 	let { cues: n, clears: r } = e, i = r.length;
+ 	for (; i > 0 && r[i - 1] > t;) i--;
+ 	r[i] !== t && r.splice(i, 0, t);
+@@ -1353,7 +1353,7 @@ function X(e, t) {
+ 		}
+ 	}
+ }
+-var ze = class {
++var Be = class {
+ 	source;
+ 	sync;
+ 	in;
+@@ -1436,7 +1436,7 @@ var ze = class {
+ 		let r = new TextDecoder().decode(t.payload), i = t.timestamp / 1e6;
+ 		if (e === "utf8") {
+ 			if (r.length === 0) {
+-				X(n, i);
++				ze(n, i);
+ 				return;
+ 			}
+ 			let e = new m(i, i + Le / 1e3, K(r));
+@@ -1459,11 +1459,11 @@ var ze = class {
+ 	close() {
+ 		this.#e.close();
+ 	}
+-}, Be = /* @__PURE__ */ new Set(["vtt", "utf8"]);
+-function Ve(e) {
+-	return Be.has(e.format);
++}, Ve = /* @__PURE__ */ new Set(["vtt", "utf8"]);
++function He(e) {
++	return Ve.has(e.format);
+ }
+-var He = class {
++var Ue = class {
+ 	in;
+ 	#e = {
+ 		catalog: new a(void 0),
+@@ -1489,13 +1489,13 @@ var He = class {
+ 			e.set(this.#e.track, void 0), e.set(this.#e.config, void 0);
+ 			return;
+ 		}
+-		Ve(r) || console.warn(`captions: unsupported format ${JSON.stringify(r.format)} for track ${n}`), e.set(this.#e.track, n), e.set(this.#e.config, r);
++		He(r) || console.warn(`captions: unsupported format ${JSON.stringify(r.format)} for track ${n}`), e.set(this.#e.track, n), e.set(this.#e.config, r);
+ 	}
+ 	close() {
+ 		this.#t.close();
+ 	}
+-}, Ue = Symbol("supportCacheKey");
+-function We(e) {
++}, We = Symbol("supportCacheKey");
++function Ge(e) {
+ 	return {
+ 		broadcast: e.broadcast,
+ 		decoder: {
+@@ -1508,8 +1508,8 @@ function We(e) {
+ 		}
+ 	};
+ }
+-function Ge(e) {
+-	return JSON.stringify(We(e).decoder);
++function X(e) {
++	return JSON.stringify(Ge(e).decoder);
+ }
+ //#endregion
+ //#region src/video/playhead.ts
+@@ -1628,8 +1628,11 @@ var et = r.Milli(500), Q = class {
+ 	}
+ 	constructor(e) {
+ 		this.in = { enabled: o(e?.enabled ?? !0) }, this.source = e.source, this.sync = e.sync, this.#i.cleanup(this.sync.register(this.out.jitter)), this.#r = this.#i.computed((e) => {
+-			let t = e.get(this.source.out.config);
+-			return t ? We(t) : void 0;
++			let t = e.get(this.source.out.config), n = e.get(this.source.out.track);
++			return t && n ? {
++				...Ge(t),
++				track: n
++			} : void 0;
+ 		}), this.#i.run(this.#o.bind(this)), this.#i.run(this.#s.bind(this)), this.#i.run(this.#c.bind(this)), this.#i.run(this.#l.bind(this)), this.#i.run(this.#u.bind(this));
+ 	}
+ 	#o(e) {
+@@ -1647,40 +1650,44 @@ var et = r.Milli(500), Q = class {
+ 		let t = e.getAll([
+ 			this.in.enabled,
+ 			this.source.in.broadcast,
+-			this.source.out.track,
+ 			this.#r
+ 		]);
+ 		if (!t) {
+ 			this.#t.set(void 0);
+ 			return;
+ 		}
+-		let [n, r, i, a] = t, o = r.relativeBroadcast(e, a.broadcast);
++		let [n, r, i] = t, { track: a } = i, o = r.relativeBroadcast(e, i.broadcast);
+ 		if (!o) {
+ 			this.#t.set(void 0), this.#a(), this.#e.buffered.set([]);
+ 			return;
+ 		}
+-		let s = new tt({
++		let s = this.#t.peek();
++		if (s?.broadcast === o && s.track === a && X(s.config) === X(i.decoder)) {
++			this.#n.set(void 0);
++			return;
++		}
++		let l = new tt({
+ 			sync: this.sync,
+ 			broadcast: o,
+-			track: i,
+-			config: a.decoder,
++			track: a,
++			config: i.decoder,
+ 			stats: this.#e.stats,
+ 			catalog: r.out.catalog
+ 		});
+ 		e.set(this.#n, {
+-			track: i,
++			track: a,
+ 			catalog: r.out.catalog
+-		}), e.cleanup(() => s?.close()), e.run((e) => {
+-			if (!s) return;
++		}), e.cleanup(() => l?.close()), e.run((e) => {
++			if (!l) return;
+ 			let t = e.get(this.#t);
+ 			if (t) {
+-				let n = e.get(s.timestamp);
++				let n = e.get(l.timestamp);
+ 				if (n === void 0 || !Je({
+ 					playhead: n,
+ 					active: e.get(t.timestamp)
+ 				})) return;
+ 			}
+-			this.#t.set(s), this.#n.set(void 0), s = void 0, e.close();
++			l.priority.set(c.PRIORITY.video), this.#t.set(l), this.#n.set(void 0), l = void 0, e.close();
+ 		});
+ 	}
+ 	#c(e) {
+@@ -1727,6 +1734,7 @@ var et = r.Milli(500), Q = class {
+ 	}
+ 	static supported = nt;
+ }, tt = class {
++	priority = new a(c.PRIORITY.video + 1);
+ 	sync;
+ 	broadcast;
+ 	track;
+@@ -1746,7 +1754,7 @@ var et = r.Milli(500), Q = class {
+ 		let t = _(e, {
+ 			broadcast: this.broadcast,
+ 			track: this.track,
+-			priority: c.PRIORITY.video,
++			priority: this.priority,
+ 			maxAge: this.sync.out.maxAge
+ 		});
+ 		if (!t) return;
+@@ -1755,7 +1763,7 @@ var et = r.Milli(500), Q = class {
  				try {
  					let n = this.#t, i = r.Milli.fromMicro(t.timestamp);
  					if (i < (this.timestamp.peek() ?? 0) || this.sync.out.reference.peek() === void 0 || (this.frame.peek() === void 0 && this.frame.set(t.clone()), !await e.race(this.sync.wait(i).then(() => !0))) || n !== this.#t || i < (this.timestamp.peek() ?? 0)) return;
@@ -11,7 +191,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..af2b527197a882cc1776518e270cf7dd
  				} finally {
  					t.close();
  				}
-@@ -1766,9 +1766,20 @@ var et = r.Milli(500), Q = class {
+@@ -1766,9 +1774,20 @@ var et = r.Milli(500), Q = class {
  		});
  		e.cleanup(() => {
  			n.state !== "closed" && n.close();
@@ -34,7 +214,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..af2b527197a882cc1776518e270cf7dd
  		let i = this.config.container.kind === "loc" ? new u.Loc.Format("video") : new u.Legacy.Format(this.config), a = new u.Consumer(t, {
  			format: i,
  			maxAge: this.sync.out.maxAge
-@@ -1786,29 +1797,29 @@ var et = r.Milli(500), Q = class {
+@@ -1786,29 +1805,29 @@ var et = r.Milli(500), Q = class {
  		});
  		let o, s;
  		e.spawn(async () => {
@@ -82,7 +262,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..af2b527197a882cc1776518e270cf7dd
  		let i = this.config.container;
  		if (i.kind !== "cmaf") return;
  		let a = g(i.init), o = u.Cmaf.decodeInitSegment(a), s = this.config.description ? d.Hex.toBytes(this.config.description) : o.description, c = new u.Consumer(t, {
-@@ -1828,31 +1839,30 @@ var et = r.Milli(500), Q = class {
+@@ -1828,31 +1847,30 @@ var et = r.Milli(500), Q = class {
  		});
  		let l, f;
  		e.spawn(async () => {
@@ -131,7 +311,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..af2b527197a882cc1776518e270cf7dd
  		e > t || this.#e.mutate((n) => {
  			for (let i of n) if (i.start <= t && i.end >= e) {
  				i.start = r.Milli.min(i.start, e), i.end = r.Milli.max(i.end, t);
-@@ -1864,7 +1874,7 @@ var et = r.Milli(500), Q = class {
+@@ -1864,7 +1882,7 @@ var et = r.Milli(500), Q = class {
  			}), n.sort((e, t) => e.start - t.start);
  		});
  	}
@@ -140,18 +320,165 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..af2b527197a882cc1776518e270cf7dd
  		this.#e.mutate((t) => {
  			for (; t.length > 0;) {
  				if (t[0].end >= e) {
-@@ -2162,7 +2172,7 @@ var $ = class {
+@@ -1913,7 +1931,7 @@ async function nt(e) {
+ 	}
+ 	return !1;
+ }
+-Object.assign(nt, { [Ue]: Ge });
++Object.assign(nt, { [We]: X });
+ //#endregion
+ //#region src/video/renderer.ts
+ var rt = .01, it = class {
+@@ -2009,15 +2027,12 @@ function at(e) {
+ 		let n = [], r = [];
+ 		for (let [i, a] of t) if (a.codedWidth && a.codedHeight) {
+ 			let t = a.codedWidth * a.codedHeight;
+-			t <= e ? n.push({
+-				name: i,
+-				size: t
+-			}) : r.push({
++			t <= e ? n.push(i) : r.push({
+ 				name: i,
+ 				size: t
+ 			});
+ 		}
+-		return n.sort((e, t) => t.size - e.size), n.length > 0 ? n.map((e) => e.name) : r.length > 0 ? (r.sort((e, t) => e.size - t.size), [r[0].name]) : t.map(([e]) => e);
++		return n.length > 0 ? n : r.length > 0 ? (r.sort((e, t) => e.size - t.size), [r[0].name]) : t.map(([e]) => e);
+ 	};
+ }
+ function ot(e, t) {
+@@ -2025,29 +2040,23 @@ function ot(e, t) {
+ 		let r = [], i = [];
+ 		for (let [a, o] of n) {
+ 			if (!o.codedWidth || !o.codedHeight) continue;
+-			let n = o.codedWidth * o.codedHeight, s = e == null || o.codedWidth <= e, c = t == null || o.codedHeight <= t;
+-			s && c ? r.push({
++			let n = e == null || o.codedWidth <= e, s = t == null || o.codedHeight <= t;
++			n && s ? r.push(a) : i.push({
+ 				name: a,
+-				size: n
+-			}) : i.push({
+-				name: a,
+-				size: n
++				size: o.codedWidth * o.codedHeight
+ 			});
+ 		}
+-		return r.sort((e, t) => t.size - e.size), r.length > 0 ? r.map((e) => e.name) : i.length > 0 ? (i.sort((e, t) => e.size - t.size), [i[0].name]) : n.map(([e]) => e);
++		return r.length > 0 ? r : i.length > 0 ? (i.sort((e, t) => e.size - t.size), [i[0].name]) : n.map(([e]) => e);
+ 	};
+ }
+ function st(e) {
+ 	return (t) => {
+ 		let n = [], r = [];
+-		for (let [i, a] of t) a.bitrate != null && a.bitrate <= e ? n.push({
+-			name: i,
+-			bitrate: a.bitrate
+-		}) : a.bitrate != null && r.push({
++		for (let [i, a] of t) a.bitrate != null && a.bitrate <= e ? n.push(i) : a.bitrate != null && r.push({
+ 			name: i,
+ 			bitrate: a.bitrate
+ 		});
+-		return n.sort((e, t) => t.bitrate - e.bitrate), n.length > 0 ? n.map((e) => e.name) : r.length > 0 ? (r.sort((e, t) => e.bitrate - t.bitrate), [r[0].name]) : t.map(([e]) => e);
++		return n.length > 0 ? n : r.length > 0 ? (r.sort((e, t) => e.bitrate - t.bitrate), [r[0].name]) : t.map(([e]) => e);
+ 	};
+ }
+ function ct(e) {
+@@ -2111,7 +2120,7 @@ var $ = class {
+ 		e.spawn(async () => {
+ 			let i = {};
+ 			for (let [a, o] of Object.entries(n)) {
+-				let n = t[Ue], s = n ? n(o) : JSON.stringify(o), c = r.get(a), l = !1;
++				let n = t[We], s = n ? n(o) : JSON.stringify(o), c = r.get(a), l = !1;
+ 				if (c?.key === s) l = c.supported;
+ 				else {
+ 					let i = !1;
+@@ -2142,7 +2151,7 @@ var $ = class {
+ 		let r = lt(t);
+ 		if (Object.keys(r).length === 0) return;
+ 		let i = n;
+-		if (!n?.bitrate) {
++		if (n?.bitrate == null) {
+ 			let t = e.get(this.in.probe)?.estimatedRecvRate;
+ 			if (t != null) {
+ 				let e = Math.round(t * .8);
+@@ -2162,9 +2171,9 @@ var $ = class {
  		if (n.length === 0) return;
  		if (n.length === 1) return n[0][0];
  		let r = [];
 -		if (t?.pixels != null && r.push(at(t.pixels)), (t?.width != null || t?.height != null) && r.push(ot(t.width, t.height)), t?.bitrate != null && r.push(st(t.bitrate)), r.length === 0) return ct(n);
+-		let i = r.map((e) => e(n)), a = i.map((e) => new Set(e));
+-		for (let e of i[0]) if (a.every((t) => t.has(e))) return e;
 +		if (t?.pixels != null && r.push(at(t.pixels)), (t?.width != null || t?.height != null) && r.push(ot(t.width, t.height)), t?.bitrate != null && n.some(([, e]) => e.bitrate != null) && r.push(st(t.bitrate)), r.length === 0) return ct(n);
- 		let i = r.map((e) => e(n)), a = i.map((e) => new Set(e));
- 		for (let e of i[0]) if (a.every((t) => t.has(e))) return e;
++		let i = r.map((e) => new Set(e(n))), a = n.filter(([e]) => i.every((t) => t.has(e)));
++		if (a.length > 0) return ct(a);
  		console.warn("conflicting rendition filters, no rendition satisfies all criteria");
-@@ -2266,5 +2276,3 @@ var $ = class {
+ 	}
+ 	close() {
+@@ -2204,18 +2213,28 @@ var $ = class {
+ 			target: o(e.target),
+ 			captions: o(e.captions)
+ 		}), this.broadcast = new U(this.in), this.#r.cleanup(() => this.broadcast.close());
+-		let t = new $({
++		let t = new R({
++			broadcast: this.broadcast,
++			supported: P.supported
++		}), i = this.#r.computed((e) => {
++			let n = e.get(this.in.target);
++			if (n?.name || n?.bitrate != null) return n;
++			let r = e.get(this.in.probe)?.estimatedRecvRate;
++			if (r == null) return n;
++			let i = e.get(this.#t) ? e.get(t.out.config)?.bitrate : void 0;
++			return {
++				...n,
++				bitrate: Math.max(0, Math.round(r * .8) - (i ?? 0))
++			};
++		}), a = new $({
+ 			broadcast: this.broadcast,
+-			target: this.in.target,
++			target: i,
+ 			supported: Q.supported,
+ 			probe: this.in.probe
+-		}), i = new R({
+-			broadcast: this.broadcast,
+-			supported: P.supported
+ 		});
+ 		this.#r.cleanup(() => {
+-			t.close(), i.close();
+-		}), this.text = new He({
++			a.close(), t.close();
++		}), this.text = new Ue({
+ 			broadcast: this.broadcast,
+ 			target: this.in.captions
+ 		}), this.#r.cleanup(() => this.text.close()), this.sync = new G({
+@@ -2223,11 +2242,11 @@ var $ = class {
+ 			buffer: this.in.buffer,
+ 			probe: this.in.probe
+ 		}), this.#r.cleanup(() => this.sync.close()), this.video = new Q({
+-			source: t,
++			source: a,
+ 			sync: this.sync,
+ 			enabled: this.#e
+ 		}), this.audio = new P({
+-			source: i,
++			source: t,
+ 			sync: this.sync,
+ 			enabled: this.#t
+ 		}), this.#r.cleanup(() => {
+@@ -2243,7 +2262,7 @@ var $ = class {
+ 			visible: this.in.visible
+ 		}), this.#r.cleanup(() => {
+ 			this.emitter.close(), this.renderer.close();
+-		}), this.textRenderer = new ze({
++		}), this.textRenderer = new Be({
+ 			source: this.text,
+ 			sync: this.sync,
+ 			container: this.in.container,
+@@ -2265,6 +2284,4 @@ var $ = class {
+ 	}
  };
  //#endregion
- export { L as _, He as a, X as c, Y as d, K as f, R as g, Ne as h, Q as i, q as l, U as m, $ as n, Ve as o, G as p, it as r, ze as s, ut as t, J as u, P as v };
+-export { L as _, He as a, X as c, Y as d, K as f, R as g, Ne as h, Q as i, q as l, U as m, $ as n, Ve as o, G as p, it as r, ze as s, ut as t, J as u, P as v };
 -
 -//# sourceMappingURL=player-B6mw85kT.js.map
+\ No newline at end of file
++export { L as _, Ue as a, ze as c, Y as d, K as f, R as g, Ne as h, Q as i, q as l, U as m, $ as n, He as o, G as p, it as r, Be as s, ut as t, J as u, P as v };

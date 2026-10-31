@@ -1,0 +1,239 @@
+diff --git a/noq-proto/src/congestion.rs b/noq-proto/src/congestion.rs
+index d374104..f12a53d 100644
+--- a/noq-proto/src/congestion.rs
++++ b/noq-proto/src/congestion.rs
+@@ -197,6 +197,14 @@ pub trait Controller: Send + Sync + std::fmt::Debug {
+     /// Number of ack-eliciting bytes that may be in flight
+     fn window(&self) -> u64;
+ 
++    /// Estimated available bandwidth in bytes per second, based on packet delivery.
++    ///
++    /// Returns `None` when the controller cannot measure it or has no sample yet.
++    /// This excludes gains used for probing, pacing, or sizing the congestion window.
++    fn estimated_bandwidth(&self) -> Option<u64> {
++        None
++    }
++
+     /// Retrieve implementation-specific metrics used to populate `qlog` traces when they are
+     /// enabled This is also used to alter the pacing of the connection with
+     /// `pacing_rate` and `send_quantum`
+diff --git a/noq-proto/src/congestion/bbr3/mod.rs b/noq-proto/src/congestion/bbr3/mod.rs
+index d7531b1..07cc575 100644
+--- a/noq-proto/src/congestion/bbr3/mod.rs
++++ b/noq-proto/src/congestion/bbr3/mod.rs
+@@ -2108,6 +2108,14 @@ impl Controller for Bbr3 {
+         Self::on_ack_frequency_update(self, ack_eliciting_threshold, requested_max_ack_delay);
+     }
+ 
++    fn estimated_bandwidth(&self) -> Option<u64> {
++        if !self.bw.is_finite() {
++            return None;
++        }
++        let rate = self.bw.round() as u64;
++        (rate > 0).then_some(rate)
++    }
++
+     fn metrics(&self) -> ControllerMetrics {
+         Self::metrics(self)
+     }
+@@ -2178,6 +2186,48 @@ mod test {
+     use std::cell::Cell;
+     use std::ops::ControlFlow;
+ 
++    #[test]
++    fn bandwidth_estimate_uses_delivery_model_without_pacing_gain() {
++        const BW: f64 = 1_250_000.0;
++        let mut sim = Sim::new(Bbr3Config::default(), 1200, BW, 100_000_000);
++        assert_eq!(Controller::estimated_bandwidth(&sim.bbr), None);
++        sim.run(
++            1_000_000,
++            |_| ControlFlow::Continue(()),
++            |bbr, now, _, _| {
++                if now >= 5_000_000_000 && matches!(bbr.state, BbrState::ProbeBw(_)) {
++                    ControlFlow::Break(())
++                } else {
++                    ControlFlow::Continue(())
++                }
++            },
++        );
++        let estimate = Controller::estimated_bandwidth(&sim.bbr).unwrap();
++        assert!((estimate as f64 - BW).abs() / BW < 0.05);
++        assert_eq!(estimate, sim.bbr.bw.round() as u64);
++        assert_ne!(Some(estimate), sim.bbr.metrics().pacing_rate);
++        let cwnd_rate = sim.bbr.window() as f64 / sim.bbr.min_rtt.as_secs_f64();
++        assert!(cwnd_rate > estimate as f64 * 1.5);
++    }
++
++    #[test]
++    fn bandwidth_estimate_is_unknown_for_window_only_controllers() {
++        use crate::congestion::{CubicConfig, NewRenoConfig};
++        let now = Instant::now();
++        assert_eq!(
++            Arc::new(CubicConfig::default())
++                .build(now, 1200)
++                .estimated_bandwidth(),
++            None
++        );
++        assert_eq!(
++            Arc::new(NewRenoConfig::default())
++                .build(now, 1200)
++                .estimated_bandwidth(),
++            None
++        );
++    }
++
+     /// PROBE_UP model taken before a (possibly spurious) loss:
+     /// (state, bw_shortterm, inflight_shortterm, inflight_longterm).
+     type UndoSnapshot = (BbrState, f64, u64, u64);
+diff --git a/noq-proto/src/connection/mod.rs b/noq-proto/src/connection/mod.rs
+index 208540e..2758e40 100644
+--- a/noq-proto/src/connection/mod.rs
++++ b/noq-proto/src/connection/mod.rs
+@@ -2708,6 +2708,7 @@ impl Connection {
+         let mut stats = self.path_stats.get(path_id).unwrap_or_default();
+         stats.rtt = path.data.rtt.get();
+         stats.cwnd = path.data.congestion.window();
++        stats.estimated_bandwidth = path.data.congestion.estimated_bandwidth();
+         stats.current_mtu = path.data.mtud.current_mtu();
+         Some(stats)
+     }
+diff --git a/noq-proto/src/connection/stats.rs b/noq-proto/src/connection/stats.rs
+index a5121a4..f1d3343 100644
+--- a/noq-proto/src/connection/stats.rs
++++ b/noq-proto/src/connection/stats.rs
+@@ -228,6 +228,8 @@ pub struct PathStats {
+     pub frame_rx: FrameStats,
+     /// Current congestion window of the connection.
+     pub cwnd: u64,
++    /// Estimated available bandwidth in bytes per second, when the controller can measure it.
++    pub estimated_bandwidth: Option<u64>,
+     /// Congestion events on the connection.
+     pub congestion_events: u64,
+     /// Spurious congestion events on the connection.
+@@ -288,6 +290,7 @@ impl std::ops::Add<PathStats> for ConnectionStats {
+             frame_tx,
+             frame_rx,
+             cwnd: _,
++            estimated_bandwidth: _,
+             congestion_events: _,
+             spurious_congestion_events: _,
+             lost_packets,
+@@ -321,6 +324,7 @@ impl std::ops::AddAssign<PathStats> for ConnectionStats {
+             frame_tx: path_frame_tx,
+             frame_rx: path_frame_rx,
+             cwnd: _,
++            estimated_bandwidth: _,
+             congestion_events: _,
+             spurious_congestion_events: _,
+             lost_packets: path_lost_packets,
+diff --git a/noq-proto/src/tests/mod.rs b/noq-proto/src/tests/mod.rs
+index bc0be06..511b418 100644
+--- a/noq-proto/src/tests/mod.rs
++++ b/noq-proto/src/tests/mod.rs
+@@ -5492,6 +5492,45 @@ fn throughput() -> TestResult {
+     Ok(())
+ }
+ 
++#[test]
++fn bandwidth_estimate_reaches_path_statistics() -> TestResult {
++    let _guard = subscribe();
++    let mut transport = TransportConfig::default();
++    transport.congestion_controller_factory(Arc::new(Bbr3Config::default()));
++    let mut pair = ConnPair::builder()
++        .with_transport_cfg(transport)
++        .with_latency(Duration::from_millis(10))
++        .connect();
++    let initial = pair
++        .conn_mut(Client)
++        .path_stats(PathId::ZERO)
++        .unwrap()
++        .estimated_bandwidth;
++    assert_eq!(
++        initial,
++        pair.conn(Client)
++            .congestion_state(PathId::ZERO)
++            .unwrap()
++            .estimated_bandwidth()
++    );
++    info!(?initial, "post-handshake bandwidth estimate");
++    upload(&mut pair, 100_000)?;
++    let model = pair
++        .conn(Client)
++        .congestion_state(PathId::ZERO)
++        .unwrap()
++        .estimated_bandwidth();
++    assert!(model.is_some());
++    assert_eq!(
++        pair.conn_mut(Client)
++            .path_stats(PathId::ZERO)
++            .unwrap()
++            .estimated_bandwidth,
++        model
++    );
++    Ok(())
++}
++
+ /// A 1 MB/s bottleneck with a 20ms RTT and a one-BDP buffer carries a BBR upload, once marking
+ /// CE at half full and once only tail-dropping when full. BBR answers the marks, so the marking
+ /// run holds a shorter queue without drops at the dropping run's goodput.
+diff --git a/web-transport-moq/src/session.rs b/web-transport-moq/src/session.rs
+index 0bec598..8cbb3eb 100644
+--- a/web-transport-moq/src/session.rs
++++ b/web-transport-moq/src/session.rs
+@@ -986,14 +986,8 @@ impl web_transport_trait::Stats for SessionStats {
+     }
+ 
+     fn estimated_send_rate(&self) -> Option<u64> {
+-        let path = self.path?;
+-        let rtt = self.rtt?;
+-        let rtt_secs = rtt.as_secs_f64();
+-        if path.cwnd > 0 && rtt_secs > 0.0 {
+-            Some((path.cwnd as f64 * 8.0 / rtt_secs) as u64)
+-        } else {
+-            None
+-        }
++        let rate = self.path?.estimated_bandwidth?;
++        rate.checked_mul(8).filter(|rate| *rate > 0)
+     }
+ }
+ 
+@@ -1057,6 +1051,32 @@ mod tests {
+ 
+     use super::*;
+ 
++    #[test]
++    fn bandwidth_estimate_uses_delivery_rate_in_bits_per_second() {
++        use web_transport_trait::Stats;
++        let mut stats = SessionStats {
++            stats: noq::ConnectionStats::default(),
++            path: None,
++            rtt: Some(std::time::Duration::from_millis(10)),
++        };
++        assert_eq!(stats.estimated_send_rate(), None);
++        let mut path = noq::PathStats::default();
++        path.cwnd = 1_000_000;
++        stats.path = Some(path);
++        assert_eq!(stats.estimated_send_rate(), None);
++        path.estimated_bandwidth = Some(125_000);
++        stats.path = Some(path);
++        assert_eq!(stats.estimated_send_rate(), Some(1_000_000));
++        stats.rtt = None;
++        assert_eq!(stats.estimated_send_rate(), Some(1_000_000));
++        path.estimated_bandwidth = Some(0);
++        stats.path = Some(path);
++        assert_eq!(stats.estimated_send_rate(), None);
++        path.estimated_bandwidth = Some(u64::MAX);
++        stats.path = Some(path);
++        assert_eq!(stats.estimated_send_rate(), None);
++    }
++
+     const SESSION: VarInt = VarInt::from_u32(0);
+ 
+     /// A connected client and server QUIC connection, plus the endpoints that drive them.
+diff --git a/meson.build b/meson.build
+new file mode 100644
+index 0000000..0901174
+--- /dev/null
++++ b/meson.build
+@@ -0,0 +1 @@
++project('moq-noq')

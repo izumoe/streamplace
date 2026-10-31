@@ -298,14 +298,19 @@ meson-compile:
 	meson install -C $(BUILDDIR)
 
 # Source bootstrap is independent of Meson configuration and is a no-op once
-# the pinned checkout exists, so repeated/offline native builds do not fetch.
-# A checkout of an older pin (moq.wrap's revision changed) is moved to the new
-# one, patches reapplied.
+# the pins and wrap definitions match, so repeated/offline builds do not fetch.
+# Meson preserves local edits in a stash when refreshing sources and patches.
 .PHONY: native-source
 native-source:
-	meson subprojects download --sourcedir . moq
-	@[ "$$(git -C subprojects/moq rev-parse HEAD)" = "$$(sed -n 's/^revision = //p' subprojects/moq.wrap)" ] || \
-		meson subprojects update --reset --sourcedir . moq
+	@set -e; for project in moq-noq moq; do \
+		meson subprojects download --sourcedir . "$$project"; \
+		wrap="subprojects/$$project.wrap"; \
+		if [ "$$(git -C "subprojects/$$project" rev-parse HEAD)" != "$$(sed -n 's/^revision = //p' "$$wrap")" ] || \
+			[ "$$(cat "subprojects/$$project/.meson-subproject-wrap-hash.txt" 2>/dev/null)" != \
+			"$$(python3 -c 'import hashlib, pathlib, sys; print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").encode("utf-8")).hexdigest())' "$$wrap")" ]; then \
+			meson subprojects update --reset --sourcedir . "$$project"; \
+		fi; \
+	done
 
 
 #    _____ _______    _______ _____ _____

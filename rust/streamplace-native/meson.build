@@ -1,5 +1,6 @@
 # Download/patch source at configure time; later offline Cargo builds use the
-# pinned checkout and its upstream Cargo.lock. This subproject compiles nothing.
+# pinned checkouts and patched Cargo.lock. These subprojects compile nothing.
+subproject('moq-noq')
 subproject('moq')
 
 rust_triple = meson.get_external_property('RUST_TRIPLE', '')

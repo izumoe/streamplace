@@ -222,6 +222,8 @@ it.each([undefined, 0, 7])(
           droppedFrames: value,
           fps: value,
           bitrate: value === undefined ? undefined : value * 1000,
+          renditionBitrate: value === undefined ? undefined : value * 1000,
+          availableBandwidth: value === undefined ? undefined : value * 2000,
           totalFrames: 120,
           level: -1,
         }),
@@ -246,6 +248,12 @@ it.each([undefined, 0, 7])(
       expect(dialog.textContent?.includes("player-stats-bitrate")).toBe(
         value !== undefined,
       );
+      expect(
+        dialog.textContent?.includes("player-stats-rendition-bitrate"),
+      ).toBe(value !== undefined);
+      expect(
+        dialog.textContent?.includes("player-stats-available-bandwidth"),
+      ).toBe(value !== undefined);
       if (value !== undefined) {
         expect(dialog.textContent).toContain(`${value} / 120`);
       }

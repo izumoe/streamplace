@@ -140,6 +140,8 @@ export function MoQPlayer(props: MoQPlayerProps) {
             ? 0
             : Math.max(0, bufferedEnd - video) / 1000,
         totalFrames: frames,
+        renditionBitrate: config?.bitrate,
+        availableBandwidth: connection?.probe.peek()?.estimatedRecvRate,
         level: target?.name ? renditionsRef.current.indexOf(target.name) : -1,
         codecs:
           [config?.codec, player.audio.source.out.config.peek()?.codec]
