@@ -12,6 +12,7 @@ import (
 	"stream.place/streamplace/pkg/atproto"
 	"stream.place/streamplace/pkg/constants"
 	"stream.place/streamplace/pkg/crypto/signers"
+	"stream.place/streamplace/pkg/localdb"
 	"stream.place/streamplace/pkg/log"
 	"stream.place/streamplace/pkg/muxl"
 )
@@ -102,6 +103,24 @@ func (mm *MediaManager) audioCompletionTarget(ctx context.Context, seg []byte) (
 			haveOpus = true
 		}
 	}
+	return missingAudioCodec(haveAAC, haveOpus)
+}
+
+// Validation already parsed the source's codecs. Reuse them rather than
+// instantiating another WASM module just to inspect its catalog.
+func audioCompletionTargetFromMedia(data *localdb.SegmentMediaData) (target string, need bool) {
+	if len(data.Video) == 0 {
+		return "", false
+	}
+	var haveAAC, haveOpus bool
+	for _, audio := range data.Audio {
+		haveAAC = haveAAC || audio.Codec == "aac"
+		haveOpus = haveOpus || audio.Codec == "opus"
+	}
+	return missingAudioCodec(haveAAC, haveOpus)
+}
+
+func missingAudioCodec(haveAAC, haveOpus bool) (target string, need bool) {
 	switch {
 	case haveAAC && !haveOpus:
 		return "opus", true

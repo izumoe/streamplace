@@ -14,7 +14,56 @@ import (
 	"stream.place/streamplace/pkg/config"
 	"stream.place/streamplace/pkg/crypto/signers"
 	"stream.place/streamplace/pkg/gstinit"
+	"stream.place/streamplace/pkg/localdb"
 )
+
+func TestAudioCompletionTargetFromMedia(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		video  bool
+		codecs []string
+		target string
+	}{
+		{"AAC", true, []string{"aac"}, "opus"},
+		{"Opus", true, []string{"opus"}, "aac"},
+		{"both", true, []string{"aac", "opus"}, ""},
+		{"reordered", true, []string{"opus", "aac"}, ""},
+		{"duplicate AAC", true, []string{"aac", "aac"}, "opus"},
+		{"other codec", true, []string{"flac"}, ""},
+		{"no audio", true, nil, ""},
+		{"audio only", false, []string{"aac"}, ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			data := &localdb.SegmentMediaData{}
+			if test.video {
+				data.Video = []*localdb.SegmentMediadataVideo{{Codec: "av1"}}
+			}
+			for _, codec := range test.codecs {
+				data.Audio = append(data.Audio, &localdb.SegmentMediadataAudio{Codec: codec})
+			}
+			target, need := audioCompletionTargetFromMedia(data)
+			require.Equal(t, test.target, target)
+			require.Equal(t, test.target != "", need)
+		})
+	}
+}
+
+func TestValidatedAudioCompletionTarget(t *testing.T) {
+	mm := &MediaManager{}
+	for _, fixture := range []string{"h264-opus-frag.mp4", "av1-aac-frag.mp4"} {
+		t.Run(fixture, func(t *testing.T) {
+			segments := allSignedBareSegments(t, t.Context(), newBareSegmentSigner(t), getFixture(fixture))
+			for _, segment := range segments {
+				valid, err := ValidateMP4Media(t.Context(), segment)
+				require.NoError(t, err)
+				want, need := mm.audioCompletionTarget(t.Context(), segment)
+				got, gotNeed := audioCompletionTargetFromMedia(valid.MediaData)
+				require.Equal(t, want, got)
+				require.Equal(t, need, gotNeed)
+			}
+		})
+	}
+}
 
 func TestAudioTranscodePipelineReleasesQueues(t *testing.T) {
 	withNoGSTLeaks(t, func() {

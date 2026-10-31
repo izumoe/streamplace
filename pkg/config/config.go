@@ -727,7 +727,7 @@ func (cli *CLI) NewCommand(name string) *urfavecli.Command {
 			&urfavecli.IntFlag{
 				Name:        "muxl-initial-memory-mb",
 				Usage:       "initial wasm linear memory pre-allocation per muxl instance, in MiB. higher avoids realloc churn at the cost of holding more memory upfront",
-				Value:       50,
+				Value:       16,
 				Destination: &cli.MuxlInitialMemoryMB,
 				Sources:     urfavecli.EnvVars("SP_MUXL_INITIAL_MEMORY_MB"),
 			},

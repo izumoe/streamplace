@@ -79,7 +79,7 @@ func (mm *MediaManager) validateMP4(ctx context.Context, input io.Reader, local 
 	// dual-codec segment asynchronously (~1 GoP later, gapless). Everything else
 	// — already dual-codec, no audio, audio-only, an exotic codec, or no node
 	// signer — is distributed as-is, immediately.
-	if target, need := mm.audioCompletionTarget(ctx, buf); need {
+	if target, need := audioCompletionTargetFromMedia(vs.mediaData); need {
 		if cert, keyPEM, serr := mm.transcodeSigner(); serr == nil {
 			return mm.feedStreamTranscoder(ctx, vs, buf, target, cert, keyPEM)
 		} else {

@@ -307,6 +307,42 @@ the canvas sampling interval.
 
 ## Profiling server memory
 
+MUXL starts each isolated WASM operation with 16 MiB of backing capacity and
+grows geometrically up to the existing 1 GiB ceiling. Compilation is shared
+within each process. `SP_MUXL_INITIAL_MEMORY_MB` and `SP_MUXL_MAX_MEMORY_MB`
+override these values. A smaller initial allocation can reduce allocation churn,
+but signing large inputs may need extra growth and copying. Measure processing
+time alongside memory before changing it.
+
+The Linux memory-sizing tests reuse the real signing, validation, completion
+and multitrack tests. Run each setting in a fresh process, selecting only this
+test so another test cannot initialize the singleton engine first. Inside the
+configured builder:
+
+```sh
+export CGO_LDFLAGS="-L$PWD/build-linux-amd64/rust/streamplace-native -lmoq_ffi -Wl,-Bstatic -lstdc++ -Wl,-Bdynamic -lm"
+STREAMPLACE_IGNORE_LEAKS=1 STREAMPLACE_TEST_MUXL_INITIAL_MB=16 \
+  go test -count=1 -run '^TestMuxlMemory$' ./pkg/media
+```
+
+With `STREAMPLACE_BENCH_DIR` pointing to the prepared ten-second 1080p AAC/Opus
+fixtures used by `BenchmarkForkUpstream`, compare allocations and timings:
+
+```sh
+for mb in 50 32 16 8; do
+  STREAMPLACE_IGNORE_LEAKS=1 STREAMPLACE_TEST_MUXL_INITIAL_MB="$mb" \
+    go test -run '^$' -bench '^BenchmarkMuxlMemory$' \
+      -benchtime=3x -count=3 ./pkg/media
+done
+```
+
+`BenchmarkAudioCompletionInspection` compares catalog unwrapping with reuse of
+validated codec metadata. `TestMuxlMemoryCold` wraps the existing fresh-process
+benchmark; select its operation with `STREAMPLACE_BENCH_CASE` and
+`STREAMPLACE_BENCH_CODEC`. Alternate settings across repeated runs. Allocated
+bytes are allocation churn, not live heap or RSS savings; use the lifecycle
+test below to measure resident memory and teardown separately.
+
 Standalone FFI broadcasts drive their own native cache clock. The existing
 30-second idle policy reclaims old, unread groups while protecting a live
 track's newest group. Activity is dated on collection passes, so expiry is
