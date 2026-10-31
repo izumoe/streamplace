@@ -230,6 +230,11 @@ func (mm *MediaManager) workerSegmentSink(ctx context.Context, cfg IngestWorkerC
 // Segment.
 func RunMP4IngestWorker(ctx context.Context, cfg IngestWorkerConfig, stdin io.Reader, frames FrameWriter, getManifest func() []byte) error {
 	gstinit.InitGST()
+	// Initialize before ingest so compilation doesn't consume the stream's
+	// no-output watchdog budget or compete with its native pipeline.
+	if err := muxl.Initialize(); err != nil {
+		return fmt.Errorf("initialize muxl: %w", err)
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 

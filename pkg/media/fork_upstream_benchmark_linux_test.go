@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"syscall"
 	"testing"
@@ -375,5 +376,32 @@ func BenchmarkForkUpstream(b *testing.B) {
 				check(output)
 			})
 		}
+	}
+}
+
+// The ten-second fixture must not allocate another WASM memory per source GoP
+// merely to parse the same source again during codec completion.
+func TestForkUpstreamCompletionAllocationBudget(t *testing.T) {
+	forkBenchmarkDir(t)
+	gstinit.InitGST()
+	for _, scenario := range []struct {
+		name, codec string
+		limitMiB    uint64
+	}{{"complete", "aac", 3000}, {"complete", "opus", 3000}, {"worker", "aac", 3200}} {
+		t.Run(scenario.name+"/"+scenario.codec, func(t *testing.T) {
+			run, check := forkBenchmarkOperation(t, scenario.name, scenario.codec)
+			output, err := run()
+			require.NoError(t, err)
+			check(output)
+			runtime.GC()
+			var before, after runtime.MemStats
+			runtime.ReadMemStats(&before)
+			output, err = run()
+			runtime.ReadMemStats(&after)
+			require.NoError(t, err)
+			check(output)
+			allocated := after.TotalAlloc - before.TotalAlloc
+			require.LessOrEqual(t, allocated, scenario.limitMiB*1024*1024, "allocated %.1f MiB for ten seconds of media", float64(allocated)/(1024*1024))
+		})
 	}
 }

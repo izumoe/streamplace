@@ -21,8 +21,9 @@ import (
 // opaque caller context (the validated-segment info), returned verbatim to
 // onComplete so the caller can archive/distribute the completed segment.
 type transcodeJob struct {
-	src   []byte
-	token any
+	src    []byte
+	token  any
+	events []*muxl.MuxlEvent
 }
 
 // streamTranscoder runs ONE long-lived audio transcode for a single stream.
@@ -250,31 +251,37 @@ func (t *streamTranscoder) Feed(src []byte, token any) error {
 	t.mu.Unlock()
 	// Native completion needs one cut-clock video and the audio it decodes.
 	// The queued job retains every original signed source track unchanged.
-	selected, err := selectSegmentTracks(t.ctx, src, 0, "", t.target == "aac")
+	events, err := unwrapMuxlEvents(t.ctx, src)
+	if err != nil {
+		return fmt.Errorf("unwrap audio completion source: %w", err)
+	}
+	selected, err := selectEventTracks(events, 0, "", t.target == "aac")
 	if err != nil {
 		return fmt.Errorf("select audio completion tracks: %w", err)
 	}
-
-	// Synthesize and write the init (ftyp+moov) once, then the segment bytes —
-	// the same init-then-blind-concat the RTMP push feeder uses.
+	var init []byte
 	if first {
-		var init bytes.Buffer
-		if err := muxl.RunMuxlWrapInit(t.ctx, bytes.NewReader(selected), &init); err != nil {
+		var header bytes.Buffer
+		if err := muxl.RunMuxlWrapInit(t.ctx, bytes.NewReader(selected), &header); err != nil {
 			return fmt.Errorf("synthesize transcoder init: %w", err)
 		}
-		if _, err := t.feedW.Write(init.Bytes()); err != nil {
+		init = header.Bytes()
+	}
+
+	// Enqueue before writing even the init so the pipeline can choose its
+	// parser from the first source catalog and pair every completion in order.
+	select {
+	case t.jobs <- transcodeJob{src: src, token: token, events: events}:
+	case <-t.ctx.Done():
+		return t.ctx.Err()
+	}
+	if first {
+		if _, err := t.feedW.Write(init); err != nil {
 			return err
 		}
 		t.mu.Lock()
 		t.started = true
 		t.mu.Unlock()
-	}
-	// Enqueue the job before feeding the bytes so the consumer has the source
-	// ready by the time its (lagging) transcoded twin emerges.
-	select {
-	case t.jobs <- transcodeJob{src: src, token: token}:
-	case <-t.ctx.Done():
-		return t.ctx.Err()
 	}
 	if _, err := t.feedW.Write(selected); err != nil {
 		return err
@@ -321,7 +328,17 @@ func (t *streamTranscoder) Close() error {
 // and finishes each emitted transcoded segment against its source.
 func (t *streamTranscoder) run(feedR *io.PipeReader) error {
 	ctx := t.ctx
-	pipeline, err := buildAudioTranscodePipeline(t.target)
+	var firstJob transcodeJob
+	select {
+	case firstJob = <-t.jobs:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	video, ok := primaryVideoTrack(catalogFromEvents(firstJob.events), 0, "")
+	if !ok {
+		return fmt.Errorf("audio completion source has no video clock")
+	}
+	pipeline, err := buildAudioTranscodePipeline(t.target, video.Codec)
 	if err != nil {
 		return err
 	}
@@ -370,6 +387,7 @@ func (t *streamTranscoder) run(feedR *io.PipeReader) error {
 	// Consume per-GoP transcoded segments, pairing each 1:1 (in order) with the
 	// source segment that produced it.
 	var catalog *muxl.MuxlCatalog
+	first := true
 	for ev := range eventCh {
 		switch ev.Type {
 		case "init":
@@ -390,10 +408,14 @@ func (t *streamTranscoder) run(feedR *io.PipeReader) error {
 		transAudio := ev.Tracks[strconv.FormatUint(uint64(audioTID), 10)]
 
 		var job transcodeJob
-		select {
-		case job = <-t.jobs:
-		case <-ctx.Done():
-			return ctx.Err()
+		if first {
+			job, firstJob, first = firstJob, transcodeJob{}, false
+		} else {
+			select {
+			case job = <-t.jobs:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
 		}
 		if len(transAudio) == 0 {
 			log.Error(ctx, "stream transcode: emitted segment missing audio track", "track", audioTID)
@@ -405,7 +427,7 @@ func (t *streamTranscoder) run(feedR *io.PipeReader) error {
 		// and canonicalize needs the video keyframe as its cut clock to emit one
 		// segment per GoP. Audio by itself has no keyframes to anchor on.
 		transSeg := concatTracksByID(ev.Tracks)
-		completed, err := t.mm.finishTranscodedSegment(ctx, job.src, transSeg, audioTID, t.cert, t.keyPEM)
+		completed, err := t.mm.finishTranscodedSegment(ctx, job.src, job.events, transSeg, audioTID, t.cert, t.keyPEM)
 		if err != nil {
 			log.Error(ctx, "stream transcode: finish segment failed", "error", err)
 			continue
@@ -434,11 +456,7 @@ func (t *streamTranscoder) run(feedR *io.PipeReader) error {
 // transSeg includes the video so its keyframes anchor audio re-segmentation.
 // Every resulting canonical audio asset is signed independently and names all
 // original source audio assets as ingredients.
-func (mm *MediaManager) finishTranscodedSegment(ctx context.Context, srcSeg, transSeg []byte, transTID uint32, cert, keyPEM []byte) ([]byte, error) {
-	events, err := unwrapMuxlEvents(ctx, srcSeg)
-	if err != nil {
-		return nil, fmt.Errorf("unwrap source segment: %w", err)
-	}
+func (mm *MediaManager) finishTranscodedSegment(ctx context.Context, srcSeg []byte, events []*muxl.MuxlEvent, transSeg []byte, transTID uint32, cert, keyPEM []byte) ([]byte, error) {
 	cat := catalogFromEvents(events)
 	if cat == nil || cat.Audio == nil {
 		return nil, fmt.Errorf("source segment has no audio track")

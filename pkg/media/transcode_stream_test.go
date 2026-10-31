@@ -207,7 +207,9 @@ func TestAudioCompletionSignsEveryCanonicalPiece(t *testing.T) {
 	require.GreaterOrEqual(t, count, 2, "fixture must cross a canonical audio boundary")
 	cert, key := nodeSignerForTest(t)
 	mm := &MediaManager{cli: &config.CLI{BroadcasterHost: "test.example.com"}}
-	completed, err := mm.finishTranscodedSegment(ctx, source, output, audioID, cert, key)
+	sourceEvents, err := unwrapMuxlEvents(ctx, source)
+	require.NoError(t, err)
+	completed, err := mm.finishTranscodedSegment(ctx, source, sourceEvents, output, audioID, cert, key)
 	require.NoError(t, err)
 	require.True(t, bytes.HasPrefix(completed, source), "all original signed source assets remain unchanged")
 	_, err = ValidateMP4MediaC2PA(ctx, completed)

@@ -120,7 +120,7 @@ func (mm *MediaManager) audioCompletionTarget(ctx context.Context, seg []byte) (
 // callers keep the original signed video and use only the transcoded audio
 // track. Callers wire the `src`/`sink` callbacks and set the pipeline playing.
 // target is the codec being produced: "opus" (source AAC) or "aac" (source Opus).
-func buildAudioTranscodePipeline(target string) (gst.Pipeline, error) {
+func buildAudioTranscodePipeline(target, videoCodec string) (gst.Pipeline, error) {
 	// Queue sizing: a single qtdemux feeds both branches, so if either queue
 	// hits a limit and blocks the demux, the sibling branch starves and mp4mux
 	// deadlocks waiting for it (then appsrc backpressures and the Feed blocks).
@@ -140,9 +140,16 @@ func buildAudioTranscodePipeline(target string) (gst.Pipeline, error) {
 		return nil, fmt.Errorf("unsupported transcode target %q", target)
 	}
 
+	videoParser := "parsebin"
+	switch {
+	case strings.HasPrefix(videoCodec, "avc1"), strings.HasPrefix(videoCodec, "avc3"):
+		videoParser = "h264parse"
+	case strings.HasPrefix(videoCodec, "av01"):
+		videoParser = "av1parse"
+	}
 	launched, err := gst.ParseLaunch(strings.Join([]string{
 		"appsrc name=src ! qtdemux name=demux",
-		"demux.video_0 ! " + constants.Queue2Big + " name=vq ! parsebin name=vparse ! identity name=vout",
+		"demux.video_0 ! " + constants.Queue2Big + " name=vq ! " + videoParser + " name=vparse ! identity name=vout",
 		"demux.audio_0 ! " + audioChain,
 	}, "\n"))
 	if err != nil {
@@ -187,11 +194,15 @@ func buildAudioTranscodePipeline(target string) (gst.Pipeline, error) {
 	}
 	// Only H264 needs the IDR correction. AV1's parser supplies its own sync
 	// flags; interpreting its OBUs as H264 NALs would erase every cut point.
-	vparse.ConnectPadAdded(func(_ gst.Element, pad gst.Pad) {
-		if caps := padCaps(pad); caps != nil && caps.GetStructure(0).GetName() == "video/x-h264" {
-			installIDRKeyframeProbe(context.Background(), pad, "completion")
-		}
-	})
+	if videoParser == "h264parse" {
+		installIDRKeyframeProbe(context.Background(), vparse.GetStaticPad("src"), "completion")
+	} else if videoParser == "parsebin" {
+		vparse.ConnectPadAdded(func(_ gst.Element, pad gst.Pad) {
+			if caps := padCaps(pad); caps != nil && caps.GetStructure(0).GetName() == "video/x-h264" {
+				installIDRKeyframeProbe(context.Background(), pad, "completion")
+			}
+		})
+	}
 	aenc := pipeline.GetByName("aenc")
 	if aenc == nil {
 		return nil, fmt.Errorf("aenc element not found")
@@ -416,6 +427,10 @@ func selectSegmentTracks(ctx context.Context, seg []byte, videoID uint32, videoC
 	if err != nil {
 		return nil, fmt.Errorf("unwrap segment for track selection: %w", err)
 	}
+	return selectEventTracks(events, videoID, videoCodec, wantOpus)
+}
+
+func selectEventTracks(events []*muxl.MuxlEvent, videoID uint32, videoCodec string, wantOpus bool) ([]byte, error) {
 	cat := catalogFromEvents(events)
 	keep := map[uint32]bool{}
 	if cat != nil && cat.Video != nil && len(cat.Video.Renditions) > 0 {

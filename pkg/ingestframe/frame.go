@@ -123,17 +123,15 @@ func NewWriter(w io.Writer) *Writer {
 }
 
 // WriteFrame writes one whole frame atomically with respect to other WriteFrame
-// calls on the same Writer. The CBOR item is encoded up front, then written under
-// the lock, so concurrent writers never interleave a frame's bytes.
+// calls on the same Writer. Encoding and writing share the lock so the encoder
+// can write its buffer directly without copying the encoded payload.
 func (fw *Writer) WriteFrame(t Type, payload []byte) error {
-	b, err := drisl.Marshal(message{Type: t, Payload: payload})
-	if err != nil {
-		return fmt.Errorf("ingestframe: encode %s: %w", t, err)
-	}
 	fw.mu.Lock()
 	defer fw.mu.Unlock()
-	_, err = fw.w.Write(b)
-	return err
+	if err := drisl.NewEncoder(fw.w).Encode(message{Type: t, Payload: payload}); err != nil {
+		return fmt.Errorf("ingestframe: write %s: %w", t, err)
+	}
+	return nil
 }
 
 // Segment frames a signed canonical .m4s segment.

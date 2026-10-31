@@ -19,9 +19,11 @@ import (
 func TestAudioTranscodePipelineReleasesQueues(t *testing.T) {
 	withNoGSTLeaks(t, func() {
 		for _, target := range []string{"aac", "opus"} {
-			pipeline, err := buildAudioTranscodePipeline(target)
-			require.NoError(t, err)
-			require.Equal(t, gst.StateChangeSuccess, pipeline.BlockSetState(gst.StateNull, gst.ClockTimeNone))
+			for _, codec := range []string{"avc1", "av01", ""} {
+				pipeline, err := buildAudioTranscodePipeline(target, codec)
+				require.NoError(t, err)
+				require.Equal(t, gst.StateChangeSuccess, pipeline.BlockSetState(gst.StateNull, gst.ClockTimeNone))
+			}
 		}
 	})
 }
@@ -65,7 +67,7 @@ func BenchmarkAudioTranscodePipeline(b *testing.B) {
 		b.Run(target, func(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
-				pipeline, err := buildAudioTranscodePipeline(target)
+				pipeline, err := buildAudioTranscodePipeline(target, "avc1")
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -92,4 +94,14 @@ func audioCodecsOf(t *testing.T, ctx context.Context, seg []byte) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func TestStreamTranscoderCloseWithoutInput(t *testing.T) {
+	mm := &MediaManager{cli: &config.CLI{}}
+	tr := mm.newStreamTranscoder(t.Context(), "aac", nil, nil, func(any, []byte) {
+		t.Error("an empty stream must not produce a completion")
+	})
+	require.NoError(t, tr.Close())
+	require.NoError(t, tr.Close())
+	require.ErrorContains(t, tr.Feed(nil, nil), "closed")
 }

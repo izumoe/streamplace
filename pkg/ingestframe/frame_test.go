@@ -9,6 +9,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/hyphacoop/go-dasl/drisl"
 	"github.com/stretchr/testify/require"
 )
 
@@ -139,4 +140,25 @@ func TestConcurrentWritesDoNotInterleave(t *testing.T) {
 	sort.Strings(got)
 	sort.Strings(want)
 	require.Equal(t, want, got)
+}
+
+func TestWriterKeepsDRISLWireEncoding(t *testing.T) {
+	for _, kind := range []Type{Segment, End, Error, Answer, Event, Manifest, SourceSegment, CompletedSourceSegment, 255} {
+		for _, size := range []int{0, 1, 23, 24, 255, 256, 65535, 65536} {
+			payload := bytes.Repeat([]byte{0xab}, size)
+			expected, err := drisl.Marshal(message{Type: kind, Payload: payload})
+			require.NoError(t, err)
+			var wire bytes.Buffer
+			require.NoError(t, NewWriter(&wire).WriteFrame(kind, payload))
+			require.Equal(t, expected, wire.Bytes(), "type=%d size=%d", kind, size)
+		}
+	}
+}
+
+func TestWriterPropagatesWriteFailure(t *testing.T) {
+	reader, writer := io.Pipe()
+	defer writer.Close()
+	failure := errors.New("receiver closed")
+	require.NoError(t, reader.CloseWithError(failure))
+	require.ErrorIs(t, NewWriter(writer).SourceSegment([]byte("source")), failure)
 }
