@@ -307,6 +307,14 @@ the canvas sampling interval.
 
 ## Profiling server memory
 
+Standalone FFI broadcasts drive their own native cache clock. The existing
+30-second idle policy reclaims old, unread groups while protecting a live
+track's newest group. Activity is dated on collection passes, so expiry is
+approximate. After close, collection continues until finished media drains;
+the driver watches a consumer and does not keep publishers alive. This bounds
+idle media retention, not the process's total RSS. The private
+`standalone-cache.patch` changes no FFI signatures or media bytes.
+
 Run the opt-in Linux lifecycle test alone in the configured builder:
 
 ```sh

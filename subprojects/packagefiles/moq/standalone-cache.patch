@@ -1,0 +1,122 @@
+diff --git a/rs/moq-ffi/src/producer.rs b/rs/moq-ffi/src/producer.rs
+index 777162bf1..32876210a 100644
+--- a/rs/moq-ffi/src/producer.rs
++++ b/rs/moq-ffi/src/producer.rs
+@@ -108,6 +108,28 @@ pub struct MoqBroadcastProducer {
+ 	state: std::sync::Mutex<Option<BroadcastProducer>>,
+ }
+ 
++// Standalone broadcasts have no origin driver to advance their cache clock.
++// Keep collecting after close until finished tracks' stale consumers release
++// their cached frames, without keeping any publisher alive.
++struct BroadcastCache {
++	pool: moq_net::cache::Pool,
++	closed: moq_net::broadcast::Consumer,
++}
++
++impl moq_net::time::Driver for BroadcastCache {
++	fn poll(
++		&mut self,
++		now: moq_net::time::Instant,
++		waiter: &kio::Waiter,
++	) -> Result<Option<moq_net::time::Instant>, moq_net::Error> {
++		let next = self.pool.gc(now);
++		if self.closed.poll_closed(waiter).is_ready() && self.pool.used() == 0 {
++			return Err(moq_net::Error::Closed);
++		}
++		Ok(next)
++	}
++}
++
+ #[derive(uniffi::Object)]
+ pub struct MoqBroadcastDynamic {
+ 	task: Task<DynamicProducer>,
+@@ -234,7 +256,16 @@ impl MoqBroadcastProducer {
+ 	#[uniffi::constructor]
+ 	pub fn new() -> Result<Arc<Self>, MoqError> {
+ 		let _guard = crate::ffi::enter();
+-		Ok(Arc::new(Self::from_inner(moq_net::broadcast::Info::new().produce())?))
++		let broadcast = moq_net::broadcast::Info::new().produce();
++		let cache = BroadcastCache {
++			pool: broadcast.info().pool.clone(),
++			closed: broadcast.consume(),
++		};
++		let producer = Arc::new(Self::from_inner(broadcast)?);
++		crate::ffi::spawn(async move {
++			moq_net::time::run(cache).await;
++		});
++		Ok(producer)
+ 	}
+ 
+ 	/// Advertise this broadcast's exact path as a route.
+@@ -1290,3 +1321,70 @@ fn reserve_track(
+ 		.reserve_track(name)
+ 		.map_err(|err| MoqError::Codec(format!("init failed: {err}")))
+ }
++
++#[cfg(test)]
++mod cache_tests {
++	use super::*;
++	use moq_net::time::Driver;
++	use std::time::{Duration, Instant};
++
++	#[tokio::test]
++	async fn standalone_cache_expires_history_and_drains_after_close() {
++		let broadcast = moq_net::broadcast::Info::new().produce();
++		let pool = broadcast.info().pool.clone();
++		let mut driver = BroadcastCache {
++			pool: pool.clone(),
++			closed: broadcast.consume(),
++		};
++		let track = broadcast
++			.create_track("video", moq_net::track::Info::default())
++			.unwrap();
++		let mut old = track.append_group().unwrap();
++		old.write_frame(moq_net::Timestamp::ZERO, vec![1; 4096]).unwrap();
++		old.finish().unwrap();
++		let mut stale = old.consume();
++		let mut latest = track.append_group().unwrap();
++		latest.write_frame(moq_net::Timestamp::ZERO, vec![2; 4096]).unwrap();
++		latest.finish().unwrap();
++		let mut current = latest.consume();
++		let used = pool.used();
++		let now = Instant::now();
++		let waiter = kio::Waiter::noop();
++		assert!(driver.poll(now, &waiter).unwrap().is_some());
++		let later = now + moq_net::cache::DEFAULT_EXPIRY + Duration::from_secs(1);
++		driver.poll(later, &waiter).unwrap();
++		assert!(pool.used() < used, "unread historical frames must be released");
++		assert!(matches!(stale.next_frame().await, Err(moq_net::Error::Old)));
++		assert_eq!(current.next_frame().await.unwrap().unwrap().size, 4096);
++		track.finish().unwrap();
++		drop(track);
++		broadcast.close();
++		assert!(driver.poll(later + Duration::from_secs(1), &waiter).is_ok());
++		// Access is dated by the next collection pass, then gets the full idle window.
++		assert!(driver.poll(later + moq_net::cache::DEFAULT_EXPIRY, &waiter).is_ok());
++		assert!(matches!(
++			driver.poll(later + moq_net::cache::DEFAULT_EXPIRY * 3, &waiter),
++			Err(moq_net::Error::Closed)
++		));
++		assert_eq!(pool.used(), 0, "a stale consumer must not pin finished media");
++	}
++
++	#[test]
++	fn standalone_cache_stops_without_owning_the_publisher() {
++		for close in [false, true] {
++			let broadcast = moq_net::broadcast::Info::new().produce();
++			let mut driver = BroadcastCache {
++				pool: broadcast.info().pool.clone(),
++				closed: broadcast.consume(),
++			};
++			let now = Instant::now();
++			let waiter = kio::Waiter::noop();
++			assert!(driver.poll(now, &waiter).is_ok());
++			if close {
++				broadcast.close();
++			}
++			drop(broadcast);
++			assert!(matches!(driver.poll(now, &waiter), Err(moq_net::Error::Closed)));
++		}
++	}
++}
