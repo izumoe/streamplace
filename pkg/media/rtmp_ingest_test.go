@@ -281,6 +281,8 @@ func TestRTMPDirectIngestPublishesPlayableMultitrackBatches(t *testing.T) {
 		videos []rtmpFixture
 		error  string
 	}{
+		{"one video", red, []rtmpFixture{red}, ""},
+		{"one video AAC tail", tail, []rtmpFixture{red}, ""},
 		{"three tracks", red, []rtmpFixture{red, blue, green}, ""},
 		{"unequal video cadence", red, []rtmpFixture{red, unequal, green}, ""},
 		{"AAC tail", tail, []rtmpFixture{red, blue, green}, ""},

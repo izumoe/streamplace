@@ -130,7 +130,15 @@ func (mm *MediaManager) consumeSourcePhase(ctx context.Context, segment []byte, 
 		BatchDuration: vs.mediaData.BatchDuration,
 		Published:     vs.meta.Published,
 	}
-	packet, err := Packetize(ctx, mm.cli, seg, 0)
+	packetInput := seg
+	if len(vs.mediaData.Video) == 1 && vs.mediaData.Video[0].Codec == "h264" &&
+		len(vs.mediaData.Audio) == 1 && vs.mediaData.Audio[0].Codec == "opus" {
+		// This validated presentation already contains exactly the WebRTC tracks.
+		presentation := *seg
+		presentation.Muxl = nil
+		packetInput = &presentation
+	}
+	packet, err := Packetize(ctx, mm.cli, packetInput, 0)
 	if err != nil {
 		log.Debug(ctx, "source has no compatible WebRTC packets", "error", err)
 	} else {

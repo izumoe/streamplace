@@ -23,7 +23,7 @@ import (
 
 // newBareSegmentSigner is an ephemeral signer with the test streamer name,
 // enough to drive SignSegmentStream in tests.
-func newBareSegmentSigner(t *testing.T) *MediaSignerLocal {
+func newBareSegmentSigner(t testing.TB) *MediaSignerLocal {
 	t.Helper()
 	ms, err := NewEphemeralMediaSigner("test-streamer")
 	require.NoError(t, err)
