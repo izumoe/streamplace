@@ -191,6 +191,17 @@ test("Enhanced RTMP keeps same-height H264 tracks distinct and decodes supported
   await expectVideoAdvancing(video);
   await selectAndSee(video, "120p (H.264, video1)", "red");
   await selectAndSee(video, "120p (H.264, video2)", "blue");
+  await player.hover();
+  await player.locator('button[title="Settings"]').click();
+  await page.getByRole("menuitemradio", { name: "Auto", exact: true }).click();
+  await page.keyboard.press("Escape");
+  await expectVideoAdvancing(video);
+  await player.hover();
+  await player.locator('button[title="Settings"]').click();
+  await expect(
+    page.getByRole("menuitemradio", { name: "Auto", exact: true }),
+  ).toHaveAttribute("aria-checked", "true");
+  await page.keyboard.press("Escape");
   expect(pageErrors).toEqual([]);
 });
 
