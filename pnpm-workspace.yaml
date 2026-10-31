@@ -14,6 +14,7 @@ onlyBuiltDependencies:
   - utf-8-validate
 patchedDependencies:
   "@moq/hang@0.5.4": patches/@moq__hang@0.5.4.patch
+  "@moq/watch@0.6.6": patches/@moq__watch@0.6.6.patch
   core-js: patches/core-js.patch
   lex-md: patches/lex-md.patch
 overrides:

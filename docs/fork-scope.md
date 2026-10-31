@@ -34,7 +34,7 @@ the existing reconnect buffer after a five-second deadline. HLS keeps each
 stream's writer and publication status together, with distinct writers across
 preview/public transitions. The browser retains live audio ordering and adds a
 200 ms scheduling reserve through its existing MoQ sync mechanism. See
-[measurement and limits](moq.md#measuring-live-latency).
+[measurement and limits](moq-for-devs.md#measuring-live-latency).
 
 Native RTMP ingest accepts one to six H.264 or AV1 video tracks and exactly one
 AAC audio track. It sends encoded packets directly to the shared signer,

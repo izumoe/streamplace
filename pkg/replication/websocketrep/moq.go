@@ -26,7 +26,7 @@ import (
 
 // moqSourceChannel is the bus channel a stream's signed source segments
 // ride; its rendition addenda ride media.RenditionsChannel. A broadcast
-// carries both as one CMAF track per MUXL track (see docs/moq.md).
+// carries both as one CMAF track per MUXL track (see docs/moq-for-devs.md).
 const moqSourceChannel = "source"
 
 // Subscriber priorities: under contention the source tracks, which carry

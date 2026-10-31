@@ -614,7 +614,7 @@ func runMain(ctx context.Context, build *config.BuildFlags, platformJobs []jobFu
 		})
 	}
 
-	// The MoQ listener is the websocket replicator's (see docs/moq.md). It
+	// The MoQ listener is the websocket replicator's (see docs/moq-for-devs.md). It
 	// reads its certificate from files, which Go keeps current.
 	if cli.MoqAddr != "" && wsrep != nil {
 		switch {

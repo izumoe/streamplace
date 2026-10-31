@@ -1,0 +1,102 @@
+diff --git a/js/watch/src/video/source.test.ts b/js/watch/src/video/source.test.ts
+index 869a8930f..44b839752 100644
+--- a/js/watch/src/video/source.test.ts
++++ b/js/watch/src/video/source.test.ts
+@@ -4,7 +4,7 @@ import { Path } from "@moq/net";
+ import { Signal } from "@moq/signals";
+ import { Broadcast } from "../broadcast";
+ import { decoderConfigKey, supportCacheKey } from "./config";
+-import { Source } from "./source";
++import { Source, type Target } from "./source";
+ 
+ const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+ 
+@@ -173,6 +173,60 @@ describe("Source error signal", () => {
+ 	});
+ });
+ 
++describe("Source bitrate selection", () => {
++	it("keeps resolution preference when a probe arrives without rendition bitrates", async () => {
++		const probe = new Signal<{ estimatedRecvRate: number } | undefined>(undefined);
++		const target = new Signal<Target | undefined>(undefined);
++		const source = new Source({
++			broadcast: mockBroadcast({
++				low: config("avc1.64001e", { codedWidth: 426, codedHeight: 240 }),
++				high: config("av01.0.04M.08", { codedWidth: 1280, codedHeight: 720 }),
++				mid: config("avc1.640028", { codedWidth: 854, codedHeight: 480 }),
++			}),
++			probe,
++			target,
++			supported: async () => true,
++		});
++		try {
++			await settle();
++			expect(source.out.track.peek()).toBe("high");
++			probe.set({ estimatedRecvRate: 5_000_000 });
++			await settle();
++			expect(source.out.track.peek()).toBe("high");
++			target.set({ name: "low" });
++			await settle();
++			expect(source.out.track.peek()).toBe("low");
++			target.set(undefined);
++			await settle();
++			expect(source.out.track.peek()).toBe("high");
++		} finally {
++			source.close();
++		}
++	});
++
++	it("keeps measured bitrate limits when other renditions omit their rate", async () => {
++		const probe = new Signal({ estimatedRecvRate: 500_000 });
++		const source = new Source({
++			broadcast: mockBroadcast({
++				unknown: config("av01.0.04M.08", { codedWidth: 3840, codedHeight: 2160 }),
++				low: config("avc1.64001e", { bitrate: 1_000_000 }),
++				high: config("avc1.640028", { bitrate: 2_000_000 }),
++			}),
++			probe,
++			supported: async () => true,
++		});
++		try {
++			await settle();
++			expect(source.out.track.peek()).toBe("low");
++			probe.set({ estimatedRecvRate: 4_000_000 });
++			await settle();
++			expect(source.out.track.peek()).toBe("high");
++		} finally {
++			source.close();
++		}
++	});
++});
++
+ describe("Source stalled rendition selection", () => {
+ 	it("moves to an unstalled rendition when the selected one is throttled", async () => {
+ 		const state = mutableBroadcast({
+diff --git a/js/watch/src/video/source.ts b/js/watch/src/video/source.ts
+index b6e4ac831..c56abdd2f 100644
+--- a/js/watch/src/video/source.ts
++++ b/js/watch/src/video/source.ts
+@@ -391,7 +391,7 @@ export class Source {
+ 		if (target?.width != null || target?.height != null) {
+ 			filters.push(byDimensions(target.width, target.height));
+ 		}
+-		if (target?.bitrate != null) {
++		if (target?.bitrate != null && entries.some(([, config]) => config.bitrate != null)) {
+ 			filters.push(byBitrate(target.bitrate));
+ 		}
+ 
+diff --git a/js/watch/vite.config.ts b/js/watch/vite.config.ts
+index 2ceb18c7c..d8a25f97a 100644
+--- a/js/watch/vite.config.ts
++++ b/js/watch/vite.config.ts
+@@ -22,8 +22,9 @@ export default defineConfig({
+ 			// an external import lets a server runtime pick its `node` export instead. Its
+ 			// stylesheets stay bundled, since they are inlined as strings.
+ 			external: (id) => id.startsWith("@moq/") || id === "media-captions",
++			output: { chunkFileNames: "player-B6mw85kT.js" },
+ 		},
+-		sourcemap: true,
++		sourcemap: false,
+ 		target: "esnext",
+ 	},
+ });

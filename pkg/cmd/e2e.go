@@ -395,7 +395,7 @@ func runE2E(ctx context.Context, devEnvPath, httpsPDSHost, httpsStationHost stri
 
 	// A second node, a peer that syndicates whatever the first ingests: it
 	// hears the origin record on the shared PDS firehose and pulls the
-	// stream over MoQ (see docs/moq.md), and playing the stream from it is
+	// stream over MoQ (see docs/moq-for-devs.md), and playing the stream from it is
 	// what proves that transfer end to end. Started now, before the records
 	// below, so it indexes the stream key as it is created like the first.
 	peerHTTPPort, err := freePort()

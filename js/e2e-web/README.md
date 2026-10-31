@@ -91,7 +91,7 @@ Create tab is not part of the DOM app. PDS index deletion and publication behavi
 remain covered by `pkg/atproto/auto_publish_vod_test.go` and the statedb tests.
 
 `syndication` plays the test stream from the harness's second node, which pulls
-it from the first over Media over QUIC (`SERVER2_URL`; see `docs/moq.md`). It is
+it from the first over Media over QUIC (`SERVER2_URL`; see `docs/moq-for-devs.md`). It is
 web-only: node-to-node transfer has no mobile surface, and the mobile flows play
 from the ingest node.
 

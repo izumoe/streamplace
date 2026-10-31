@@ -1,0 +1,19 @@
+diff --git a/player-B6mw85kT.js b/player-B6mw85kT.js
+index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..f394355cb073d9969ff291179174eb2b14cf89e3 100644
+--- a/player-B6mw85kT.js
++++ b/player-B6mw85kT.js
+@@ -2162,7 +2162,7 @@ var $ = class {
+ 		if (n.length === 0) return;
+ 		if (n.length === 1) return n[0][0];
+ 		let r = [];
+-		if (t?.pixels != null && r.push(at(t.pixels)), (t?.width != null || t?.height != null) && r.push(ot(t.width, t.height)), t?.bitrate != null && r.push(st(t.bitrate)), r.length === 0) return ct(n);
++		if (t?.pixels != null && r.push(at(t.pixels)), (t?.width != null || t?.height != null) && r.push(ot(t.width, t.height)), t?.bitrate != null && n.some(([, e]) => e.bitrate != null) && r.push(st(t.bitrate)), r.length === 0) return ct(n);
+ 		let i = r.map((e) => e(n)), a = i.map((e) => new Set(e));
+ 		for (let e of i[0]) if (a.every((t) => t.has(e))) return e;
+ 		console.warn("conflicting rendition filters, no rendition satisfies all criteria");
+@@ -2266,5 +2266,3 @@ var $ = class {
+ };
+ //#endregion
+ export { L as _, He as a, X as c, Y as d, K as f, R as g, Ne as h, Q as i, q as l, U as m, $ as n, Ve as o, G as p, it as r, ze as s, ut as t, J as u, P as v };
+-
+-//# sourceMappingURL=player-B6mw85kT.js.map
