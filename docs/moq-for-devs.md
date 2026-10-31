@@ -407,6 +407,40 @@ CPU and memory overhead. Heaptrack's remaining allocations at process exit
 include live caches and globals; its reported "leaked" total alone does not
 establish a leak. It also does not account for every mapping or Go's heap.
 
+## Thumbnail decoder memory
+
+Thumbnail software decoders use at most four threads, limited further by the
+available CPU count. Automatic frame threading creates per-thread workspaces
+and decodes ahead of the one frame the thumbnail needs. Four threads keep
+parallel decoding for large frames; a single thread slowed 4k AV1 in testing.
+The setting is confined to thumbnail pipelines. Hardware decoder selection and
+other media pipelines retain their defaults.
+
+The gst-libav packaging patch exposes `max-threads` for FFmpeg decoders with
+`AV_CODEC_CAP_OTHER_THREADS`, including libdav1d. It leaves the default at zero
+(automatic), and does not advertise unsupported frame/slice threading modes.
+Rebuild GStreamer when adopting this patch; rebuilding Go alone is insufficient.
+
+Inside the configured builder, generate the opt-in H264/AV1 resolution matrix
+and run real live/VOD JPEG/PNG decoding, including the GStreamer leak checks:
+
+```sh
+env LD_LIBRARY_PATH= bash test/thumbnail/generate.sh .build/thumbnail-fixtures
+export STREAMPLACE_THUMBNAIL_FIXTURES_DIR="$PWD/.build/thumbnail-fixtures"
+export CGO_LDFLAGS="-L$PWD/build-linux-amd64/rust/streamplace-native -lmoq_ffi -Wl,-Bstatic -lstdc++ -Wl,-Bdynamic -lm"
+go test -count=1 -run '^TestThumbnail(DecoderThreads|CodecsAndFormats|DecodeErrors|ResolutionMatrix)$' ./pkg/media
+STREAMPLACE_IGNORE_LEAKS=1 go test -run '^$' \
+  -bench '^BenchmarkThumbnailDecode$' -benchtime=10x -count=3 ./pkg/media
+```
+
+The generator refuses to overwrite fixtures. The matrix covers 360p, 720p,
+1080p and 4k, with H264 B-frames and a visible border to check image content.
+Compare identical native libraries and alternate baseline/candidate runs without
+profiling during timing. Go benchmark allocation counts exclude native decoder
+workspaces; use native allocation profiles and the lifecycle test above for
+memory evidence. This matrix does not establish hardware performance or
+long-running playback stability.
+
 ## Maintaining the browser SDK patch
 
 `@moq/watch@0.6.6` applies the connection's bitrate estimate even when no

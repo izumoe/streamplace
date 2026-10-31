@@ -5,17 +5,38 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/go-gst/go-glib/pkg/gobject/v2"
 	"github.com/go-gst/go-gst/pkg/gst"
 	app "github.com/go-gst/go-gst/pkg/gstapp"
 	"stream.place/streamplace/pkg/gstpipeline"
 	"stream.place/streamplace/pkg/log"
 	"stream.place/streamplace/pkg/muxl"
 )
+
+// A thumbnail needs one frame. Automatic frame threading allocates a decoder
+// workspace per CPU and decodes ahead of that frame. Four threads retain
+// parallel decoding for large frames without scaling memory with CPU count.
+// Leave hardware decoders and software decoders without a thread control
+// to their own defaults.
+func boundThumbnailDecoderThreads(_ gst.Bin, _ gst.Bin, element gst.Element) {
+	factory := element.GetFactory()
+	if factory == nil {
+		return
+	}
+	class := factory.GetMetadata("klass")
+	if !strings.Contains(class, "Decoder/Video") || strings.Contains(class, "Hardware") {
+		return
+	}
+	if element.ObjectProperty("max-threads") != gobject.InvalidValue {
+		element.SetObjectProperty("max-threads", int32(min(runtime.NumCPU(), 4)))
+	}
+}
 
 // ThumbnailFromSegment generates a thumbnail from a single VOD segment.
 // initSeg is the per-track fmp4 init (ftyp+moov); segment is the signed
@@ -29,10 +50,8 @@ import (
 // trips qtdemux's track-vs-movie duration heuristics; the fmp4 init has no
 // movie duration at all. The c2pa-uuid box that prefixes a signed segment
 // is a top-level box qtdemux skips.
-//
-// It deliberately does NOT go through Thumbnail: that path's
-// ConcatDemuxBin front-end hardcodes opusparse for livestream audio and
-// deadlocks on VOD's AAC. decodebin is codec-agnostic.
+// Unlike Thumbnail, this entry point already has a video-only track and
+// does not need to canonicalize and select it from a muxed input.
 func ThumbnailFromSegment(ctx context.Context, initSeg, segment []byte, w io.Writer, format string) error {
 	fmp4 := make([]byte, 0, len(initSeg)+len(segment))
 	fmp4 = append(fmp4, initSeg...)
@@ -46,9 +65,7 @@ func ThumbnailFromSegment(ctx context.Context, initSeg, segment []byte, w io.Wri
 }
 
 // thumbnailFromMP4 renders a single frame from a video-only MP4 (flat or
-// fragmented) using decodebin for demux+decode. Unlike Thumbnail's
-// ConcatDemuxBin path (hardcoded to opus audio for livestreaming),
-// decodebin is codec-agnostic, so it handles VOD content's h264/AAC.
+// fragmented) using decodebin for demux and codec selection.
 //
 // The input must be video-only: decodebin's dynamic pad is wired by the
 // gst-launch parser (`decodebin ! videoconvert`), so a lone video pad
@@ -82,6 +99,8 @@ func thumbnailFromMP4(ctx context.Context, flat []byte, w io.Writer, format stri
 	if !ok {
 		return fmt.Errorf("create thumbnail pipeline: parsed description is not a pipeline")
 	}
+	handler := pipeline.ConnectDeepElementAdded(boundThumbnailDecoderThreads)
+	defer pipeline.HandlerDisconnect(handler)
 	defer func() {
 		if pipeline.SetState(gst.StateNull) == gst.StateChangeFailure {
 			log.Error(ctx, "thumbnail: failed to set pipeline to null")
