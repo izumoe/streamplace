@@ -57,7 +57,11 @@ func run(ctx context.Context) error {
 		return err
 	}
 	defer engine.Close(context.Background())
-	tracks, err := readFixtures(ctx, engine, "test/fixtures")
+	directory := os.Getenv("E2E_ERTMP_FIXTURES_DIR")
+	if directory == "" {
+		directory = "test/fixtures"
+	}
+	tracks, err := readFixtures(ctx, engine, directory)
 	if err != nil {
 		return err
 	}

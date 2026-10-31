@@ -62,7 +62,8 @@ export default defineConfig({
     {
       name: "web",
       testDir: "../web/e2e",
-      testMatch: /(?:frontend-cutover|moq-playback|moq-unavailable)\.spec\.ts$/,
+      testMatch:
+        /(?:frontend-cutover|moq-abr|moq-playback|moq-unavailable)\.spec\.ts$/,
       use: { ...devices["Desktop Chrome"] },
     },
     // Firefox covers browser-specific chat behavior.

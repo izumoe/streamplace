@@ -58,6 +58,17 @@ its Go module replacements in `go.mod` and the native revision in
 `subprojects/moq.wrap` in step when updating it. The browser package also has a
 quality-selection patch, described in the maintenance appendix below.
 
+The native build also patches CMAF bitrate measurement and Noq's bandwidth
+reporting. `subprojects/moq-noq.wrap` pins the source matching the existing Noq
+release. Keep all four Cargo overrides in the transport's source patch on that
+same checkout when updating it.
+
+`make native-source` refreshes cached sources when their Git pin or Meson wrap
+hash changes, using Meson's existing reset/stash mechanism. The marker hashes
+the wrap text, not patch contents. When editing a patch at an existing path,
+also update its wrap definition or explicitly reapply it with
+`meson subprojects update --reset --sourcedir . moq` (or `moq-noq`).
+
 ## Run a reachable listener
 
 One UDP port serves both raw QUIC (`moqt://`) and browser WebTransport. The
@@ -122,6 +133,37 @@ MoQ draws video to a canvas and plays audio through Web Audio. The app connects
 pause, volume, quality and fullscreen controls to that player. Picture-in-picture
 is available on the video-element transports. Leaving playback or switching
 transports closes the player, audio contexts and connection.
+
+### Bitrates and automatic quality
+
+Each CMAF track advertises its measured `bitrate` in the standard catalog field.
+The existing native estimator counts complete fragments, including C2PA and
+container headers, against decode timestamps. It averages completed media spans
+covering at least one second and retains the highest observed average for the
+track's lifetime. Bursty signing or delivery does not change that media-time
+rate. The field remains absent until enough media has been measured. Nominal
+codec-descriptor rates do not override this measurement; the signed media and
+initialization bytes remain unchanged.
+
+These rates exclude QUIC, TLS, UDP and IP overhead. The player's **Video bitrate
+estimate** shows the selected rendition's catalog cost, not current network
+throughput. **Bandwidth estimate** shows the peer's connection estimate. The
+default Noq BBR transport reports its delivery-rate model without pacing or
+congestion-window gains. Controllers without that model, including Cubic and
+Reno, report no estimate.
+
+Auto reserves the selected, downloaded audio track's measured rate from 80% of
+the connection estimate, then chooses the best resolution satisfying the video budget and any
+dimension limits. An efficient higher-resolution AV1 rendition can therefore
+beat a more expensive lower-resolution H.264 rendition. If every known rate
+exceeds the budget, it falls back to the cheapest rendition. Without an estimate
+or measured rates, it uses the existing quality preference. Explicit video
+budgets and manual track choices retain their meaning.
+
+During a handoff, pending video has higher delivery priority than outgoing
+video, while audio stays above both. Normal video priority resumes on promotion.
+Returning to the already active rendition cancels pending work and reuses its
+decoder. Track name and codec configuration are selected together.
 
 ### Buffering and latency
 
@@ -225,15 +267,55 @@ endpoints. Neither measures camera capture or physical screen latency. Report
 steady playback separately from publish-to-first-frame time, and keep failed
 health checks alongside the results.
 
+## Testing multiresolution Auto
+
+Inside the configured Docker builder, build fresh bundles and native code, then
+generate the separate multiresolution fixtures and use the existing harness:
+
+```sh
+make app
+make dev
+bash test/ertmp/generate.sh --abr "$PWD/.build/ertmp-abr-fixtures"
+E2E_ERTMP=1 E2E_ERTMP_FIXTURES_DIR="$PWD/.build/ertmp-abr-fixtures" \
+  hack/e2e-web-local.sh --project=web moq-abr.spec.ts
+```
+
+The fixture publisher sends 90p and 180p H.264, 360p AV1 and AAC over one
+Enhanced RTMP connection. The default fixtures and manual-quality/HLS test
+remain available without `E2E_ERTMP_FIXTURES_DIR`.
+
+The test serializes real encrypted QUIC datagrams through a bounded UDP proxy,
+changing its downstream ceilings from 4 Mbps to 1 Mbps and back. Each packet
+receives its full serialization time; delayed timers cannot create catch-up
+bursts. The queue holds at most 200 ms of traffic. Browser ACKs and upstream
+control traffic remain unthrottled. Recorded byte counts include encrypted QUIC
+payloads and exclude IP/UDP headers. Timer granularity can underfill the ceiling,
+so inspect the actual counters and packet service times.
+
+Assertions cover changing canvas pictures, decoded dimensions and codecs,
+steady low quality, recovery and PCM audio output. `ertmp-abr.json` records
+limit changes, painted and decoded frames, subscription/decoder events, player
+estimates and traffic counters. Phase screenshots accompany it. Selected
+catalog configuration alone does not prove a successful handoff.
+
+A diagnostic proxy with 3 KB of token-bucket burst credit produced quality
+oscillation despite enforcing its average rate. On short RTTs, those bursts can
+inflate BBR's maximum delivery samples. The serialized test establishes bounded
+fixed-rate switching; bursty-link behavior and long-running stability need
+separate evaluation. Report downshift and recovery times separately, including
+the canvas sampling interval.
+
 ## Maintaining the browser SDK patch
 
 `@moq/watch@0.6.6` applies the connection's bitrate estimate even when no
 rendition advertises a bitrate, which changes automatic selection from the
 best supported resolution to the first catalog entry. The registered
 `patches/@moq__watch@0.6.6.patch` skips that filter when all rates are unknown.
-Manual selection, known-rate budgets and the lowest-resolution stalled fallback
-keep their existing behavior. Our CMAF catalog has no measured rendition rates,
-so Auto uses quality preference; it cannot make bandwidth-based choices yet.
+Manual selection and stalled fallbacks keep their existing behavior. With
+measured rates, the patch reserves audio and uses the existing resolution
+preference after intersecting affordability and dimension filters. A zero video
+budget remains a real budget. The handoff fixes use existing subscription
+priorities and decoder identities, as described above.
 
 The patch also waits for native `VideoDecoder` pending requests to drain before
 pulling more media from the existing bounded consumer. The native `dequeue`
@@ -262,7 +344,7 @@ git -C "$moq_sdk_dir" apply "$PWD/patches/moq-watch-0.6.6-source.patch"
   cd "$moq_sdk_dir"
   bun install --frozen-lockfile --filter moq --filter @moq/watch
   cd js/watch
-  bun run test ./src/video/source.test.ts ./src/video/decoder.test.ts
+  bun run test ./src/media.test.ts ./src/player.test.ts ./src/video/source.test.ts ./src/video/decoder.test.ts
   bun run build
 )
 pnpm patch @moq/watch@0.6.6 --edit-dir .build/moq-watch-package
@@ -273,11 +355,11 @@ pnpm patch-commit .build/moq-watch-package
 The unpatched normal build reproduced all 138 published package files byte for
 byte. The patch build keeps the published shared-chunk filename and disables
 source maps. Copy only that generated chunk: its runtime changes are rendition
-selection, video decoder backpressure and removal of its source-map reference,
-so the original unused map does not misrepresent the patched code. Audio,
-synchronization and all other generated regions remain identical. The generated
-chunk's SHA-256 is
-`3f78cac34ff764b0871293b009c6e79c87a72f26326d14fb4b69ccc7788e5470`.
+selection, audio budgeting, handoff priorities, decoder reuse, video decoder
+backpressure and removal of its source-map reference. Generated binding names
+in adjacent regions can change with the build; review the readable source patch
+and regenerate the runtime. The generated chunk's SHA-256 is
+`ddefda27ac5ed6a133fb417e97304cbddb8fa6327a07be1811593db0754cc48b`.
 `moq-quality.test.ts` checks the installed package so a missing patch fails the
 ordinary web test suite.
 
