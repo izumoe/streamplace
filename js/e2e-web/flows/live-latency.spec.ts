@@ -1,7 +1,11 @@
 import { expect, test } from "@playwright/test";
 import { writeFile } from "node:fs/promises";
 import { observeAudioOutput } from "./audio-observer";
-import { analyzeCadence, analyzePresentation } from "./live-latency-analysis";
+import {
+  analyzeCadence,
+  analyzePresentation,
+  analyzeRtp,
+} from "./live-latency-analysis";
 import { createLatencyExperiment } from "./live-latency-browser";
 import { makeLatencyMarker } from "./live-latency-marker";
 
@@ -12,8 +16,9 @@ test.use({
   viewport: { width: 1360, height: 900 },
 });
 test.skip(process.env.E2E_LATENCY !== "1", "opt-in real frame-age measurement");
+const includeMoq = process.env.E2E_LATENCY_TRANSPORT !== "whep";
 
-test("live latency: marked WHIP source to DOM MoQ and native WHEP", async ({
+test(`live latency: marked WHIP source to ${includeMoq ? "DOM MoQ and native WHEP" : "native WHEP"}`, async ({
   page,
   browser,
 }, testInfo) => {
@@ -39,13 +44,13 @@ test("live latency: marked WHIP source to DOM MoQ and native WHEP", async ({
     localStorage.setItem("streamplaceUrl", url);
     localStorage.setItem("player-transport", "webrtc");
   }, server);
-  await page.addInitScript(observeAudioOutput);
+  if (includeMoq) await page.addInitScript(observeAudioOutput);
   await page.goto(`${server}/api/healthz`);
   await page.setContent(
     "<!doctype html><title>Live frame-age measurement</title>",
   );
   await page.addScriptTag({
-    content: `window.latencyExperiment = (${createLatencyExperiment.toString()})((${makeLatencyMarker.toString()})(), ${JSON.stringify(server)}, ${JSON.stringify(did)});`,
+    content: `window.latencyExperiment = (${createLatencyExperiment.toString()})((${makeLatencyMarker.toString()})(), ${JSON.stringify(server)}, ${JSON.stringify(did)}, ${includeMoq});`,
   });
   let failure: string | null = null;
   let result: Awaited<
@@ -54,12 +59,14 @@ test("live latency: marked WHIP source to DOM MoQ and native WHEP", async ({
   try {
     await page.evaluate((key) => window.latencyExperiment.start(key), key);
     await page.evaluate(() => window.latencyExperiment.openViewers());
-    const player = page
-      .frameLocator("iframe")
-      .locator("[data-playback-transport]");
-    await expect(player).toHaveAttribute("data-playback-transport", "moq");
-    await player.hover();
-    await player.locator('button[title="Unmute"]').click();
+    if (includeMoq) {
+      const player = page
+        .frameLocator("iframe")
+        .locator("[data-playback-transport]");
+      await expect(player).toHaveAttribute("data-playback-transport", "moq");
+      await player.hover();
+      await player.locator('button[title="Unmute"]').click();
+    }
     await page.evaluate(() => window.latencyExperiment.measure());
   } catch (error) {
     failure = String(error).split(key).join("<redacted>");
@@ -74,65 +81,86 @@ test("live latency: marked WHIP source to DOM MoQ and native WHEP", async ({
     steadyEnd ?? NaN,
   );
   const summary = Object.fromEntries(
-    (["moq", "whep"] as const).map((transport) => {
-      const frames = result[transport];
-      const first = frames.find(
-        (frame) => frame.latencyMs !== null && frame.latencyMs >= 0,
-      );
-      const changed = frames.filter((frame) => frame.changed);
-      const steady = analyzePresentation(
-        changed,
+    (includeMoq ? (["moq", "whep"] as const) : (["whep"] as const)).map(
+      (transport) => {
+        const frames = result[transport];
+        const first = frames.find(
+          (frame) => frame.latencyMs !== null && frame.latencyMs >= 0,
+        );
+        const changed = frames.filter((frame) => frame.changed);
+        const steady = analyzePresentation(
+          changed,
+          steadyStart ?? NaN,
+          steadyEnd ?? NaN,
+        );
+        const start =
+          transport === "moq"
+            ? result.times.moqStarted
+            : result.times.whepStarted;
+        return [
+          transport,
+          {
+            endpoint:
+              transport === "moq"
+                ? "parent-rAF observed canvas draw"
+                : "native expectedDisplayTime",
+            firstMarkerAgeMs: first?.latencyMs ?? null,
+            firstMarkerFromPublishMs:
+              first && publishStarted !== null
+                ? first.display - publishStarted
+                : null,
+            firstMarkerFromViewerMs:
+              first && start !== null ? first.display - start : null,
+            observedUniqueFps: steady.fps,
+            readbackMaxMs: frames.reduce(
+              (max, frame) => Math.max(max, frame.readbackMs),
+              0,
+            ),
+            callbackGapMaxMs: frames.reduce(
+              (max, frame) => Math.max(max, frame.callbackGapMs ?? 0),
+              0,
+            ),
+            ...steady,
+          },
+        ];
+      },
+    ),
+  );
+  const rtcHealth = Object.fromEntries(
+    (["publisher", "whep"] as const).map((peer) => [
+      peer,
+      analyzeRtp(
+        result.rtc.map((snapshot) => ({
+          at: snapshot.at,
+          reports: snapshot[peer],
+        })),
         steadyStart ?? NaN,
         steadyEnd ?? NaN,
-      );
-      const start =
-        transport === "moq"
-          ? result.times.moqStarted
-          : result.times.whepStarted;
-      return [
-        transport,
-        {
-          endpoint:
-            transport === "moq"
-              ? "parent-rAF observed canvas draw"
-              : "native expectedDisplayTime",
-          firstMarkerAgeMs: first?.latencyMs ?? null,
-          firstMarkerFromPublishMs:
-            first && publishStarted !== null
-              ? first.display - publishStarted
-              : null,
-          firstMarkerFromViewerMs:
-            first && start !== null ? first.display - start : null,
-          observedUniqueFps: steady.fps,
-          readbackMaxMs: frames.reduce(
-            (max, frame) => Math.max(max, frame.readbackMs),
-            0,
-          ),
-          callbackGapMaxMs: frames.reduce(
-            (max, frame) => Math.max(max, frame.callbackGapMs ?? 0),
-            0,
-          ),
-          ...steady,
-        },
-      ];
-    }),
+      ),
+    ]),
   );
   const artifact = {
     browser: browser.version(),
     binarySha256: process.env.E2E_BINARY_SHA256 ?? null,
     revision: process.env.E2E_REVISION ?? null,
     sourceTransport: "WHIP H264/Opus",
+    measurementMode: includeMoq ? "MoQ + WHEP" : "common WHEP",
+    sourceReadyMeaning: includeMoq ? "published MoQ origin" : "WHIP connected",
     sourceClock: "publisher parent performance.now()",
     requestedTiming: { settlingMs: 10_000, steadyMs: 20_000 },
     limitations: [
       "canvas generation age, not camera capture age",
-      "MoQ observations are not compositor presentation timestamps",
+      ...(includeMoq
+        ? ["MoQ observations are not compositor presentation timestamps"]
+        : []),
       "main-thread stalls can delay canvas observation; raw callback gaps and readback costs are retained",
+      "tone PCM proves audio health, not capture-to-speaker latency or A/V synchronization",
     ],
     failure,
     errors,
     consoleMessages,
     sourceCadence,
+    rtcHealth,
     summary,
     ...result,
   };
@@ -143,11 +171,11 @@ test("live latency: marked WHIP source to DOM MoQ and native WHEP", async ({
   console.log(`live latency: ${JSON.stringify(summary)}`);
   expect(failure).toBeNull();
   expect(errors).toEqual([]);
-  expect(result.final.moqTransport).toBe("moq");
+  if (includeMoq) expect(result.final.moqTransport).toBe("moq");
   expect(result.received).toEqual({ width: 640, height: 360 });
-  expect(result.canvas).toEqual({ width: 640, height: 360 });
+  if (includeMoq) expect(result.canvas).toEqual({ width: 640, height: 360 });
   expect(
-    result.final.audio.some(
+    (includeMoq ? result.final.audio : result.final.whepAudio).some(
       (output) => output.state === "running" && output.peak > 0.0001,
     ),
   ).toBe(true);
@@ -173,6 +201,14 @@ test("live latency: marked WHIP source to DOM MoQ and native WHEP", async ({
     sourceCadence.maxGapMs,
     "source generation continuity",
   ).toBeLessThanOrEqual(500);
+  const encoded = rtcHealth.publisher.find((report) => report.kind === "video");
+  expect(encoded, "actual source encoder observations").toBeDefined();
+  expect(encoded!.frameWidth, "actual encoded width").toBe(640);
+  expect(encoded!.frameHeight, "actual encoded height").toBe(360);
+  expect(
+    encoded!.measuredFps,
+    "actual encoded source cadence",
+  ).toBeGreaterThanOrEqual(25);
   const audioSnapshots = result.rtc.filter(
     (snapshot) => snapshot.at >= steadyStart! && snapshot.at < steadyEnd!,
   );
@@ -182,36 +218,38 @@ test("live latency: marked WHIP source to DOM MoQ and native WHEP", async ({
   ).toBeGreaterThanOrEqual(18);
   for (const snapshot of audioSnapshots) {
     expect(
-      snapshot.audio.some(
+      (includeMoq ? snapshot.audio : snapshot.whepAudio).some(
         (output) => output.state === "running" && output.peak > 0.0001,
       ),
       `real speaker PCM at ${snapshot.at}`,
     ).toBe(true);
   }
-  const audioPositions = result.audioBuffers.flatMap((buffer) =>
-    buffer.positions.filter(
-      (position) => position.at >= steadyStart! && position.at < steadyEnd!,
-    ),
-  );
-  expect(
-    audioPositions.length,
-    "regular native audio cursor reports",
-  ).toBeGreaterThanOrEqual(((steadyEnd! - steadyStart!) / 1000) * 50);
-  expect(
-    audioPositions.filter((position) => position.stalled),
-    "the native speaker buffer remains playing throughout steady observation",
-  ).toEqual([]);
-  for (const buffer of result.audioBuffers) {
-    const positions = buffer.positions.filter(
-      (position) => position.at >= steadyStart! && position.at < steadyEnd!,
+  if (includeMoq) {
+    const audioPositions = result.audioBuffers.flatMap((buffer) =>
+      buffer.positions.filter(
+        (position) => position.at >= steadyStart! && position.at < steadyEnd!,
+      ),
     );
     expect(
-      positions.every(
-        (position, index) =>
-          index === 0 || position.timestamp > positions[index - 1].timestamp,
-      ),
-      "the native speaker cursor advances at every report",
-    ).toBe(true);
+      audioPositions.length,
+      "regular native audio cursor reports",
+    ).toBeGreaterThanOrEqual(((steadyEnd! - steadyStart!) / 1000) * 50);
+    expect(
+      audioPositions.filter((position) => position.stalled),
+      "the native speaker buffer remains playing throughout steady observation",
+    ).toEqual([]);
+    for (const buffer of result.audioBuffers) {
+      const positions = buffer.positions.filter(
+        (position) => position.at >= steadyStart! && position.at < steadyEnd!,
+      );
+      expect(
+        positions.every(
+          (position, index) =>
+            index === 0 || position.timestamp > positions[index - 1].timestamp,
+        ),
+        "the native speaker cursor advances at every report",
+      ).toBe(true);
+    }
   }
   for (const [reports, direction] of [
     [result.final.publisher, "outbound-rtp"],
@@ -234,7 +272,7 @@ test("live latency: marked WHIP source to DOM MoQ and native WHEP", async ({
       ).toBeGreaterThan(0);
     }
   }
-  for (const transport of ["moq", "whep"]) {
+  for (const transport of includeMoq ? ["moq", "whep"] : ["whep"]) {
     expect(
       summary[transport].fps,
       `${transport}: continuing new marked frames`,

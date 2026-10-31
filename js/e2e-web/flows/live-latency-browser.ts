@@ -6,6 +6,7 @@ export function createLatencyExperiment(
   marker: ReturnType<typeof makeLatencyMarker>,
   server: string,
   did: string,
+  includeMoq = true,
 ) {
   const generated = new Map<number, number>();
   const source = document.createElement("canvas");
@@ -36,7 +37,11 @@ export function createLatencyExperiment(
   iframe.style.border = "0";
   const viewers = document.createElement("div");
   viewers.style.cssText = "display:flex;gap:16px";
-  viewers.append(iframe, video);
+  viewers.append(...(includeMoq ? [iframe, video] : [video]));
+  const whepAnalyser = includeMoq ? undefined : audio.createAnalyser();
+  if (whepAnalyser) {
+    whepAnalyser.connect(audio.destination);
+  }
   document.body.append(source, viewers);
 
   type Frame = {
@@ -167,25 +172,27 @@ export function createLatencyExperiment(
       previousCallback = callbackNow;
     };
   }
+  function audioSample(analyser: AnalyserNode) {
+    const samples = new Float32Array(analyser.fftSize);
+    analyser.getFloatTimeDomainData(samples);
+    const context = analyser.context as AudioContext;
+    return {
+      state: context.state,
+      currentTime: context.currentTime,
+      sampleRate: context.sampleRate,
+      baseLatency: context.baseLatency,
+      outputLatency: context.outputLatency,
+      peak: samples.reduce(
+        (peak, sample) => Math.max(peak, Math.abs(sample)),
+        0,
+      ),
+    };
+  }
   function audioOutput() {
-    return (
-      iframe.contentWindow?.moqAudioAnalysers?.map((analyser) => {
-        const samples = new Float32Array(analyser.fftSize);
-        analyser.getFloatTimeDomainData(samples);
-        const context = analyser.context as AudioContext;
-        return {
-          state: context.state,
-          currentTime: context.currentTime,
-          sampleRate: context.sampleRate,
-          baseLatency: context.baseLatency,
-          outputLatency: context.outputLatency,
-          peak: samples.reduce(
-            (peak, sample) => Math.max(peak, Math.abs(sample)),
-            0,
-          ),
-        };
-      }) ?? []
-    );
+    return iframe.contentWindow?.moqAudioAnalysers?.map(audioSample) ?? [];
+  }
+  function whepAudioOutput() {
+    return whepAnalyser ? [audioSample(whepAnalyser)] : [];
   }
   async function stats() {
     async function reports(peer: RTCPeerConnection) {
@@ -207,6 +214,7 @@ export function createLatencyExperiment(
       publisher: publisherReports,
       whep: receiverReports,
       audio: audioOutput(),
+      whepAudio: whepAudioOutput(),
       moqTransport: iframe.contentDocument
         ?.querySelector("[data-playback-transport]")
         ?.getAttribute("data-playback-transport"),
@@ -291,18 +299,19 @@ export function createLatencyExperiment(
         sender.setCodecPreferences(codecs);
       }
       await exchange("WHIP", publisher, `${server}/api/ingest/webrtc`, key);
-      await until(
-        async () => {
-          const response = await fetch(
-            `${server}/xrpc/place.stream.playback.getPlaybackServer?stream=${encodeURIComponent(did)}`,
-            { signal: AbortSignal.timeout(3000) },
-          );
-          if (!response.ok) return false;
-          return (await response.json()).moq?.name === `playback/${did}`;
-        },
-        "published MoQ origin",
-        30_000,
-      );
+      if (includeMoq)
+        await until(
+          async () => {
+            const response = await fetch(
+              `${server}/xrpc/place.stream.playback.getPlaybackServer?stream=${encodeURIComponent(did)}`,
+              { signal: AbortSignal.timeout(3000) },
+            );
+            if (!response.ok) return false;
+            return (await response.json()).moq?.name === `playback/${did}`;
+          },
+          "published MoQ origin",
+          30_000,
+        );
       times.sourceReady = performance.now();
       rtc.push(await stats());
     },
@@ -321,12 +330,19 @@ export function createLatencyExperiment(
         readWhep(video, metadata.expectedDisplayTime, metadata);
         videoCallback = video.requestVideoFrameCallback(observeWhep);
       }
-      times.moqStarted = performance.now();
-      iframe.src = `${server}/embed/${encodeURIComponent(did)}/`;
-      animation = requestAnimationFrame(observeMoq);
+      if (includeMoq) {
+        times.moqStarted = performance.now();
+        iframe.src = `${server}/embed/${encodeURIComponent(did)}/`;
+        animation = requestAnimationFrame(observeMoq);
+      }
       times.whepStarted = performance.now();
       receiver.ontrack = (event) => {
         video.srcObject = event.streams[0];
+        if (whepAnalyser && event.track.kind === "audio") {
+          audio
+            .createMediaStreamSource(new MediaStream([event.track]))
+            .connect(whepAnalyser);
+        }
       };
       receiver.addTransceiver("video", { direction: "recvonly" });
       receiver.addTransceiver("audio", { direction: "recvonly" });
@@ -338,7 +354,7 @@ export function createLatencyExperiment(
       await video.play();
       await until(
         () =>
-          [moq, whep].every((frames) =>
+          (includeMoq ? [moq, whep] : [whep]).every((frames) =>
             frames.some((frame) => frame.latencyMs !== null),
           ),
         "first real markers",
@@ -350,10 +366,10 @@ export function createLatencyExperiment(
       times.unmuted = performance.now();
       await until(
         () =>
-          audioOutput().some(
+          (includeMoq ? audioOutput() : whepAudioOutput()).some(
             (output) => output.state === "running" && output.peak > 0.0001,
           ),
-        "real MoQ speaker samples",
+        includeMoq ? "real MoQ speaker samples" : "real WHEP speaker samples",
       );
       await delay(10_000);
       times.steadyStart = performance.now();

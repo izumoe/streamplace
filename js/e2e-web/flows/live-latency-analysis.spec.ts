@@ -1,5 +1,9 @@
 import { expect, test } from "@playwright/test";
-import { analyzeCadence, analyzePresentation } from "./live-latency-analysis";
+import {
+  analyzeCadence,
+  analyzePresentation,
+  analyzeRtp,
+} from "./live-latency-analysis";
 
 test("latency analysis: empty or corrupt samples cannot produce a latency", () => {
   const result = analyzePresentation(
@@ -74,4 +78,101 @@ test("latency cadence: source health excludes invalid timestamps and retains a s
   );
   expect(stalled.fps).toBe(15);
   expect(stalled.maxGapMs).toBeGreaterThan(10_000);
+});
+
+test("latency RTP health: bounds and real observation interval determine bitrate and codec", () => {
+  const snapshots = [
+    { at: -100, reports: [{ id: "v", type: "outbound-rtp", bytesSent: 0 }] },
+    {
+      at: 100,
+      reports: [
+        {
+          id: "v",
+          type: "outbound-rtp",
+          kind: "video",
+          codecId: "h264",
+          bytesSent: 1000,
+          framesEncoded: 3,
+        },
+      ],
+    },
+    {
+      at: 1100,
+      reports: [
+        {
+          id: "v",
+          type: "outbound-rtp",
+          kind: "video",
+          codecId: "h264",
+          bytesSent: 51000,
+          framesEncoded: 33,
+          frameWidth: 640,
+          frameHeight: 360,
+          framesPerSecond: 30,
+          qualityLimitationReason: "none",
+        },
+        {
+          id: "h264",
+          type: "codec",
+          mimeType: "video/H264",
+          sdpFmtpLine: "packetization-mode=1;profile-level-id=42e01f",
+          clockRate: 90000,
+        },
+      ],
+    },
+    {
+      at: 2000,
+      reports: [{ id: "v", type: "outbound-rtp", bytesSent: 900000 }],
+    },
+  ];
+  const [result] = analyzeRtp(snapshots, 0, 2000);
+  expect(result).toMatchObject({
+    kind: "video",
+    observationMs: 1000,
+    bitrateBps: 400000,
+    measuredFps: 30,
+    frameWidth: 640,
+    frameHeight: 360,
+    reportedFps: 30,
+    codec: {
+      mimeType: "video/H264",
+      sdpFmtpLine: "packetization-mode=1;profile-level-id=42e01f",
+    },
+    qualityLimitationReason: "none",
+  });
+});
+
+test("latency RTP health: missing observations and counter resets do not become zero or negative throughput", () => {
+  expect(analyzeRtp([], 0, 2000)).toEqual([]);
+  const report = {
+    id: "a",
+    type: "inbound-rtp",
+    kind: "audio",
+    bytesReceived: 1000,
+  };
+  const [single] = analyzeRtp([{ at: 100, reports: [report] }], 0, 2000);
+  expect(single.bitrateBps).toBeNull();
+  expect(single.measuredFps).toBeNull();
+  expect(single.codec).toBeNull();
+  const [reset] = analyzeRtp(
+    [
+      { at: 100, reports: [report] },
+      {
+        at: 1100,
+        reports: [
+          {
+            ...report,
+            bytesReceived: 100,
+            concealedSamples: 240,
+            insertedSamplesForDeceleration: 0,
+          },
+        ],
+      },
+    ],
+    0,
+    2000,
+  );
+  expect(reset.bitrateBps).toBeNull();
+  expect(reset.counterReset).toBe(true);
+  expect(reset.health.concealedSamples).toBeNull();
 });

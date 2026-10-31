@@ -89,3 +89,82 @@ export function analyzePresentation(
     lagSlopeMsPerSecond: variance > 0 ? (covariance / variance) * 1000 : null,
   };
 }
+
+export function analyzeRtp(
+  snapshots: { at: number; reports: Record<string, unknown>[] }[],
+  start: number,
+  end: number,
+) {
+  const window = snapshots.filter(
+    (snapshot) => snapshot.at >= start && snapshot.at < end,
+  );
+  const last = window.at(-1);
+  if (!last) return [];
+  return last.reports
+    .filter((report) =>
+      ["outbound-rtp", "inbound-rtp"].includes(String(report.type)),
+    )
+    .map((report) => {
+      const first = window.find((snapshot) =>
+        snapshot.reports.some((entry) => entry.id === report.id),
+      )!;
+      const previous = first.reports.find((entry) => entry.id === report.id)!;
+      const observationMs = last.at - first.at;
+      function delta(name: string) {
+        const before = previous[name],
+          after = report[name];
+        return typeof before === "number" &&
+          typeof after === "number" &&
+          Number.isFinite(before) &&
+          Number.isFinite(after) &&
+          after >= before
+          ? after - before
+          : null;
+      }
+      const bytes =
+        report.type === "outbound-rtp" ? "bytesSent" : "bytesReceived";
+      const frames =
+        report.type === "outbound-rtp" ? "framesEncoded" : "framesDecoded";
+      const byteDelta = delta(bytes),
+        frameDelta = delta(frames);
+      return {
+        kind: report.kind,
+        direction: report.type,
+        observationMs,
+        bitrateBps:
+          observationMs > 0 && byteDelta !== null
+            ? (byteDelta * 8000) / observationMs
+            : null,
+        measuredFps:
+          observationMs > 0 && frameDelta !== null
+            ? (frameDelta * 1000) / observationMs
+            : null,
+        frameWidth: report.frameWidth ?? null,
+        frameHeight: report.frameHeight ?? null,
+        reportedFps: report.framesPerSecond ?? null,
+        qualityLimitationReason: report.qualityLimitationReason ?? null,
+        codec:
+          last.reports.find(
+            (entry) => entry.type === "codec" && entry.id === report.codecId,
+          ) ?? null,
+        counterReset:
+          typeof previous[bytes] === "number" &&
+          typeof report[bytes] === "number" &&
+          report[bytes] < previous[bytes],
+        health: Object.fromEntries(
+          [
+            "packetsLost",
+            "framesDropped",
+            "freezeCount",
+            "totalFreezesDuration",
+            "concealedSamples",
+            "silentConcealedSamples",
+            "insertedSamplesForDeceleration",
+            "removedSamplesForAcceleration",
+            "jitterBufferDelay",
+            "jitterBufferEmittedCount",
+          ].map((name) => [name, delta(name)]),
+        ),
+      };
+    });
+}
