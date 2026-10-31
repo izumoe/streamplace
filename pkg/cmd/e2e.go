@@ -161,6 +161,13 @@ func startNode(ctx context.Context, self string, env e2eDevEnv, dataDir string, 
 			nodeCmd.Env = append(nodeCmd.Env, kv)
 		}
 	}
+	// heaptrack removes its preload environment during initialization. Apply
+	// node-specific overrides here so profiling the harness also reaches nodes.
+	for _, name := range []string{"LD_PRELOAD", "DUMP_HEAPTRACK_OUTPUT"} {
+		if value, ok := os.LookupEnv("E2E_NODE_" + name); ok {
+			nodeCmd.Env = append(nodeCmd.Env, name+"="+value)
+		}
+	}
 	nodeCmd.Env = append(nodeCmd.Env,
 		fmt.Sprintf("SP_RELAY_HOST=%s", strings.ReplaceAll(env.PDSURL, "http://", "ws://")),
 		fmt.Sprintf("SP_PLC_URL=%s", env.PLCURL),

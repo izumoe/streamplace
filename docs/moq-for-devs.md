@@ -305,6 +305,63 @@ fixed-rate switching; bursty-link behavior and long-running stability need
 separate evaluation. Report downshift and recovery times separately, including
 the canvas sampling interval.
 
+## Profiling server memory
+
+Run the opt-in Linux lifecycle test alone in the configured builder:
+
+```sh
+E2E_LATENCY=1 E2E_MEMORY=1 E2E_HTTPS_PDS_HOSTNAME= \
+  hack/e2e-web-local.sh --project=chromium media-memory.spec.ts
+```
+
+It uses the existing marked WHIP publisher and a real browser MoQ player. It
+records idle memory, two minutes of ingest with browser and peer subscribers,
+one minute with both subscribers stopped, and 90 seconds after ingest stops.
+`E2E_MEMORY_SECONDS` changes the active playback duration. The peer is the
+harness's isolated replication node; this test stops it, so do not combine it
+with other specs. The test also verifies that the ingest worker exits.
+
+Results include `media-memory.jsonl` with each process's `/proc` status and
+`smaps_rollup`, node Go memory metrics, loaded-library mappings, and a Go heap
+profile at the end of each phase. Compare resident memory **and swap**: falling
+RSS can mean pages moved into swap, rather than memory being released. Embedded
+assets, Go-managed memory, live native allocations and allocator retention have
+different accounting. There is no arbitrary RSS pass/fail threshold; this is a
+diagnostic test, not proof of long-running stability.
+
+For native allocation stacks, install `heaptrack` and `libheaptrack` in the
+builder, then run:
+
+```sh
+mkdir -p .build/media-memory
+E2E_LATENCY=1 E2E_MEMORY=1 E2E_HTTPS_PDS_HOSTNAME= \
+  E2E_NODE_LD_PRELOAD=/usr/lib/heaptrack/libheaptrack_preload.so \
+  E2E_NODE_DUMP_HEAPTRACK_OUTPUT="$PWD/.build/media-memory/heaptrack."'$$' \
+  hack/e2e-web-local.sh --project=chromium media-memory.spec.ts
+```
+
+These node-only overrides restore settings that heaptrack removes from the
+environment during initialization. They produce separate raw traces for the
+main and peer nodes, without profiling the harness or browser. Verify that the
+expected node mappings include `libheaptrack_preload.so` before interpreting a
+run as native allocation evidence. Workers' RSS is recorded, but the node's
+heaptrack preload does not automatically profile worker allocations.
+
+After the test, replace `<pid>` with a recorded node PID:
+
+```sh
+/usr/lib/heaptrack/libexec/heaptrack_interpret \
+  < .build/media-memory/heaptrack.<pid> \
+  | gzip > .build/media-memory/node.<pid>.gz
+heaptrack_print -f .build/media-memory/node.<pid>.gz
+```
+
+Raw allocation traces can grow by gigabytes; keep enough disk space and retain
+the tested binary and native libraries for symbol resolution. Profiling adds
+CPU and memory overhead. Heaptrack's remaining allocations at process exit
+include live caches and globals; its reported "leaked" total alone does not
+establish a leak. It also does not account for every mapping or Go's heap.
+
 ## Maintaining the browser SDK patch
 
 `@moq/watch@0.6.6` applies the connection's bitrate estimate even when no
