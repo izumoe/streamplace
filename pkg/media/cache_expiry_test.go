@@ -112,6 +112,10 @@ func TestMediaCacheExpiryPreservesConcurrentReplacement(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(t.Context())
 	cleanerDone := make(chan struct{})
+	go func() {
+		mm.runCacheExpiry(ctx)
+		close(cleanerDone)
+	}()
 	defer func() {
 		cancel()
 		<-cleanerDone
@@ -130,11 +134,7 @@ func TestMediaCacheExpiryPreservesConcurrentReplacement(t *testing.T) {
 			return "segment"
 		})
 	}()
-	<-entered
-	go func() {
-		mm.runCacheExpiry(ctx)
-		close(cleanerDone)
-	}()
+	waitLiveWindowWork(t, entered)
 	// Mutex waits do not let synctest advance its clock. Wait for the real
 	// maintenance tick, then prove the cleaner reached the held writer.
 	time.Sleep(5 * time.Second)
