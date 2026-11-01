@@ -163,17 +163,19 @@ func (ss *StreamSession) Start(ctx context.Context, notif *media.NewSegmentNotif
 			// send can race the uploader's channel close. s3Close then flushes
 			// the final object on the uploader's own (still-live) context.
 			err := ss.g.Wait()
-			ss.s3Close(ctx)
-			return err
-		case <-timer.C:
-			log.Log(ctx, "stream session timeout, shutting down", "timeout", ss.cli.StreamSessionTimeout)
-			spmetrics.StreamSessions.WithLabelValues(notif.Segment.RepoDID).Dec()
+			// Pending playback work can publish after cancellation. Expire
+			// its caches only after it can no longer refill them.
 			for _, r := range allRenditions {
 				ss.bus.EndSession(ctx, spseg.Creator, r.Name)
 			}
 			ss.bus.EndSession(ctx, spseg.Creator, media.PlaybackSourceRendition)
 			ss.bus.EndSession(ctx, spseg.Creator, media.WebRTCSourceRendition)
 			ss.bus.EndSession(ctx, spseg.Creator, media.RTMPSourceRendition)
+			ss.s3Close(ctx)
+			return err
+		case <-timer.C:
+			log.Log(ctx, "stream session timeout, shutting down", "timeout", ss.cli.StreamSessionTimeout)
+			spmetrics.StreamSessions.WithLabelValues(notif.Segment.RepoDID).Dec()
 			// Signal background workers to stop
 			if notif.Local {
 				ss.Go(ctx, func() error {

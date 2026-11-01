@@ -86,12 +86,35 @@ func TestStreamSessionIdleTimeout(t *testing.T) {
 				}
 				require.NoError(t, <-done)
 				require.ErrorIs(t, ss.ctx.Err(), context.Canceled)
-				if !cancelSession {
-					require.False(t, b.HasSegments(notif.Segment.RepoDID, media.PlaybackSourceRendition), "idle session must expire source playback too")
-				}
+				require.False(t, b.HasSegments(notif.Segment.RepoDID, media.PlaybackSourceRendition), "ended session must expire source playback too")
 			})
 		})
 	}
+}
+
+func TestStreamSessionIdleTimeoutDrainsPlaybackBeforeExpiring(t *testing.T) {
+	b := bus.NewBus()
+	synctest.Test(t, func(t *testing.T) {
+		ss, notif := idleStreamSession(b)
+		ctx := context.Background()
+		done := make(chan error, 1)
+		go func() { done <- ss.Start(ctx, notif) }()
+		<-ss.started
+		ss.Go(ctx, func() error {
+			// A pending packetizer can finish after the idle deadline. Its
+			// publication must drain before the session's caches are cleared.
+			<-ss.ctx.Done()
+			return ss.AddToWebRTC(ctx, &placestream.Segment{
+				Creator: notif.Segment.RepoDID,
+				Video:   []placestream.Segment_Video{{Codec: "av1"}},
+			}, "source", &bus.Seg{Published: true}, nil)
+		})
+		time.Sleep(time.Minute)
+		require.NoError(t, <-done)
+		for _, rendition := range []string{"source", media.PlaybackSourceRendition} {
+			require.False(t, b.HasSegments(notif.Segment.RepoDID, rendition), "idle teardown must clear %s after its pending publisher exits", rendition)
+		}
+	})
 }
 
 func BenchmarkStreamSessionActivity(b *testing.B) {
