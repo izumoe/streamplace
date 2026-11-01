@@ -36,7 +36,7 @@ type rtmpFixture struct {
 	audioFrames []*RTMPAACData
 }
 
-func rtmpAVConfig(t *testing.T, data []byte, sampleEntry, config mp4.BoxType) mp4.IBox {
+func rtmpAVConfig(t testing.TB, data []byte, sampleEntry, config mp4.BoxType) mp4.IBox {
 	t.Helper()
 	boxes, err := mp4.ExtractBoxWithPayload(bytes.NewReader(data), nil, mp4.BoxPath{
 		mp4.BoxTypeMoov(), mp4.BoxTypeTrak(), mp4.BoxTypeMdia(), mp4.BoxTypeMinf(),
@@ -49,7 +49,7 @@ func rtmpAVConfig(t *testing.T, data []byte, sampleEntry, config mp4.BoxType) mp
 
 // Extract encoded samples through muxl's existing per-sample tables. No decoder
 // or re-encoder sits between the fixture and the ingest boundary under test.
-func readRTMPFixture(t *testing.T, name string) rtmpFixture {
+func readRTMPFixture(t testing.TB, name string) rtmpFixture {
 	t.Helper()
 	fixture, err := os.ReadFile(getFixture(name))
 	require.NoError(t, err)
@@ -551,6 +551,143 @@ func TestRTMPPacketsBoundHeaderAccumulation(t *testing.T) {
 			// source. Repeated headers must not bypass the reader's AU bounds.
 			err := feedRTMPPackets(t.Context(), session, nil)
 			require.ErrorContains(t, err, "H264 pending headers exceed")
+		})
+	}
+}
+
+func TestRTMPAV1SegmentsDecodeIndependently(t *testing.T) {
+	gstinit.InitGST()
+	fixture := readRTMPFixture(t, "av1-aac-frag.mp4")
+	session := rtmpSessionForFixtures(t, fixture, fixture)
+	close(session.EventChan)
+	mm := &MediaManager{cli: &config.CLI{}, bus: bus.NewBus()}
+	var segments [][]byte
+	require.NoError(t, mm.rtmpIngestSession(t.Context(), session, func(_ context.Context, segment []byte) error {
+		segments = append(segments, segment)
+		return nil
+	}))
+	require.Greater(t, len(segments), 1, "test must include a later GoP")
+	for i, segment := range segments {
+		t.Run(strconv.Itoa(i), func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			var presentation, image bytes.Buffer
+			require.NoError(t, muxl.RunMuxlWrap(ctx, bytes.NewReader(segment), "flat", &presentation))
+			require.NoError(t, Thumbnail(ctx, bytes.NewReader(presentation.Bytes()), &image, "jpeg"), "each AV1 GoP must initialize a fresh decoder")
+			checkThumbnailImage(t, image.Bytes(), "jpeg", 160, 120, false)
+		})
+	}
+}
+
+func TestRTMPAV1SequenceHeaders(t *testing.T) {
+	fixture := readRTMPFixture(t, "av1-aac-frag.mp4")
+	for _, tc := range []struct {
+		name                                  string
+		unit                                  []byte
+		first, reduced, wantHeader, wantError bool
+	}{
+		{name: "key frame", unit: []byte{0x30, 0x10}, wantHeader: true},
+		{name: "separate frame header", unit: []byte{0x18, 0x10}, wantHeader: true},
+		{name: "inter frame", unit: []byte{0x30, 0x20}},
+		{name: "intra-only frame", unit: []byte{0x30, 0x40}},
+		{name: "switch frame", unit: []byte{0x30, 0x60}},
+		{name: "existing frame", unit: []byte{0x30, 0x80}},
+		{name: "initial frame", unit: []byte{0x30, 0x20}, first: true, wantHeader: true},
+		{name: "reduced header", unit: []byte{0x30, 0x20}, reduced: true, wantHeader: true},
+		{name: "sized frame", unit: []byte{0x32, 1, 0x10}, wantHeader: true},
+		{name: "empty frame", unit: []byte{0x30}, wantError: true},
+		{name: "bad size", unit: []byte{0x32, 2, 0x10}, wantError: true},
+		{name: "truncated size", unit: []byte{0x32, 0x80}, wantError: true},
+		{name: "bad OBU header", unit: []byte{0xb0, 0x10}, wantError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			config, err := newRTMPAV1Config(fixture.video.AV1Config)
+			require.NoError(t, err)
+			config.reducedStillPictureHeader = tc.reduced
+			encoded, err := config.marshal([][]byte{tc.unit}, tc.first)
+			if tc.wantError {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			var got av1.Bitstream
+			require.NoError(t, got.Unmarshal(encoded))
+			require.Equal(t, tc.wantHeader, av1.IsRandomAccess2(got))
+			// Framing sizes may normalize, but the encoded frame payload does not.
+			require.Equal(t, []byte{0x30, tc.unit[len(tc.unit)-1]}, append([]byte{0x30}, got[len(got)-1][1:]...))
+		})
+	}
+	t.Run("existing sequence header", func(t *testing.T) {
+		config, err := newRTMPAV1Config(fixture.video.AV1Config)
+		require.NoError(t, err)
+		units := append(av1.Bitstream(nil), config.headers...)
+		units = append(units, []byte{0x30, 0x10})
+		want, err := units.Marshal()
+		require.NoError(t, err)
+		got, err := config.marshal(units, true)
+		require.NoError(t, err)
+		require.Equal(t, want, got, "do not duplicate in-band sequence headers")
+	})
+}
+
+func TestRTMPAV1ConfigurationErrors(t *testing.T) {
+	fixture := readRTMPFixture(t, "av1-aac-frag.mp4")
+	for _, data := range [][]byte{nil, fixture.video.AV1Config[:2]} {
+		_, err := newRTMPAV1Config(data)
+		require.Error(t, err)
+	}
+	config, err := newRTMPAV1Config(fixture.video.AV1Config)
+	require.NoError(t, err)
+	_, err = config.marshal([][]byte{{0x08}}, false)
+	require.Error(t, err, "truncated in-band sequence header must fail")
+}
+
+func TestRTMPAV1UpdatedSequenceHeader(t *testing.T) {
+	fixture := readRTMPFixture(t, "av1-aac-frag.mp4")
+	config, err := newRTMPAV1Config(fixture.video.AV1Config)
+	require.NoError(t, err)
+	updated := bytes.Clone(config.headers[0])
+	updated[1] ^= 0x10 // still_picture changes without changing the header layout.
+	expected := bytes.Clone(updated)
+	_, err = config.marshal([][]byte{updated, {0x30, 0x10}}, false)
+	require.NoError(t, err)
+	updated[1] ^= 0x10
+	encoded, err := config.marshal([][]byte{{0x30, 0x10}}, false)
+	require.NoError(t, err)
+	var units av1.Bitstream
+	require.NoError(t, units.Unmarshal(encoded))
+	require.Equal(t, expected, units[0], "future GoPs use the updated header, independent of caller buffer reuse")
+}
+
+func BenchmarkRTMPAV1Packets(b *testing.B) {
+	fixture := readRTMPFixture(b, "av1-aac-frag.mp4")
+	require.Greater(b, len(fixture.frames), 1)
+	for _, tc := range []struct {
+		name  string
+		units [][]byte
+	}{
+		{"key", fixture.frames[0].AU},
+		{"delta", fixture.frames[1].AU},
+	} {
+		b.Run(tc.name, func(b *testing.B) {
+			b.Run("marshal", func(b *testing.B) {
+				b.ReportAllocs()
+				for b.Loop() {
+					if _, err := av1.Bitstream(tc.units).Marshal(); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+			b.Run("configured", func(b *testing.B) {
+				config, err := newRTMPAV1Config(fixture.video.AV1Config)
+				require.NoError(b, err)
+				b.ReportAllocs()
+				for b.Loop() {
+					if _, err := config.marshal(tc.units, false); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
 		})
 	}
 }

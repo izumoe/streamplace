@@ -193,8 +193,92 @@ func runRTMPDirectPipeline(ctx context.Context, pipeline gst.Pipeline, session *
 	return err
 }
 
+// AV1 sync samples need their sequence header in-band, even when it is also
+// present in av1C. Cache the configuration so later GoPs can start a decoder
+// without changing the encoded frame payload or parsing configuration per frame.
+type rtmpAV1Config struct {
+	headers                   av1.Bitstream
+	reducedStillPictureHeader bool
+}
+
+func newRTMPAV1Config(description []byte) (*rtmpAV1Config, error) {
+	var config mp4.Av1C
+	if _, err := mp4.Unmarshal(bytes.NewReader(description), uint64(len(description)), &config, mp4.Context{}); err != nil {
+		return nil, err
+	}
+	var headers av1.Bitstream
+	if err := headers.Unmarshal(config.ConfigOBUs); err != nil {
+		return nil, err
+	}
+	if len(headers) == 0 || av1.OBUType(headers[0][0]>>3) != av1.OBUTypeSequenceHeader {
+		return nil, fmt.Errorf("AV1 configuration has no sequence header")
+	}
+	var sequence av1.SequenceHeader
+	if err := sequence.Unmarshal(headers[0]); err != nil {
+		return nil, err
+	}
+	return &rtmpAV1Config{headers: headers, reducedStillPictureHeader: sequence.ReducedStillPictureHeader}, nil
+}
+
+func (config *rtmpAV1Config) marshal(units [][]byte, first bool) ([]byte, error) {
+	hasHeader, keyframe := false, false
+	for _, unit := range units {
+		var header av1.OBUHeader
+		if err := header.Unmarshal(unit); err != nil {
+			return nil, err
+		}
+		switch header.Type {
+		case av1.OBUTypeSequenceHeader:
+			hasHeader = true
+			if !bytes.Equal(config.headers[0], unit) {
+				var sequence av1.SequenceHeader
+				if err := sequence.Unmarshal(unit); err != nil {
+					return nil, err
+				}
+				config.headers[0] = bytes.Clone(unit)
+				config.reducedStillPictureHeader = sequence.ReducedStillPictureHeader
+			}
+		case 3, 6: // OBU_FRAME_HEADER, OBU_FRAME.
+			payload := unit[1:]
+			if header.HasSize {
+				var size av1.LEB128
+				n, err := size.Unmarshal(payload)
+				if err != nil {
+					return nil, err
+				}
+				payload = payload[n:]
+				if uint64(len(payload)) != uint64(size) {
+					return nil, fmt.Errorf("invalid AV1 frame size")
+				}
+			}
+			if len(payload) == 0 {
+				return nil, fmt.Errorf("empty AV1 frame header")
+			}
+			// In an ordinary frame header, show_existing_frame is followed by the
+			// two-bit frame_type. Reduced still-picture headers imply a key frame.
+			keyframe = keyframe || config.reducedStillPictureHeader || payload[0]&0xe0 == 0
+		}
+	}
+	if !hasHeader && (first || keyframe) {
+		prefixed := make(av1.Bitstream, 0, len(config.headers)+len(units))
+		prefixed = append(prefixed, config.headers...)
+		units = append(prefixed, units...)
+	}
+	return av1.Bitstream(units).Marshal()
+}
+
 func feedRTMPPackets(ctx context.Context, session *RTMPSession, sources []app.AppSrc) error {
 	started := make([]bool, len(session.VideoTracks))
+	av1Configs := make([]*rtmpAV1Config, len(session.VideoTracks))
+	for id, track := range session.VideoTracks {
+		if _, ok := track.Track.Codec.(*codecs.AV1); ok {
+			config, err := newRTMPAV1Config(track.AV1Config)
+			if err != nil {
+				return fmt.Errorf("AV1 track %d configuration: %w", id, err)
+			}
+			av1Configs[id] = config
+		}
+	}
 	pending := make([][][]byte, len(session.VideoTracks))
 	for {
 		var source app.AppSrc
@@ -255,16 +339,9 @@ func feedRTMPPackets(ctx context.Context, session *RTMPSession, sources []app.Ap
 					}
 				case *codecs.AV1:
 					var err error
-					data, err = av1.Bitstream(units).Marshal()
+					data, err = av1Configs[packet.TrackID].marshal(units, !started[packet.TrackID])
 					if err != nil {
 						return fmt.Errorf("AV1 temporal unit: %w", err)
-					}
-					if !started[packet.TrackID] {
-						var config mp4.Av1C
-						if _, err := mp4.Unmarshal(bytes.NewReader(track.AV1Config), uint64(len(track.AV1Config)), &config, mp4.Context{}); err != nil {
-							return err
-						}
-						data = append(append([]byte(nil), config.ConfigOBUs...), data...)
 					}
 				}
 				started[packet.TrackID] = true
