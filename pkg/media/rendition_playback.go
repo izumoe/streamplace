@@ -26,12 +26,7 @@ type sourceAudio struct {
 
 // rememberSourceAudio keeps a replicated source segment's Opus track, keyed
 // by its video track's first decode time, for PublishRenditionsForPlayback.
-func (mm *MediaManager) rememberSourceAudio(ctx context.Context, did string, seg []byte) {
-	events, err := unwrapMuxlEvents(ctx, seg)
-	if err != nil {
-		log.Debug(ctx, "rendition playback: could not read source segment", "streamer", did, "error", err)
-		return
-	}
+func (mm *MediaManager) rememberSourceAudio(did string, events []*muxl.MuxlEvent) {
 	cat, tracks := catalogAndTracks(events)
 	if cat == nil || cat.Video == nil || cat.Audio == nil || tracks == nil {
 		return

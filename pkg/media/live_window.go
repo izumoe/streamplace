@@ -10,6 +10,7 @@ import (
 
 	"stream.place/streamplace/pkg/livehls"
 	"stream.place/streamplace/pkg/log"
+	"stream.place/streamplace/pkg/muxl"
 )
 
 // liveWindowSize is how many recent segments per track the in-memory live-HLS
@@ -119,6 +120,10 @@ func (mm *MediaManager) feedLiveWindow(ctx context.Context, did string, segment 
 		log.Error(ctx, "live-hls: window feed failed", "streamer", did, "error", err)
 		return
 	}
+	mm.feedLiveWindowEvents(ctx, did, events, start, published)
+}
+
+func (mm *MediaManager) feedLiveWindowEvents(ctx context.Context, did string, events []*muxl.MuxlEvent, start time.Time, published bool) {
 	// Segments are fed from concurrent goroutines, so the window's state
 	// change and the choice of writer happen under one lock: a preview
 	// segment that picked its writer after the stream went public would

@@ -293,11 +293,17 @@ func (mm *MediaManager) distributeSegment(ctx context.Context, vs *validatedSegm
 	// serve its live HLS. WithoutCancel keeps the feed alive past this request.
 	// Pre-live segments are folded in too; the handlers gate them on a
 	// playback token (see feedLiveWindow).
-	go mm.feedLiveWindow(context.WithoutCancel(ctx), vs.repoDID, seg, meta.StartTime.Time(), meta.Published)
-	if !vs.local {
+	feedCtx := context.WithoutCancel(ctx)
+	if vs.local {
+		go mm.feedLiveWindow(feedCtx, vs.repoDID, seg, meta.StartTime.Time(), meta.Published)
+	} else if events, err := unwrapMuxlEvents(feedCtx, seg); err != nil {
+		log.Error(ctx, "live-hls: window feed failed", "streamer", vs.repoDID, "error", err)
+	} else {
 		// A replicated stream's renditions arrive separately; keep this
-		// segment's audio to pair them with (see PublishRenditionsForPlayback).
-		mm.rememberSourceAudio(ctx, vs.repoDID, seg)
+		// segment's audio before notifying subscribers, sharing the parsed
+		// segment with the asynchronous HLS feed.
+		mm.rememberSourceAudio(vs.repoDID, events)
+		go mm.feedLiveWindowEvents(feedCtx, vs.repoDID, events, meta.StartTime.Time(), meta.Published)
 	}
 
 	// Segments are no longer written to disk, but a Segment DB row is still kept
