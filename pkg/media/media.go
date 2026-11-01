@@ -166,7 +166,34 @@ func MakeMediaManager(ctx context.Context, cli *config.CLI, signer crypto.Signer
 		func(streamer string) { mm.IncrementViewerCount(streamer, "hls") },
 		func(streamer string) { mm.DecrementViewerCount(streamer, "hls") },
 	)
+	go mm.runCacheExpiry(ctx)
 	return mm, nil
+}
+
+// runCacheExpiry releases expired media even when ingest and playback reads stop.
+func (mm *MediaManager) runCacheExpiry(ctx context.Context) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			mm.segBuffersMut.Lock()
+			mm.evictSegmentBuffersLocked(now)
+			mm.segBuffersMut.Unlock()
+
+			mm.liveWindowsMut.Lock()
+			dids := make([]string, 0, len(mm.liveWindows))
+			for did := range mm.liveWindows {
+				dids = append(dids, did)
+			}
+			mm.liveWindowsMut.Unlock()
+			for _, did := range dids {
+				mm.GetLiveWindow(did)
+			}
+		}
+	}
 }
 
 func (mm *MediaManager) HandleData(node *irohStreamplace.PublicKey, data []byte) {

@@ -39,9 +39,9 @@ type segmentBuffer struct {
 // bufferSegment appends a canonical segment to the stream's buffer. Called
 // for every validated segment — published or not, local or replicated — so
 // whatever this node has seen of a stream recently can be clipped. The bytes
-// are copied since the caller reuses its buffer. Every buffer is evicted
-// here, so a stream that ended is freed once its segments age out even if
-// nothing reads its buffer again.
+// are copied since the caller reuses its buffer. Expired buffers are evicted
+// here and by the node cache cleaner, so ending the last stream does not
+// keep its bytes alive indefinitely.
 func (mm *MediaManager) bufferSegment(did string, start time.Time, published, local bool, segment []byte) {
 	now := time.Now()
 	mm.segBuffersMut.Lock()
@@ -54,10 +54,14 @@ func (mm *MediaManager) bufferSegment(did string, start time.Time, published, lo
 		Data:      append([]byte(nil), segment...),
 		addedAt:   now,
 	})
-	for other, ob := range mm.segBuffers {
-		ob.evict(now)
-		if len(ob.segs) == 0 {
-			delete(mm.segBuffers, other)
+	mm.evictSegmentBuffersLocked(now)
+}
+
+func (mm *MediaManager) evictSegmentBuffersLocked(now time.Time) {
+	for did, buffer := range mm.segBuffers {
+		buffer.evict(now)
+		if len(buffer.segs) == 0 {
+			delete(mm.segBuffers, did)
 		}
 	}
 }
