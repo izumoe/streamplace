@@ -75,7 +75,9 @@ func (mm *MediaManager) rememberSourceAudio(did string, events []*muxl.MuxlEvent
 		list = append(list, sourceAudio{tfdt: tfdt, timescale: video.Timescale(), needsH264: !compatible, opus: tracks[opusID]})
 	}
 	if len(list) > sourceAudioKeep {
-		list = list[len(list)-sourceAudioKeep:]
+		drop := len(list) - sourceAudioKeep
+		clear(list[:drop])
+		list = list[drop:]
 	}
 	mm.sourceAudios[did] = list
 }

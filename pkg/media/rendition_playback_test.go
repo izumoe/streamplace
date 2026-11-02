@@ -2,14 +2,63 @@ package media
 
 import (
 	"context"
+	"runtime"
+	"strconv"
 	"testing"
 	"time"
+	"weak"
 
 	"github.com/stretchr/testify/require"
 	"stream.place/streamplace/pkg/bus"
 	"stream.place/streamplace/pkg/config"
 	"stream.place/streamplace/pkg/crypto/signers"
 )
+
+func TestSourceAudioReleasesEvictedPayloads(t *testing.T) {
+	ctx := t.Context()
+	source := sourceSegmentForTest(t)
+	mm := &MediaManager{}
+	const did = "did:test:audio-cache"
+	var keys []uint64
+	var timescale uint32
+	released := func() weak.Pointer[byte] {
+		var ref weak.Pointer[byte]
+		for i := range sourceAudioKeep + 1 {
+			events, err := unwrapMuxlEvents(ctx, source)
+			require.NoError(t, err)
+			catalog, tracks := catalogAndTracks(events)
+			require.NotNil(t, catalog)
+			video, ok := primaryVideoTrack(catalog, 0, "")
+			require.True(t, ok)
+			timescale = video.Timescale()
+			require.Positive(t, timescale)
+			track := tracks[strconv.FormatUint(uint64(video.TrackID()), 10)]
+			shiftTfdt(track, int64(i)*int64(timescale))
+			key, ok := firstTfdt(track)
+			require.True(t, ok)
+			keys = append(keys, key)
+			mm.rememberSourceAudio(did, events)
+			if i == 0 {
+				payload := mm.sourceAudios[did][0].opus
+				require.NotEmpty(t, payload)
+				ref = weak.Make(&payload[0])
+			}
+		}
+		return ref
+	}()
+	_, found := mm.sourceAudioAt(did, keys[0], timescale)
+	require.False(t, found)
+	for _, key := range keys[1:] {
+		entry, found := mm.sourceAudioAt(did, key, timescale)
+		require.True(t, found)
+		require.NotEmpty(t, entry.opus)
+	}
+	runtime.GC()
+	runtime.GC()
+	collected := released.Value() == nil
+	runtime.KeepAlive(mm)
+	require.True(t, collected, "evicted audio must be collectible while the pairing cache remains alive")
+}
 
 // A node that receives a stream's rendition addendum (a syndicating node)
 // packetizes each rendition with the source segment's Opus audio and

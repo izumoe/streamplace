@@ -48,6 +48,31 @@ func TestPublishSegmentDropsForStalledSubscriber(t *testing.T) {
 	require.Len(t, sub.C, chanSize)
 }
 
+func TestPublishSegmentReleasesEvictedSegments(t *testing.T) {
+	b := NewBus()
+	ctx := t.Context()
+	released := func() weak.Pointer[Seg] {
+		first := &Seg{Data: make([]byte, 32*1024)}
+		ref := weak.Make(first)
+		b.PublishSegment(ctx, "u", "source", first)
+		for i := range bufSize {
+			b.PublishSegment(ctx, "u", "source", &Seg{Filepath: fmt.Sprint(i)})
+		}
+		return ref
+	}()
+	sub := b.SubscribeSegmentBuf(ctx, "u", "source", bufSize)
+	defer b.UnsubscribeSegment(ctx, "u", "source", sub)
+	require.Len(t, sub.C, bufSize)
+	for i := range bufSize {
+		require.Equal(t, fmt.Sprint(i), (<-sub.C).Filepath)
+	}
+	runtime.GC()
+	runtime.GC()
+	collected := released.Value() == nil
+	runtime.KeepAlive(b)
+	require.True(t, collected, "evicted payloads must be collectible while the replay cache remains alive")
+}
+
 func TestUnsubscribeSegmentReleasesQueuedSegments(t *testing.T) {
 	for _, tt := range []struct{ viewers, removed int }{{1, 0}, {3, 0}, {3, 1}, {3, 2}} {
 		t.Run(fmt.Sprintf("%d/%d", tt.viewers, tt.removed), func(t *testing.T) {

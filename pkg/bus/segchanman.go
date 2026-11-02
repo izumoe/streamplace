@@ -145,6 +145,7 @@ func (b *Bus) PublishSegment(ctx context.Context, user string, rendition string,
 	}
 	curBuf = append(curBuf, seg)
 	if len(curBuf) > bufSize {
+		curBuf[0] = nil
 		curBuf = curBuf[1:]
 	}
 	b.segBuf[key] = curBuf
