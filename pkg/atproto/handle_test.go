@@ -74,7 +74,7 @@ func TestHandleChange(t *testing.T) {
 
 	var message placestream.ChatDefs_MessageView
 	err = untilNoErrors(t, func() error {
-		messages, err := mod.MostRecentChatMessages(user.DID, time.Time{})
+		messages, err := mod.MostRecentChatMessages(ctx, user.DID, time.Time{})
 		if err != nil {
 			return err
 		}
@@ -94,7 +94,7 @@ func TestHandleChange(t *testing.T) {
 	require.NoError(t, err)
 
 	err = untilNoErrors(t, func() error {
-		messages, err := mod.MostRecentChatMessages(user.DID, time.Time{})
+		messages, err := mod.MostRecentChatMessages(ctx, user.DID, time.Time{})
 		if err != nil {
 			return err
 		}

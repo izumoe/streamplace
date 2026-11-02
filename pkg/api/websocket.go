@@ -16,7 +16,6 @@ import (
 	"github.com/julienschmidt/httprouter"
 	"stream.place/streamplace/pkg/appbsky"
 
-	"stream.place/streamplace/pkg/access"
 	apierrors "stream.place/streamplace/pkg/errors"
 	"stream.place/streamplace/pkg/log"
 	"stream.place/streamplace/pkg/placestream"
@@ -117,12 +116,12 @@ func (a *StreamplaceAPI) HandleWebsocket(ctx context.Context) httprouter.Handle 
 		// The rendition list last sent to this viewer, as its joined names.
 		var sentRenditions atomic.Value
 		sentRenditions.Store("")
+		ch := a.Bus.SubscribeWithBacklogLimit(repoDID, func() {
+			conn.Close()
+			cancel()
+		})
+		releaseChatRefresh := a.subscribeChatRefresh(ctx, repoDID)
 		go func() {
-
-			ch := a.Bus.SubscribeWithBacklogLimit(repoDID, func() {
-				conn.Close()
-				cancel()
-			})
 			defer a.Bus.Unsubscribe(repoDID, ch)
 			// The ingest problems last sent to this viewer. Nothing matches
 			// this to begin with, so the first tick always sends the current
@@ -135,11 +134,10 @@ func (a *StreamplaceAPI) HandleWebsocket(ctx context.Context) httprouter.Handle 
 			defer ticker.Stop()
 			defer pingTicker.Stop()
 
-			policyChanges := a.Bus.SubscribeWithBacklogLimit(access.Topic, func() { conn.Close(); cancel() })
-			defer a.Bus.Unsubscribe(access.Topic, policyChanges)
+			defer releaseChatRefresh()
 
 			send := func(msg any) {
-				msg = a.filterChatDelivery(ctx, repoDID, msg)
+				msg = a.filterChatDelivery(msg)
 				if msg == nil {
 					return
 				}
@@ -188,22 +186,14 @@ func (a *StreamplaceAPI) HandleWebsocket(ctx context.Context) httprouter.Handle 
 			for {
 				select {
 				case msg := <-ch:
-					send(msg)
-				case msg := <-initialBurst:
-					send(msg)
-				case event := <-policyChanges:
-					change, ok := event.(access.Change)
-					if !ok || !change.ChatChanged {
-						continue
-					}
-					snapshot, err := a.chatRefresh(ctx, repoDID, change.Revision)
-					if err != nil {
-						log.Error(ctx, "could not refresh chat policy", "error", err)
+					if _, failed := msg.(chatRefreshFailed); failed {
 						conn.Close()
 						cancel()
 						return
 					}
-					send(snapshot)
+					send(msg)
+				case msg := <-initialBurst:
+					send(msg)
 				case <-ticker.C:
 					// The renditions a viewer can pick are whatever this
 					// node's live window holds now: they appear a little

@@ -87,6 +87,9 @@ type StreamplaceAPI struct {
 	ATSync   *atproto.ATProtoSynchronizer
 	Director *director.Director
 
+	chatRefreshMu sync.Mutex
+	chatRefreshes map[string]*chatRefreshWorker
+
 	connTracker *WebsocketTracker
 
 	limiters      map[string]*rate.Limiter

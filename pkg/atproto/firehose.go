@@ -640,7 +640,7 @@ func (atsync *ATProtoSynchronizer) handleIndexedOps(ctx context.Context, evt *in
 			}
 
 			if collection.String() == constants.PLACE_STREAM_CHAT_MESSAGE {
-				msg, err := atsync.Model.GetChatMessage(uri)
+				msg, err := atsync.Model.GetChatMessage(ctx, uri)
 				if err != nil {
 					log.Error(ctx, "failed to get chat message", "err", err)
 					continue

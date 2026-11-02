@@ -82,7 +82,7 @@ func (s *Server) handleComAtprotoModerationCreateReport(ctx context.Context, bod
 		// if it's chat, we want the clip from the streamer, not from the chatter
 		if aturi.Collection() == "place.stream.chat.message" {
 			did = ""
-			msg, err := s.model.GetChatMessage(body.Subject.RepoStrongRef.Uri)
+			msg, err := s.model.GetChatMessage(ctx, body.Subject.RepoStrongRef.Uri)
 			if err != nil {
 				log.Error(ctx, "failed to get chat message for chat report", "error", err)
 			} else if msg != nil && msg.CID == body.Subject.RepoStrongRef.Cid && msg.StreamerRepoDID != "" {

@@ -231,7 +231,7 @@ func (atsync *ATProtoSynchronizer) handleCreateUpdate(ctx context.Context, userD
 		if aqt, err := aqtime.FromString(rec.CreatedAt); err != nil || time.Since(aqt.Time()) > chatLiveWindow {
 			return nil
 		}
-		mcm, err = atsync.Model.GetChatMessage(aturi.String())
+		mcm, err = atsync.Model.GetChatMessage(ctx, aturi.String())
 		if err != nil {
 			log.Error(ctx, "failed to get just-saved chat message", "err", err)
 			return nil
@@ -378,7 +378,7 @@ func (atsync *ATProtoSynchronizer) handleCreateUpdate(ctx context.Context, userD
 			return fmt.Errorf("failed to convert pinned record: %w", err)
 		}
 		// look up the original message, pinner
-		msg, err := atsync.Model.GetChatMessage(pinnedView.Record.PinnedMessage)
+		msg, err := atsync.Model.GetChatMessage(ctx, pinnedView.Record.PinnedMessage)
 		if err != nil {
 			return fmt.Errorf("failed to get chat message: %w", err)
 		}

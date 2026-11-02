@@ -56,7 +56,7 @@ func TestNodeChatRestrictionIndexesWithoutSyncOrLiveReplay(t *testing.T) {
 			if blocked {
 				require.NoError(t, mod.DeleteBlock(ctx, "channel-block"))
 			}
-			messages, err := mod.MostRecentChatMessages(streamer, time.Time{})
+			messages, err := mod.MostRecentChatMessages(ctx, streamer, time.Time{})
 			require.NoError(t, err)
 			require.Len(t, messages, 1, "retain original record so redelivery cannot become a new live message")
 			require.Nil(t, atsync.FilterChatMessage(ctx, streamer, &messages[0]))

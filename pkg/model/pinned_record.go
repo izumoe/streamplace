@@ -82,7 +82,7 @@ func (m *DBModel) DeleteAllPinnedRecords(ctx context.Context, streamerDID string
 func (m *DBModel) GetActivePinnedRecord(ctx context.Context, streamerDID string) (*PinnedRecord, error) {
 	var pin PinnedRecord
 	now := time.Now()
-	err := m.DB.Preload("Repo").
+	err := m.DB.WithContext(ctx).Preload("Repo").
 		Where("repo_did = ? AND (expires_at IS NULL OR expires_at > ?)", streamerDID, now).
 		Order("created_at DESC").
 		First(&pin).Error

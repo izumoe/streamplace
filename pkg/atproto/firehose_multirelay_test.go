@@ -84,7 +84,7 @@ func TestMultiRelayDedup(t *testing.T) {
 
 	// The message is indexed exactly once, even though two relays delivered it.
 	err = untilNoErrors(t, func() error {
-		messages, err := mod.MostRecentChatMessages(user.DID, time.Time{})
+		messages, err := mod.MostRecentChatMessages(ctx, user.DID, time.Time{})
 		if err != nil {
 			return err
 		}

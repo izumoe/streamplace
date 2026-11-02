@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"time"
 
+	"stream.place/streamplace/pkg/access"
 	"stream.place/streamplace/pkg/appbsky"
 	"stream.place/streamplace/pkg/atproto"
+	"stream.place/streamplace/pkg/log"
 	"stream.place/streamplace/pkg/placestream"
 )
 
@@ -24,7 +26,7 @@ func (a *StreamplaceAPI) chatRefresh(ctx context.Context, streamer string, revis
 	if a.CLI.ChatMessageRetention > 0 {
 		since = time.Now().Add(-a.CLI.ChatMessageRetention)
 	}
-	messages, err := a.Model.MostRecentChatMessages(streamer, since)
+	messages, err := a.Model.MostRecentChatMessages(ctx, streamer, since)
 	if err != nil {
 		return nil, fmt.Errorf("loading chat history: %w", err)
 	}
@@ -54,7 +56,7 @@ func (a *StreamplaceAPI) chatRefresh(ctx context.Context, streamer string, revis
 	if err != nil {
 		return nil, err
 	}
-	message, err := a.Model.GetChatMessage(view.Record.PinnedMessage)
+	message, err := a.Model.GetChatMessage(ctx, view.Record.PinnedMessage)
 	if err != nil {
 		return nil, err
 	}
@@ -91,7 +93,7 @@ func (a *StreamplaceAPI) chatRefresh(ctx context.Context, streamer string, revis
 }
 
 // Recheck queued deliveries against current policy, including initial hydration.
-func (a *StreamplaceAPI) filterChatDelivery(ctx context.Context, streamer string, message any) any {
+func (a *StreamplaceAPI) filterChatDelivery(message any) any {
 	switch msg := message.(type) {
 	case *chatRefresh:
 		if msg == nil {
@@ -100,12 +102,12 @@ func (a *StreamplaceAPI) filterChatDelivery(ctx context.Context, streamer string
 		filtered := *msg
 		filtered.Messages = make([]placestream.ChatDefs_MessageView, 0, len(msg.Messages))
 		for _, entry := range msg.Messages {
-			if view := a.ATSync.FilterChatMessage(ctx, streamer, &entry); view != nil {
+			if view := a.filterNodeChatMessage(&entry); view != nil {
 				filtered.Messages = append(filtered.Messages, *view)
 			}
 		}
 		filtered.PinnedComment = nil
-		if pin := a.filterChatDelivery(ctx, streamer, msg.PinnedComment); pin != nil {
+		if pin := a.filterChatDelivery(msg.PinnedComment); pin != nil {
 			filtered.PinnedComment = pin.(*placestream.ChatDefs_PinnedRecordView)
 		}
 		return &filtered
@@ -120,26 +122,26 @@ func (a *StreamplaceAPI) filterChatDelivery(ctx context.Context, streamer string
 		}
 		return msg
 	case placestream.ChatDefs_MessageView:
-		filtered := a.ATSync.FilterChatMessage(ctx, streamer, &msg)
+		filtered := a.filterNodeChatMessage(&msg)
 		if filtered == nil {
 			return nil
 		}
 		return filtered
 	case *placestream.ChatDefs_MessageView:
-		filtered := a.ATSync.FilterChatMessage(ctx, streamer, msg)
+		filtered := a.filterNodeChatMessage(msg)
 		if filtered == nil {
 			return nil
 		}
 		return filtered
 	case placestream.ChatDefs_PinnedRecordView:
-		return a.filterChatDelivery(ctx, streamer, &msg)
+		return a.filterChatDelivery(&msg)
 	case *placestream.ChatDefs_PinnedRecordView:
 		if msg == nil {
 			return nil
 		}
 		filtered := *msg
 		if msg.Message != nil {
-			filtered.Message = a.ATSync.FilterChatMessage(ctx, streamer, msg.Message)
+			filtered.Message = a.filterNodeChatMessage(msg.Message)
 			if filtered.Message == nil {
 				return nil
 			}
@@ -147,4 +149,111 @@ func (a *StreamplaceAPI) filterChatDelivery(ctx context.Context, streamer string
 		return &filtered
 	}
 	return message
+}
+
+// Shared preparation applies channel rules. Fanout only rechecks the current
+// in-memory node policy so the database work does not grow with viewer count.
+func (a *StreamplaceAPI) filterNodeChatMessage(message *placestream.ChatDefs_MessageView) *placestream.ChatDefs_MessageView {
+	if message == nil || !a.ATSync.NodeChatAllowed(message.Author.Did) {
+		return nil
+	}
+	if message.ReplyTo != nil && message.ReplyTo.ChatDefs_MessageView != nil {
+		reply := a.filterNodeChatMessage(message.ReplyTo.ChatDefs_MessageView)
+		if reply != message.ReplyTo.ChatDefs_MessageView {
+			filtered := *message
+			filtered.ReplyTo = nil
+			if reply != nil {
+				filtered.ReplyTo = &placestream.ChatDefs_MessageView_ReplyTo{ChatDefs_MessageView: reply}
+			}
+			return &filtered
+		}
+	}
+	return message
+}
+
+// A worker exists only while viewers are subscribed to its streamer.
+type chatRefreshWorker struct {
+	viewers  int
+	cancel   context.CancelFunc
+	done     chan struct{}
+	overflow chan struct{}
+}
+
+type chatRefreshFailed struct{}
+
+func (a *StreamplaceAPI) subscribeChatRefresh(ctx context.Context, streamer string) func() {
+	a.chatRefreshMu.Lock()
+	if a.chatRefreshes == nil {
+		a.chatRefreshes = map[string]*chatRefreshWorker{}
+	}
+	worker := a.chatRefreshes[streamer]
+	if worker != nil {
+		select {
+		case <-worker.overflow:
+			worker = nil
+		default:
+		}
+	}
+	if worker == nil {
+		workerCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+		worker = &chatRefreshWorker{cancel: cancel, done: make(chan struct{}), overflow: make(chan struct{})}
+		changes := a.Bus.SubscribeWithBacklogLimit(access.Topic, func() {
+			close(worker.overflow)
+			cancel()
+		})
+		a.chatRefreshes[streamer] = worker
+		go func() {
+			defer close(worker.done)
+			defer a.Bus.Unsubscribe(access.Topic, changes)
+			defer func() {
+				select {
+				case <-worker.overflow:
+					a.Bus.Publish(streamer, chatRefreshFailed{})
+				default:
+				}
+			}()
+			for {
+				select {
+				case <-workerCtx.Done():
+					return
+				case event := <-changes:
+					change, ok := event.(access.Change)
+					if !ok || !change.ChatChanged {
+						continue
+					}
+					snapshot, err := a.chatRefresh(workerCtx, streamer, change.Revision)
+					if workerCtx.Err() != nil {
+						return
+					}
+					if err != nil {
+						log.Error(workerCtx, "could not refresh chat policy", "error", err)
+						a.Bus.Publish(streamer, chatRefreshFailed{})
+						continue
+					}
+					a.chatRefreshMu.Lock()
+					if workerCtx.Err() == nil && a.chatRefreshes[streamer] == worker {
+						a.Bus.Publish(streamer, snapshot)
+					}
+					a.chatRefreshMu.Unlock()
+				}
+			}
+		}()
+	}
+	worker.viewers++
+	a.chatRefreshMu.Unlock()
+	return func() {
+		a.chatRefreshMu.Lock()
+		worker.viewers--
+		last := worker.viewers == 0
+		if last {
+			worker.cancel()
+			if a.chatRefreshes[streamer] == worker {
+				delete(a.chatRefreshes, streamer)
+			}
+		}
+		a.chatRefreshMu.Unlock()
+		if last {
+			<-worker.done
+		}
+	}
 }

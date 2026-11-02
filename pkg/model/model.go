@@ -93,8 +93,8 @@ type Model interface {
 	DeleteBlock(ctx context.Context, rkey string) error
 
 	CreateChatMessage(ctx context.Context, message *ChatMessage) error
-	MostRecentChatMessages(repoDID string, since time.Time) ([]placestream.ChatDefs_MessageView, error)
-	GetChatMessage(uri string) (*ChatMessage, error)
+	MostRecentChatMessages(ctx context.Context, repoDID string, since time.Time) ([]placestream.ChatDefs_MessageView, error)
+	GetChatMessage(ctx context.Context, uri string) (*ChatMessage, error)
 	DeleteChatMessage(ctx context.Context, uri string, deletedAt *time.Time) error
 
 	CreateGate(ctx context.Context, gate *Gate) error
