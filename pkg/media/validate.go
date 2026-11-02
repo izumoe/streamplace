@@ -16,6 +16,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/errgroup"
+	"stream.place/streamplace/pkg/access"
 	"stream.place/streamplace/pkg/aqtime"
 	"stream.place/streamplace/pkg/atproto"
 	"stream.place/streamplace/pkg/bus"
@@ -94,13 +95,14 @@ func (mm *MediaManager) validateMP4(ctx context.Context, input io.Reader, local 
 // later (and over the COMPLETED dual-codec bytes) when codec completion is
 // async — the metadata still comes from the source.
 type validatedSegment struct {
-	meta              *SegmentMetadata
-	mediaData         *localdb.SegmentMediaData
-	label             string
-	repoDID           string
-	signingKeyDID     string
-	local             bool
-	playbackPublished bool
+	meta                *SegmentMetadata
+	mediaData           *localdb.SegmentMediaData
+	label               string
+	repoDID             string
+	signingKeyDID       string
+	local               bool
+	playbackPublished   bool
+	publisherGeneration uint64
 }
 
 // Source and completed frames each pass the normal validation gates. They do
@@ -143,6 +145,9 @@ func (mm *MediaManager) consumeSourcePhase(ctx context.Context, segment []byte, 
 		log.Debug(ctx, "source has no compatible WebRTC packets", "error", err)
 	} else {
 		seg.PacketizedData = packet
+	}
+	if err := mm.CheckPublisherGeneration(vs.repoDID, vs.publisherGeneration); err != nil {
+		return nil, err
 	}
 	mm.bus.PublishSegment(ctx, vs.repoDID, PlaybackSourceRendition, seg)
 	if seg.PacketizedData != nil {
@@ -221,8 +226,23 @@ func (mm *MediaManager) validateSource(ctx context.Context, buf []byte, local bo
 		signingKeyDID = signingKey.DID
 	}
 
-	if err := mm.cli.StreamIsAllowed(repoDID); err != nil {
-		return nil, nil, fmt.Errorf("got valid segment, but user %s is not allowed: %w", repoDID, err)
+	var generation uint64
+	if local {
+		var err error
+		generation, err = mm.checkPublisherContext(ctx, repoDID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("got valid segment, but user %s is not allowed: %w", repoDID, err)
+		}
+	} else {
+		var allowed bool
+		if mm.Access != nil {
+			allowed = mm.Access.Check(repoDID, access.Syndicate).Allowed
+		} else {
+			allowed = mm.cli.ShouldSyndicate(repoDID)
+		}
+		if !allowed {
+			return nil, nil, fmt.Errorf("node does not syndicate %s", repoDID)
+		}
 	}
 
 	// Defense in depth: a banned streamer's ingest worker is torn down
@@ -248,12 +268,13 @@ func (mm *MediaManager) validateSource(ctx context.Context, buf []byte, local bo
 	}
 
 	return &validatedSegment{
-		meta:          meta,
-		mediaData:     valid.MediaData,
-		label:         label,
-		repoDID:       repoDID,
-		signingKeyDID: signingKeyDID,
-		local:         local,
+		meta:                meta,
+		mediaData:           valid.MediaData,
+		label:               label,
+		repoDID:             repoDID,
+		signingKeyDID:       signingKeyDID,
+		local:               local,
+		publisherGeneration: generation,
 	}, valid.Playable, nil
 }
 
@@ -282,6 +303,13 @@ func (mm *MediaManager) streamerIsBanned(repoDID string) (bool, error) {
 // source presentation, or nil when codec completion changed the segment.
 func (mm *MediaManager) distributeSegment(ctx context.Context, vs *validatedSegment, seg, playable []byte) error {
 	meta := vs.meta
+	if vs.local {
+		var err error
+		ctx, err = mm.PublisherContext(ctx, vs.repoDID, vs.publisherGeneration)
+		if err != nil {
+			return err
+		}
+	}
 
 	// Hold the canonical segment in the stream's in-memory buffer, the recent
 	// part of the stream that clips (and moderation reports) draw on.
@@ -354,14 +382,20 @@ func (mm *MediaManager) distributeSegment(ctx context.Context, vs *validatedSegm
 		}
 		playable = flat.Bytes()
 	}
+	if vs.local {
+		if err := mm.CheckPublisherGeneration(vs.repoDID, vs.publisherGeneration); err != nil {
+			return err
+		}
+	}
 
 	mm.notifySubscribers(ctx, &NewSegmentNotification{
-		Segment:           dbSeg,
-		Data:              playable,
-		Muxl:              seg,
-		Metadata:          meta,
-		Local:             vs.local,
-		PlaybackPublished: vs.playbackPublished,
+		Segment:             dbSeg,
+		Data:                playable,
+		Muxl:                seg,
+		Metadata:            meta,
+		Local:               vs.local,
+		PublisherGeneration: vs.publisherGeneration,
+		PlaybackPublished:   vs.playbackPublished,
 	})
 	aqt := aqtime.FromTime(meta.StartTime.Time())
 	log.Log(ctx, "successfully ingested segment", "user", vs.repoDID, "signingKey", vs.signingKeyDID, "timestamp", aqt.FileSafeString(), "segmentID", vs.label)

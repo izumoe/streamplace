@@ -346,9 +346,11 @@ func (swarm *IrohSwarm) handleOriginMessage(ctx context.Context, view *placestre
 
 func (swarm *IrohSwarm) checkOrigins(ctx context.Context, streamer string, nodeID string) error {
 	ctx = log.WithLogValues(ctx, "streamer", streamer, "nodeID", nodeID, "func", "checkOrigins")
-	err := swarm.cli.StreamIsAllowed(streamer)
-	if err != nil {
-		return fmt.Errorf("user %s is not allowlisted on this node: %w", streamer, err)
+	if nodeID == swarm.NodeID {
+		return nil
+	}
+	if !swarm.cli.ShouldSyndicate(streamer) {
+		return fmt.Errorf("node does not syndicate %s", streamer)
 	}
 	swarm.originMutex.Lock()
 	defer swarm.originMutex.Unlock()
@@ -372,11 +374,6 @@ func (swarm *IrohSwarm) checkOrigins(ctx context.Context, streamer string, nodeI
 			return err
 		}
 		delete(swarm.activeSubs, streamer)
-	}
-	if nodeID == swarm.NodeID {
-		log.Debug(ctx, "I already have this stream", "streamer", streamer)
-		// oh, i have this stream. cool. do nothing.
-		return nil
 	}
 	log.Log(ctx, "Subscribing to stream start", "new_node", nodeID, "streamer", streamer)
 	pubKey, err := iroh_streamplace.PublicKeyFromString(nodeID)

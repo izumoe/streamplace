@@ -3,6 +3,7 @@ package director
 import (
 	"context"
 
+	"stream.place/streamplace/pkg/access"
 	"stream.place/streamplace/pkg/log"
 	"stream.place/streamplace/pkg/media"
 	"stream.place/streamplace/pkg/s3"
@@ -15,7 +16,7 @@ const liveRecPrefix = "live-rec/"
 // shouldRecordLivestream reports whether this node should archive repoDID's
 // livestream into a VOD. Both conditions are required:
 //
-//   - The operator permits this account to stream via cli.StreamIsAllowed.
+//   - The operator permits VOD recording for this account.
 //   - The user has not turned recording off via the livestreamRecording server
 //     setting. Only an explicit `false` opts out.
 //
@@ -23,7 +24,13 @@ const liveRecPrefix = "live-rec/"
 // mid-stream settings change takes effect on the streamer's next session. On
 // any lookup error we fail closed (do not record).
 func (ss *StreamSession) shouldRecordLivestream(ctx context.Context, repoDID string) bool {
-	if ss.cli.StreamIsAllowed(repoDID) != nil {
+	var allowed bool
+	if ss.mm != nil && ss.mm.Access != nil {
+		allowed = ss.mm.Access.Check(repoDID, access.VOD).Allowed
+	} else {
+		allowed = ss.cli.CapabilityAllowed(repoDID, access.VOD)
+	}
+	if !allowed {
 		return false
 	}
 

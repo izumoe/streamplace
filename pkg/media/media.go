@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pion/webrtc/v4"
 	"go.opentelemetry.io/otel"
+	"stream.place/streamplace/pkg/access"
 	"stream.place/streamplace/pkg/aqtime"
 	"stream.place/streamplace/pkg/atproto"
 	"stream.place/streamplace/pkg/bus"
@@ -42,6 +43,7 @@ const SegmentsDir = "segments"
 const StreamplaceMetadata = "cawg.metadata"
 
 type MediaManager struct {
+	Access         access.Checker
 	cli            *config.CLI
 	liveWindows    map[string]*liveWindowState
 	liveWindowsMut sync.Mutex
@@ -122,9 +124,10 @@ type NewSegmentNotification struct {
 	// Muxl is the bare canonical .m4s: blindly concatenatable signed segments
 	// with no container header. Consumers synthesize whatever wrapper they
 	// need. The long-term wire format; Data retires once all consumers are MUXL.
-	Muxl     []byte
-	Metadata *SegmentMetadata
-	Local    bool
+	Muxl                []byte
+	Metadata            *SegmentMetadata
+	Local               bool
+	PublisherGeneration uint64
 	// PlaybackPublished means the worker's source phase owns playback, so codec
 	// completion must not publish the same GoP to viewers again.
 	PlaybackPublished bool

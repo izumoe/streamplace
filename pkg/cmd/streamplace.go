@@ -60,6 +60,7 @@ import (
 
 	_ "github.com/go-gst/go-glib/pkg/glib/v2"
 	_ "github.com/go-gst/go-gst/pkg/gst"
+	"stream.place/streamplace/pkg/accessctl"
 	"stream.place/streamplace/pkg/api"
 	"stream.place/streamplace/pkg/config"
 	"stream.place/streamplace/pkg/model"
@@ -258,7 +259,17 @@ func runMain(ctx context.Context, build *config.BuildFlags, platformJobs []jobFu
 	cli.ServiceAuthKey = serviceAuthKey
 
 	b := bus.NewBus()
+	bootstrap, err := cli.AccessBootstrap()
+	if err != nil {
+		return err
+	}
+	accessController, err := accessctl.New(ctx, bootstrap, state, b)
+	if err != nil {
+		return err
+	}
+	state.Access = accessController
 	atsync := &atproto.ATProtoSynchronizer{
+		Access:     accessController,
 		CLI:        cli,
 		Model:      mod,
 		StatefulDB: state,
@@ -269,6 +280,8 @@ func runMain(ctx context.Context, build *config.BuildFlags, platformJobs []jobFu
 	if err != nil {
 		return err
 	}
+	mm.Access = accessController
+	group.Go(func() error { return accessController.Run(ctx) })
 	// Every new playback session counts toward the streamer's running view
 	// total, filed under their current livestream record.
 	mm.SetViewRecorder(func(streamer string) {
@@ -558,6 +571,8 @@ func runMain(ctx context.Context, build *config.BuildFlags, platformJobs []jobFu
 	if err != nil {
 		return err
 	}
+
+	a.Access = accessController
 
 	ctx = log.WithLogValues(ctx, "version", build.Version)
 

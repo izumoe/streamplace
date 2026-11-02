@@ -51,7 +51,8 @@ func (h *manifestHolder) set(b []byte) {
 // receives the streamer key directly. This is the deliberately-temporary
 // approach; the detach/reattach work will revisit how a worker holds keys.
 type IngestWorkerConfig struct {
-	StreamerDID string `json:"streamer_did"`
+	StreamerDID         string  `json:"streamer_did"`
+	PublisherGeneration *uint64 `json:"publisher_generation,omitempty"`
 	// KeyPEM is the streamer's ES256K signing key in PEM. The Mist-pull/RTMP path
 	// always yields a software key, which is what muxl-sign wants here; it is
 	// forwarded verbatim, no reconstruction.

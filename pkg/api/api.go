@@ -32,6 +32,7 @@ import (
 	"github.com/streamplace/oatproxy/pkg/oatproxy"
 	"stream.place/streamplace/js/app"
 	web "stream.place/streamplace/js/web"
+	"stream.place/streamplace/pkg/accessctl"
 	"stream.place/streamplace/pkg/acme"
 	"stream.place/streamplace/pkg/atproto"
 	"stream.place/streamplace/pkg/blob"
@@ -62,6 +63,7 @@ import (
 )
 
 type StreamplaceAPI struct {
+	Access        *accessctl.Controller
 	CLI           *config.CLI
 	Model         model.Model
 	StatefulDB    *statedb.StatefulDB
@@ -177,6 +179,7 @@ func (a *StreamplaceAPI) Handler(ctx context.Context) (http.Handler, error) {
 		return nil, err
 	}
 	a.XRPCServer = xrpc.(*spxrpc.Server)
+	a.XRPCServer.SetAccessController(a.Access)
 	router := httprouter.New()
 
 	// Create our middleware factory with the default settings.

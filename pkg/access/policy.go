@@ -83,9 +83,8 @@ type Checker interface {
 
 // Change wakes local ingest and chat delivery after the effective policy changes.
 type Change struct {
-	Revision         uint64
-	RevokedStreamers []string
-	ChatChanged      bool
+	Revision    uint64
+	ChatChanged bool
 }
 
 type entryKey struct {
@@ -196,10 +195,10 @@ func (s *Snapshot) CheckAt(did string, capability Capability, now time.Time) Dec
 	if mode == Off {
 		return Decision{Reason: "capability disabled"}
 	}
+	if capability == Viewer && mode == Open {
+		return Decision{Allowed: true, Reason: "public viewing"}
+	}
 	if did == "" {
-		if capability == Viewer && mode == Open {
-			return Decision{Allowed: true, Reason: "public viewing"}
-		}
 		return Decision{Reason: "identity required"}
 	}
 	if _, err := syntax.ParseDID(did); err != nil {

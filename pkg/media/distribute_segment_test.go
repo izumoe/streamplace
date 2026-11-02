@@ -90,8 +90,8 @@ func TestDistributionFeedsHLSAfterRequestCancellation(t *testing.T) {
 			name = "local"
 		}
 		t.Run(name, func(t *testing.T) {
-			mm := NewOffline(&config.CLI{})
-			const did = "did:test:cancelled-distribution"
+			const did = "did:plc:cancelled-distribution"
+			mm := NewOffline(&config.CLI{AllowedStreams: []string{did}})
 			ctx, cancel := context.WithCancel(t.Context())
 			cancel()
 			require.NoError(t, mm.distributeSegment(ctx, &validatedSegment{

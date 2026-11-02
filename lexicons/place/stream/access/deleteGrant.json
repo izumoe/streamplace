@@ -1,0 +1,53 @@
+{
+  "lexicon": 1,
+  "id": "place.stream.access.deleteGrant",
+  "defs": {
+    "main": {
+      "type": "procedure",
+      "description": "Revoke one stored node-local entry by its exact ID. Does not remove another allowance or denial for the same DID. Requires node administrator authorization.",
+      "input": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": ["id"],
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          }
+        }
+      },
+      "output": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": ["success"],
+          "properties": {
+            "success": {
+              "type": "boolean"
+            }
+          }
+        }
+      },
+      "errors": [
+        {
+          "name": "Unauthorized"
+        },
+        {
+          "name": "Forbidden"
+        },
+        {
+          "name": "NotFound"
+        },
+        {
+          "name": "InvalidRequest"
+        },
+        {
+          "name": "Unavailable"
+        }
+      ]
+    }
+  }
+}

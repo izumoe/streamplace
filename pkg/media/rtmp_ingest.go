@@ -50,7 +50,10 @@ type RTMPSession struct {
 }
 
 func (mm *MediaManager) RTMPIngest(ctx context.Context, session *RTMPSession) error {
-	ctx = withIngestSession(ctx, mm.nextIngestSession())
+	ctx, err := mm.admitPublisher(ctx, session.MediaSigner.Streamer())
+	if err != nil {
+		return err
+	}
 	return mm.rtmpIngestSession(ctx, session, func(ctx context.Context, segment []byte) error {
 		return mm.receiveSignedSegment(ctx, session.MediaSigner.Streamer(), segment)
 	})

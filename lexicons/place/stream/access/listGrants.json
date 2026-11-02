@@ -1,0 +1,41 @@
+{
+  "lexicon": 1,
+  "id": "place.stream.access.listGrants",
+  "defs": {
+    "main": {
+      "type": "query",
+      "description": "List node-local capability entries, including immutable configuration entries. Requires node administrator authorization.",
+      "output": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": ["revision", "grants"],
+          "properties": {
+            "revision": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "grants": {
+              "type": "array",
+              "items": {
+                "type": "ref",
+                "ref": "place.stream.access.defs#grant"
+              }
+            }
+          }
+        }
+      },
+      "errors": [
+        {
+          "name": "Unauthorized"
+        },
+        {
+          "name": "Forbidden"
+        },
+        {
+          "name": "Unavailable"
+        }
+      ]
+    }
+  }
+}

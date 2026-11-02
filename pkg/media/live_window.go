@@ -134,6 +134,9 @@ func (mm *MediaManager) feedLiveWindowEvents(ctx context.Context, did string, ev
 	// in the window is the stream going back to preview, and does flip it.
 	state := mm.lockLiveWindow(did, true)
 	defer state.mu.Unlock()
+	if err := mm.CheckPublisherContext(ctx); err != nil {
+		return
+	}
 	if !published && state.published && start.Before(state.latest) {
 		log.Debug(ctx, "dropping pre-live segment that arrived after the stream went public", "did", did, "start", start)
 		return

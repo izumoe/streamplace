@@ -13,6 +13,7 @@ import (
 	glex "github.com/streamplace/glex/runtime"
 	"golang.org/x/sync/errgroup"
 	"gorm.io/gorm"
+	"stream.place/streamplace/pkg/access"
 	"stream.place/streamplace/pkg/appbsky"
 	"stream.place/streamplace/pkg/integrations/webhook"
 	"stream.place/streamplace/pkg/log"
@@ -729,6 +730,14 @@ func (state *StatefulDB) processChatMessageTask(ctx context.Context, task *AppTa
 		return err
 	}
 	scm := chatTask.MessageView
+	if state.Access != nil {
+		if !state.Access.Check(scm.Author.Did, access.Chat).Allowed {
+			return nil
+		}
+		if scm.ReplyTo != nil && scm.ReplyTo.ChatDefs_MessageView != nil && !state.Access.Check(scm.ReplyTo.ChatDefs_MessageView.Author.Did, access.Chat).Allowed {
+			scm.ReplyTo = nil
+		}
+	}
 	rec, err := glex.RecordAs[placestream.ChatMessage](scm.Record.Val)
 	if err != nil {
 		return fmt.Errorf("invalid chat message record: %w", err)

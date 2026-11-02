@@ -379,6 +379,7 @@ func runE2E(ctx context.Context, devEnvPath, httpsPDSHost, httpsStationHost stri
 		// The account administers the node's branding, which web flows edit
 		// through Settings -> Branding.
 		fmt.Sprintf("SP_ADMIN_DIDS=%s", out.Did),
+		fmt.Sprintf("SP_ALLOWED_STREAMS=%s", out.Did),
 		fmt.Sprintf("SP_BROADCASTER_HOST=%s", broadcasterHost),
 		fmt.Sprintf("SP_WEBSOCKET_URL=ws://%s", httpAddr),
 		fmt.Sprintf("SP_MOQ_URL=moqt://127.0.0.1:%d", moqPort),
@@ -428,6 +429,7 @@ func runE2E(ctx context.Context, devEnvPath, httpsPDSHost, httpsStationHost stri
 	}
 	defer os.RemoveAll(peerDataDir) //nolint:errcheck
 	peerEnv := []string{
+		fmt.Sprintf("SP_ALLOWED_STREAMS=%s", out.Did),
 		fmt.Sprintf("SP_HTTP_ADDR=%s", peerAddr),
 		fmt.Sprintf("SP_HTTP_INTERNAL_ADDR=127.0.0.1:%d", peerInternalPort),
 		fmt.Sprintf("SP_RTMP_ADDR=127.0.0.1:%d", peerRTMPPort),

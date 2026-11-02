@@ -16,7 +16,7 @@ import (
 	"github.com/julienschmidt/httprouter"
 	"stream.place/streamplace/pkg/appbsky"
 
-	"stream.place/streamplace/pkg/atproto"
+	"stream.place/streamplace/pkg/access"
 	apierrors "stream.place/streamplace/pkg/errors"
 	"stream.place/streamplace/pkg/log"
 	"stream.place/streamplace/pkg/placestream"
@@ -135,7 +135,14 @@ func (a *StreamplaceAPI) HandleWebsocket(ctx context.Context) httprouter.Handle 
 			defer ticker.Stop()
 			defer pingTicker.Stop()
 
+			policyChanges := a.Bus.SubscribeWithBacklogLimit(access.Topic, func() { conn.Close(); cancel() })
+			defer a.Bus.Unsubscribe(access.Topic, policyChanges)
+
 			send := func(msg any) {
+				msg = a.filterChatDelivery(ctx, repoDID, msg)
+				if msg == nil {
+					return
+				}
 				bs, err := json.Marshal(msg)
 				if err != nil {
 					log.Error(ctx, "could not marshal message", "error", err)
@@ -184,6 +191,19 @@ func (a *StreamplaceAPI) HandleWebsocket(ctx context.Context) httprouter.Handle 
 					send(msg)
 				case msg := <-initialBurst:
 					send(msg)
+				case event := <-policyChanges:
+					change, ok := event.(access.Change)
+					if !ok || !change.ChatChanged {
+						continue
+					}
+					snapshot, err := a.chatRefresh(ctx, repoDID, change.Revision)
+					if err != nil {
+						log.Error(ctx, "could not refresh chat policy", "error", err)
+						conn.Close()
+						cancel()
+						return
+					}
+					send(snapshot)
 				case <-ticker.C:
 					// The renditions a viewer can pick are whatever this
 					// node's live window holds now: they appear a little
@@ -311,90 +331,17 @@ func (a *StreamplaceAPI) HandleWebsocket(ctx context.Context) httprouter.Handle 
 		}()
 
 		go func() {
-			// Withhold chat older than the node's retention window: a viewer
-			// arriving the next day should land on an empty chat, not
-			// yesterday's conversation. A zero retention serves everything.
-			var since time.Time
-			if a.CLI.ChatMessageRetention > 0 {
-				since = time.Now().Add(-a.CLI.ChatMessageRetention)
-			}
-			messages, err := a.Model.MostRecentChatMessages(repoDID, since)
+			snapshot, err := a.chatRefresh(ctx, repoDID, 0)
 			if err != nil {
-				log.Error(ctx, "could not get chat messages", "error", err)
+				log.Error(ctx, "could not load chat snapshot", "error", err)
 				return
 			}
-
-			// Add mod badges to messages
-			issuerDID := fmt.Sprintf("did:web:%s", a.CLI.BroadcasterHost)
-			for _, message := range messages {
-				if !a.ATSync.ChatAllowed(ctx, repoDID, message.Author.Did) {
-					continue
-				}
-				err := atproto.AddModBadgeIfApplicable(ctx, &message, repoDID, issuerDID, a.Model)
-				if err != nil {
-					log.Error(ctx, "failed to add mod badge to message", "error", err)
-				}
-				a.ATSync.DecorateVerification(ctx, repoDID, &message)
-				if message.Author.Handle == "" || message.Author.Handle == "handle.invalid" {
-					message.Author.Handle = a.ATSync.ResolveAuthorHandle(ctx, message.Author.Did)
-				}
+			// Legacy clients still receive individual message/pin views.
+			for _, message := range snapshot.Messages {
 				initialBurst <- message
 			}
-		}()
-
-		// get the latest active pinned message for the repo
-		go func() {
-			pin, err := a.Model.GetActivePinnedRecord(ctx, repoDID)
-			if err != nil {
-				log.Error(ctx, "could not get pinned record", "error", err)
-				return
-			}
-			if pin != nil {
-				prv, err := pin.ToStreamplacePinnedRecordView()
-				if err != nil {
-					log.Error(ctx, "could not convert pinned record to streamplace view", "error", err)
-					return
-				}
-				// look up the original message, pinner
-				msg, err := a.Model.GetChatMessage(prv.Record.PinnedMessage)
-				if err != nil {
-					log.Error(ctx, "failed to get pinned message", err)
-					return
-				}
-				// if the message was deleted, treat as no pinned message
-				if msg != nil && msg.DeletedAt != nil {
-					log.Log(ctx, "pinned message was deleted, skipping", "uri", msg.URI)
-					return
-				}
-				// if no pinned by, use the repo owner as the pinner
-				if prv.Record.PinnedBy == nil {
-					prv.Record.PinnedBy = &repoDID
-				}
-				profile, err := a.Model.GetChatProfile(ctx, *prv.Record.PinnedBy)
-				if err != nil {
-					log.Error(ctx, "failed to get chat profile", err)
-					return
-				}
-				if msg != nil {
-					msgView, err := msg.ToStreamplaceMessageView()
-					if err != nil {
-						log.Error(ctx, "failed to convert chat message: %w", err)
-						return
-					}
-					if msgView.Author.Handle == "" || msgView.Author.Handle == "handle.invalid" {
-						msgView.Author.Handle = a.ATSync.ResolveAuthorHandle(ctx, msgView.Author.Did)
-					}
-					prv.Message = msgView
-				}
-				if profile != nil {
-					profileView, err := profile.ToStreamplaceChatProfile()
-					if err != nil {
-						log.Error(ctx, "failed to convert chat profile: %w", err)
-						return
-					}
-					prv.PinnedBy = &profileView
-				}
-				initialBurst <- prv
+			if snapshot.PinnedComment != nil {
+				initialBurst <- snapshot.PinnedComment
 			}
 		}()
 

@@ -14,7 +14,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -25,8 +24,8 @@ import (
 	"github.com/lmittmann/tint"
 	slogGorm "github.com/orandin/slog-gorm"
 	urfavecli "github.com/urfave/cli/v3"
+	"stream.place/streamplace/pkg/access"
 	"stream.place/streamplace/pkg/aqtime"
-	"stream.place/streamplace/pkg/constants"
 	"stream.place/streamplace/pkg/crypto/aqpub"
 	"stream.place/streamplace/pkg/integrations/discord/discordtypes"
 	"stream.place/streamplace/pkg/log"
@@ -103,6 +102,7 @@ type CLI struct {
 	RelayHost                   string
 	Debug                       map[string]map[string]int
 	AllowedStreams              []string
+	AccessPolicy                string
 	WideOpen                    bool
 	Peers                       []string
 	Redirects                   map[string]string
@@ -561,8 +561,14 @@ func (cli *CLI) NewCommand(name string) *urfavecli.Command {
 				Sources:     urfavecli.EnvVars("SP_WIDE_OPEN"),
 			},
 			&urfavecli.StringFlag{
+				Name:        "access-policy",
+				Usage:       "startup capability modes, for example streamer=allowlist,chat=open,syndicate=off",
+				Destination: &cli.AccessPolicy,
+				Sources:     urfavecli.EnvVars("SP_ACCESS_POLICY"),
+			},
+			&urfavecli.StringFlag{
 				Name:  "allowed-streams",
-				Usage: `if set, only allow these addresses or atproto DIDs to upload to this node (default: "")`,
+				Usage: `DIDs approved to publish locally; empty denies local publishing`,
 				Action: func(ctx context.Context, cmd *urfavecli.Command, s string) error {
 					if s == "" {
 						return nil
@@ -1474,6 +1480,9 @@ func (cli *CLI) CheckConfig() error {
 			errs = append(errs, fmt.Errorf("--signing-key: %w", err))
 		}
 	}
+	if _, err := cli.AccessBootstrap(); err != nil {
+		errs = append(errs, err)
+	}
 	if err := cli.validateVODCDN(); err != nil {
 		errs = append(errs, err)
 	}
@@ -1747,17 +1756,7 @@ func (cli *CLI) AddressSliceFlag(name, defaultValue, usage string, dest *[]aqpub
 }
 
 func (cli *CLI) StreamIsAllowed(did string) error {
-	if cli.WideOpen {
-		return nil
-	}
-	// if the user set no test streams, anyone can stream
-	openServer := len(cli.AllowedStreams) == 0 || (cli.TestStream && len(cli.AllowedStreams) == 1)
-	// but only valid atproto accounts! did:key is only allowed for our local test stream
-	isDIDKey := strings.HasPrefix(did, constants.DID_KEY_PREFIX)
-	if openServer && !isDIDKey {
-		return nil
-	}
-	if slices.Contains(cli.AllowedStreams, did) {
+	if cli.CapabilityAllowed(did, access.Streamer) {
 		return nil
 	}
 	return fmt.Errorf("user is not allowed to stream")
@@ -1859,18 +1858,7 @@ func (cli *CLI) DebugRecordingCreate(ctx context.Context, fpath []string, conten
 }
 
 func (cli *CLI) ShouldSyndicate(did string) bool {
-	if cli.DisableSyndication {
-		return false
-	}
-	for _, d := range cli.Syndicate {
-		if d == "*" {
-			return true
-		}
-		if d == did {
-			return true
-		}
-	}
-	return false
+	return cli.CapabilityAllowed(did, access.Syndicate)
 }
 
 // RenditionLadder is the rendition ladder this node transcodes

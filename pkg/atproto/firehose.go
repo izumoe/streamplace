@@ -25,6 +25,7 @@ import (
 	glex "github.com/streamplace/glex/runtime"
 	"github.com/streamplace/oatproxy/pkg/oatproxy"
 	"golang.org/x/sync/errgroup"
+	"stream.place/streamplace/pkg/access"
 	"stream.place/streamplace/pkg/aqhttp"
 	"stream.place/streamplace/pkg/aqtime"
 	"stream.place/streamplace/pkg/bus"
@@ -45,6 +46,7 @@ import (
 const dedupWindow = 5 * time.Minute
 
 type ATProtoSynchronizer struct {
+	Access     access.Checker
 	CLI        *config.CLI
 	Model      model.Model
 	StatefulDB *statedb.StatefulDB

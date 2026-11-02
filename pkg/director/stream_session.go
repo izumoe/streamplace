@@ -133,7 +133,7 @@ func (ss *StreamSession) Start(ctx context.Context, notif *media.NewSegmentNotif
 	// alone: a node that merely syndicates this stream must not also write
 	// it to S3, or every node records the same stream and they fight over
 	// the finalize. Taken up on the first local segment; see startLocalRole.
-	if notif.Local {
+	if notif.Local && ss.mm.CheckPublisherGeneration(notif.Segment.RepoDID, notif.PublisherGeneration) == nil {
 		ss.startLocalRole(ctx, notif.Segment.RepoDID)
 	}
 
@@ -218,6 +218,13 @@ func (ss *StreamSession) Go(ctx context.Context, f func() error) {
 
 func (ss *StreamSession) NewSegment(ctx context.Context, notif *media.NewSegmentNotification) error {
 	<-ss.started
+	if notif.Local {
+		var err error
+		ctx, err = ss.mm.PublisherContext(ctx, notif.Segment.RepoDID, notif.PublisherGeneration)
+		if err != nil {
+			return err
+		}
+	}
 	go func() {
 		select {
 		case <-ss.ctx.Done():
@@ -995,6 +1002,9 @@ func (ss *StreamSession) Transcode(ctx context.Context, spseg *placestream.Segme
 		log.Warn(ctx, "rendition abandoned by later segments, not published", "rendition", "all")
 		return nil
 	}
+	if err := ss.mm.CheckPublisherContext(ctx); err != nil {
+		return err
+	}
 	if addendum != nil {
 		// Into the live window (HLS variants), and to the peers pulling
 		// this stream (see subscribeSegments). Only the websocket
@@ -1043,6 +1053,9 @@ func (ss *StreamSession) AddPlaybackSegment(ctx context.Context, spseg *placestr
 
 func (ss *StreamSession) AddToWebRTC(ctx context.Context, spseg *placestream.Segment, rendition string, seg *bus.Seg, tn *turn) error {
 	defer tn.release()
+	if err := ss.mm.CheckPublisherContext(ctx); err != nil {
+		return err
+	}
 	compatible := len(spseg.Video) == 0
 	for _, video := range spseg.Video {
 		compatible = compatible || video.Codec == "" || video.Codec == "h264" || strings.HasPrefix(video.Codec, "avc1")
@@ -1063,6 +1076,9 @@ func (ss *StreamSession) AddToWebRTC(ctx context.Context, spseg *placestream.Seg
 	if !tn.wait(ctx) {
 		log.Warn(ctx, "segment abandoned by later segments, not published", "rendition", rendition)
 		return nil
+	}
+	if err := ss.mm.CheckPublisherContext(ctx); err != nil {
+		return err
 	}
 	ss.bus.PublishSegment(ctx, spseg.Creator, rendition, seg)
 	if rendition == "source" {

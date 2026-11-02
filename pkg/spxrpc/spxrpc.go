@@ -17,6 +17,7 @@ import (
 	"github.com/slok/go-http-metrics/middleware"
 	echomiddleware "github.com/slok/go-http-metrics/middleware/echo"
 	"github.com/streamplace/oatproxy/pkg/oatproxy"
+	"stream.place/streamplace/pkg/accessctl"
 	"stream.place/streamplace/pkg/aqhttp"
 	"stream.place/streamplace/pkg/atproto"
 	"stream.place/streamplace/pkg/blob"
@@ -33,6 +34,7 @@ import (
 )
 
 type Server struct {
+	Access          *accessctl.Controller
 	e               *echo.Echo
 	cli             *config.CLI
 	model           model.Model

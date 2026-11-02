@@ -81,32 +81,24 @@ func (c *Controller) refresh(ctx context.Context) error {
 		return nil
 	}
 	change := access.Change{Revision: revision}
-	subjects := map[string]bool{}
+	changed := revision != previous.policy.Revision()
 	for _, entry := range append(previous.policy.Entries(), policy.Entries()...) {
-		if entry.Capability == access.Chat {
-			// Expiry changes delivery without a database revision. Unrelated
-			// publisher changes do not invalidate cached chat.
-			if previous.policy.CheckAt(entry.Subject, access.Chat, previous.checkedAt).Allowed != policy.CheckAt(entry.Subject, access.Chat, now).Allowed {
+		if entry.Capability != access.Chat && entry.Capability != access.Streamer {
+			continue
+		}
+		before := previous.policy.CheckAt(entry.Subject, entry.Capability, previous.checkedAt)
+		after := policy.CheckAt(entry.Subject, entry.Capability, now)
+		if before.Allowed != after.Allowed {
+			changed = true
+			if entry.Capability == access.Chat {
 				change.ChatChanged = true
 			}
 		}
-		if entry.Capability == access.Streamer {
-			subjects[entry.Subject] = true
-		}
 	}
-	for subject := range generations {
-		subjects[subject] = true
-	}
-	for subject := range subjects {
-		before := previous.policy.CheckAt(subject, access.Streamer, previous.checkedAt)
-		after := policy.CheckAt(subject, access.Streamer, now)
-		if before.Allowed && (!after.Allowed || previous.generations[subject] != generations[subject]) {
-			change.RevokedStreamers = append(change.RevokedStreamers, subject)
-		}
-	}
-	if change.ChatChanged || len(change.RevokedStreamers) > 0 {
+	if changed {
 		c.bus.Publish(access.Topic, change)
 	}
+
 	return nil
 }
 

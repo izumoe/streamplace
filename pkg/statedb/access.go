@@ -90,6 +90,14 @@ func (state *StatefulDB) CreateAccessEntry(ctx context.Context, input access.Ent
 		return access.Entry{}, err
 	}
 	entry := AccessEntry{ID: uuid.NewString(), Authority: input.Authority, Subject: input.Subject, Capability: input.Capability, Effect: input.Effect, Reason: input.Reason, CreatedAt: input.CreatedAt, ExpiresAt: input.ExpiresAt}
+	// PostgreSQL stores microsecond timestamps. Normalize before comparisons so
+	// identical retries behave the same in both supported databases.
+	entry.CreatedAt = entry.CreatedAt.UTC().Truncate(time.Microsecond)
+	if entry.ExpiresAt != nil {
+		expiry := entry.ExpiresAt.UTC().Truncate(time.Microsecond)
+		entry.ExpiresAt = &expiry
+	}
+
 	err := state.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := lockAccess(tx, entry.Authority); err != nil {
 			return err

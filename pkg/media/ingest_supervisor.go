@@ -40,6 +40,10 @@ var ingestWorkerWatchdog = 30 * time.Second
 // streamer key + cert + a once-built manifest over a dedicated config fd (kept
 // off argv/env). See buildWorkerConfig for the interim key-custody note.
 func (mm *MediaManager) MP4IngestIsolated(ctx context.Context, input io.Reader, ms MediaSigner) error {
+	ctx, err := mm.admitPublisher(ctx, ms.Streamer())
+	if err != nil {
+		return err
+	}
 	cfg, err := mm.buildWorkerConfig(ctx, ms)
 	if err != nil {
 		return err
@@ -207,11 +211,17 @@ func (mm *MediaManager) consumeWorkerFrames(ctx context.Context, fr *ingestframe
 		}
 	}()
 	for {
+		if err := mm.CheckPublisherContext(ctx); err != nil {
+			return sawEnd, err
+		}
 		typ, payload, err := fr.ReadFrame()
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				return sawEnd, nil
 			}
+			return sawEnd, err
+		}
+		if err := mm.CheckPublisherContext(ctx); err != nil {
 			return sawEnd, err
 		}
 		if onProgress != nil && typ != ingestframe.SourceSegment {
@@ -292,6 +302,13 @@ func (mm *MediaManager) buildWorkerConfig(ctx context.Context, ms MediaSigner) (
 		CertPEM:         local.Cert,
 		Manifest:        manifest,
 		BroadcasterHost: mm.cli.BroadcasterHost,
+	}
+	if mm.Access != nil {
+		generation, err := mm.checkPublisherContext(ctx, ms.Streamer())
+		if err != nil {
+			return IngestWorkerConfig{}, err
+		}
+		cfg.PublisherGeneration = &generation
 	}
 	// Debug recording: main owns the per-stream setting (it needs the DB); the
 	// worker carries out the recording (it owns the data path). A lookup failure

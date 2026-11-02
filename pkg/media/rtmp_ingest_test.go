@@ -161,7 +161,9 @@ func readRTMPFixture(t testing.TB, name string) rtmpFixture {
 
 func rtmpSessionForFixtures(t *testing.T, audio rtmpFixture, videos ...rtmpFixture) *RTMPSession {
 	t.Helper()
-	session := &RTMPSession{AudioTrack: audio.audio, MediaSigner: newBareSegmentSigner(t)}
+	signer := newBareSegmentSigner(t)
+	signer.StreamerName = signer.DID()
+	session := &RTMPSession{AudioTrack: audio.audio, MediaSigner: signer}
 	var events []any
 	for id, fixture := range videos {
 		session.VideoTracks = append(session.VideoTracks, fixture.video)
@@ -211,7 +213,7 @@ func TestRTMPDirectIngestSignsOriginalVideoTracks(t *testing.T) {
 			defer cancel()
 			session := rtmpSessionForFixtures(t, av1Fixture, tc.videos...)
 			close(session.EventChan)
-			mm := &MediaManager{cli: &config.CLI{}, bus: bus.NewBus()}
+			mm := &MediaManager{cli: &config.CLI{AllowedStreams: []string{session.MediaSigner.Streamer()}}, bus: bus.NewBus()}
 			var signed [][]byte
 			require.NoError(t, mm.rtmpIngestSession(ctx, session, func(_ context.Context, segment []byte) error {
 				signed = append(signed, segment)
@@ -371,7 +373,7 @@ func TestRTMPDirectIngestPublishesMultitrackBeforeEOF(t *testing.T) {
 	session := rtmpSessionForFixtures(t, red, red, blue, green)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	mm := &MediaManager{cli: &config.CLI{}, bus: bus.NewBus()}
+	mm := &MediaManager{cli: &config.CLI{AllowedStreams: []string{session.MediaSigner.Streamer()}}, bus: bus.NewBus()}
 	var first []byte
 	err := mm.rtmpIngestSession(ctx, session, func(_ context.Context, segment []byte) error {
 		if first == nil {
@@ -397,7 +399,7 @@ func TestRTMPMultitrackCompletionAndExtraction(t *testing.T) {
 	close(session.EventChan)
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
-	mm := &MediaManager{cli: &config.CLI{BroadcasterHost: "test.example.com"}, bus: bus.NewBus()}
+	mm := &MediaManager{cli: &config.CLI{BroadcasterHost: "test.example.com", AllowedStreams: []string{session.MediaSigner.Streamer()}}, bus: bus.NewBus()}
 	var sources [][]byte
 	require.NoError(t, mm.rtmpIngestSession(ctx, session, func(_ context.Context, segment []byte) error {
 		sources = append(sources, segment)
@@ -489,7 +491,7 @@ func TestRTMPDirectIngestStopsOpenInput(t *testing.T) {
 			session := rtmpSessionForFixtures(t, fixture, fixture)
 			// Leave input open after the real encoded samples. Cancellation and
 			// sink failure must stop a feeder waiting for the next RTMP packet.
-			mm := &MediaManager{cli: &config.CLI{}, bus: bus.NewBus()}
+			mm := &MediaManager{cli: &config.CLI{AllowedStreams: []string{session.MediaSigner.Streamer()}}, bus: bus.NewBus()}
 			sinkErr := errors.New("RTMP test sink rejected signed segment")
 			count := 0
 			done := make(chan error, 1)
@@ -560,7 +562,7 @@ func TestRTMPAV1SegmentsDecodeIndependently(t *testing.T) {
 	fixture := readRTMPFixture(t, "av1-aac-frag.mp4")
 	session := rtmpSessionForFixtures(t, fixture, fixture)
 	close(session.EventChan)
-	mm := &MediaManager{cli: &config.CLI{}, bus: bus.NewBus()}
+	mm := &MediaManager{cli: &config.CLI{AllowedStreams: []string{session.MediaSigner.Streamer()}}, bus: bus.NewBus()}
 	var segments [][]byte
 	require.NoError(t, mm.rtmpIngestSession(t.Context(), session, func(_ context.Context, segment []byte) error {
 		segments = append(segments, segment)

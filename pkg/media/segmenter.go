@@ -158,7 +158,10 @@ func (mm *MediaManager) SegmentAndSignElem(ctx context.Context, ms MediaSigner, 
 	// new live session (RTMP/WHIP (re)connect) restarts the media timeline; the
 	// per-DID continuous transcoder keys on this epoch and rebuilds rather than
 	// feeding the restarted timeline into the previous session's encoder.
-	ctx = withIngestSession(ctx, mm.nextIngestSession())
+	ctx, err := mm.admitPublisher(ctx, streamer)
+	if err != nil {
+		return nil, err
+	}
 
 	// muxl path: stream the fMP4 through the per-segment signer. Each GoP
 	// arrives as a bare canonical .m4s, which ValidateMP4 verifies, archives
@@ -182,7 +185,7 @@ func (mm *MediaManager) receiveSignedSegment(ctx context.Context, streamer strin
 		spmetrics.SegmentDeliveryDuration.WithLabelValues(streamer).
 			Observe(float64(time.Since(startTime).Milliseconds()))
 	}()
-	if err := mm.ValidateMP4(ctx, bytes.NewReader(segment), true); err != nil {
+	if err := mm.validateMP4(ctx, bytes.NewReader(segment), true, streamer); err != nil {
 		span.SetAttributes(attribute.String("error", "validate"))
 		mm.cli.DumpDebugSegment(ctx, "just-signed-segment.m4s", bytes.NewReader(segment))
 		return fmt.Errorf("error validating signed segment: %w", err)

@@ -54,3 +54,16 @@ func TestPublisherGenerationSurvivesRestrictionRemoval(t *testing.T) {
 		require.Greater(t, after[entry.Subject], before[entry.Subject])
 	})
 }
+
+func TestAccessExpiryRetryUsesDatabasePrecision(t *testing.T) {
+	WithAllDatabases(t, func(state *StatefulDB) {
+		expires := time.Date(2027, time.January, 1, 0, 0, 0, 123456789, time.UTC)
+		entry := access.Entry{Authority: "did:web:node.test", Subject: "did:plc:alice", Capability: access.Chat, Effect: access.Deny, CreatedAt: time.Now().UTC(), ExpiresAt: &expires}
+		first, err := state.CreateAccessEntry(t.Context(), entry)
+		require.NoError(t, err)
+		again, err := state.CreateAccessEntry(t.Context(), entry)
+		require.NoError(t, err, "retrying the same RFC3339 timestamp must not conflict after a database round trip")
+		require.Equal(t, first.ID, again.ID)
+		require.Equal(t, 123456789, expires.Nanosecond(), "persisting must not mutate the caller's timestamp")
+	})
+}

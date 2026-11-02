@@ -12,6 +12,8 @@ import (
 	"github.com/bluesky-social/indigo/atproto/atdata"
 	"github.com/bluesky-social/indigo/atproto/syntax"
 	"github.com/bluesky-social/indigo/util"
+	"gorm.io/gorm"
+	"stream.place/streamplace/pkg/access"
 	"stream.place/streamplace/pkg/appbsky"
 	"stream.place/streamplace/pkg/aqtime"
 	"stream.place/streamplace/pkg/constants"
@@ -143,25 +145,25 @@ func (atsync *ATProtoSynchronizer) handleCreateUpdate(ctx context.Context, userD
 		}
 
 	case *placestream.ChatMessage:
-		repo, err := atsync.SyncBlueskyRepoCached(ctx, userDID)
-		if err != nil {
-			return fmt.Errorf("failed to sync bluesky repo: %w", err)
+		nodeAllowed := atsync.NodeChatAllowed(userDID)
+		repo := r
+		if nodeAllowed {
+			repo, err = atsync.SyncBlueskyRepoCached(ctx, userDID)
+			if err != nil {
+				return fmt.Errorf("failed to sync bluesky repo: %w", err)
+			}
+			go func() {
+				if _, err := atsync.SyncBlueskyRepoCached(ctx, rec.Streamer); err != nil {
+					log.Error(ctx, "failed to sync bluesky repo", "err", err)
+				}
+			}()
 		}
 
-		go func() {
-			// Its own err on purpose: assigning the enclosing function's err
-			// from this goroutine races every later use of it.
-			if _, err := atsync.SyncBlueskyRepoCached(ctx, rec.Streamer); err != nil {
-				log.Error(ctx, "failed to sync bluesky repo", "err", err)
-			}
-		}()
-
-		log.Debug(ctx, "placestream.ChatMessage detected", "message", rec.Text, "repo", repo.Handle)
 		block, err := atsync.Model.GetUserBlock(ctx, rec.Streamer, userDID)
 		if err != nil {
 			return fmt.Errorf("failed to get user block: %w", err)
 		}
-		if block != nil {
+		if block != nil && nodeAllowed {
 			log.Debug(ctx, "excluding message from blocked user", "userDID", userDID, "subjectDID", rec.Streamer)
 			return nil
 		}
@@ -212,6 +214,9 @@ func (atsync *ATProtoSynchronizer) handleCreateUpdate(ctx context.Context, userD
 			log.Error(ctx, "failed to create chat message", "err", err)
 			return nil
 		}
+		if !nodeAllowed {
+			return nil
+		}
 		// Everything below builds the message view for live consumers -- the
 		// chat websocket and the notification task -- and only messages that
 		// are actually live belong there. Both indexing paths deliver
@@ -238,6 +243,11 @@ func (atsync *ATProtoSynchronizer) handleCreateUpdate(ctx context.Context, userD
 		scm, err := mcm.ToStreamplaceMessageView()
 		if err != nil {
 			log.Error(ctx, "failed to convert chat message to streamplace message view", "err", err)
+			return nil
+		}
+
+		scm = atsync.FilterChatMessage(ctx, rec.Streamer, scm)
+		if scm == nil {
 			return nil
 		}
 
@@ -381,7 +391,10 @@ func (atsync *ATProtoSynchronizer) handleCreateUpdate(ctx context.Context, userD
 			if err != nil {
 				return fmt.Errorf("failed to convert chat message: %w", err)
 			}
-			pinnedView.Message = msgView
+			pinnedView.Message = atsync.FilterChatMessage(ctx, userDID, msgView)
+			if pinnedView.Message == nil {
+				return nil
+			}
 		}
 		if profile != nil {
 			profileView, err := profile.ToStreamplaceChatProfile()
@@ -476,9 +489,13 @@ func (atsync *ATProtoSynchronizer) handleCreateUpdate(ctx context.Context, userD
 			// log.Warn(ctx, "chat message detected", "uri", livestream.URI)
 			// if this post is a reply to someone's livestream post
 			// log.Warn(ctx, "chat message detected", "message", rec.Text)
-			repo, err := atsync.SyncBlueskyRepoCached(ctx, userDID)
-			if err != nil {
-				return fmt.Errorf("failed to sync bluesky repo: %w", err)
+			nodeAllowed := atsync.NodeChatAllowed(userDID)
+			repo := r
+			if nodeAllowed {
+				repo, err = atsync.SyncBlueskyRepoCached(ctx, userDID)
+				if err != nil {
+					return fmt.Errorf("failed to sync bluesky repo: %w", err)
+				}
 			}
 
 			// log.Warn(ctx, "chat message detected", "message", rec.Text, "repo", repo.Handle)
@@ -486,7 +503,7 @@ func (atsync *ATProtoSynchronizer) handleCreateUpdate(ctx context.Context, userD
 			if err != nil {
 				return fmt.Errorf("failed to get user block: %w", err)
 			}
-			if block != nil {
+			if block != nil && nodeAllowed {
 				log.Warn(ctx, "excluding message from blocked user", "userDID", userDID, "subjectDID", livestream.RepoDID)
 				return nil
 			}
@@ -512,6 +529,9 @@ func (atsync *ATProtoSynchronizer) handleCreateUpdate(ctx context.Context, userD
 			}
 			if err != nil {
 				log.Error(ctx, "failed to create feed post", "err", err)
+			}
+			if !nodeAllowed {
+				return nil
 			}
 			postView, err := fp.ToBskyPostView()
 			if err != nil {
@@ -580,11 +600,16 @@ func (atsync *ATProtoSynchronizer) handleCreateUpdate(ctx context.Context, userD
 		go atsync.Bus.Publish(userDID, lsv)
 
 		if !isFirstSync {
-			if atsync.CLI.StreamIsAllowed(userDID) != nil {
-				// they're live somewhere but they don't have nothin' to do with us
-				return nil
-			}
 			if seenEnding {
+				var vodAllowed bool
+				if atsync.Access != nil {
+					vodAllowed = atsync.Access.Check(userDID, access.VOD).Allowed
+				} else {
+					vodAllowed = atsync.CLI.CapabilityAllowed(userDID, access.VOD)
+				}
+				if !vodAllowed {
+					return nil
+				}
 				// Publish its VOD if the streamer has that on now. Only on
 				// seeing it end, never for an ended record seen again (a
 				// redelivery, an edit, a backfilled one), so turning it on
@@ -594,13 +619,21 @@ func (atsync *ATProtoSynchronizer) handleCreateUpdate(ctx context.Context, userD
 				}
 				return nil
 			}
-			log.Debug(ctx, "stream is allowed, queuing finalize task")
+			if rec.LastSeenAt == nil || rec.IdleTimeoutSeconds == nil || *rec.IdleTimeoutSeconds == 0 || rec.EndedAt != nil {
+				return nil
+			}
+			// A local session owns cleanup even after publishing approval is revoked.
+			session, err := atsync.StatefulDB.GetSessionByDID(userDID)
+			if errors.Is(err, gorm.ErrRecordNotFound) || (err == nil && session == nil) {
+				return nil
+			}
+			if err != nil {
+				return fmt.Errorf("looking up local livestream session: %w", err)
+			}
+			log.Debug(ctx, "local livestream session, queuing finalize task")
 			// queue a task to clean up the livestream if it's been inactive for too long
 			task := &statedb.FinalizeLivestreamTask{
 				LivestreamURI: aturi.String(),
-			}
-			if rec.LastSeenAt == nil || rec.IdleTimeoutSeconds == nil || *rec.IdleTimeoutSeconds == 0 || rec.EndedAt != nil {
-				return nil
 			}
 			scheduledAt, err := time.Parse(time.RFC3339, *rec.LastSeenAt)
 			if err != nil {

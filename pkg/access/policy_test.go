@@ -20,6 +20,7 @@ func TestCapabilityDecisions(t *testing.T) {
 	require.True(t, policy.CheckAt(alice, Admin, now).Allowed)
 	require.False(t, policy.CheckAt(alice, Streamer, now).Allowed, "administration does not grant publishing")
 	require.True(t, policy.CheckAt("", Viewer, now).Allowed)
+	require.True(t, policy.CheckAt("did:key:zTest", Viewer, now).Allowed, "public viewing cannot depend on an identity grant")
 	require.False(t, policy.CheckAt("", Chat, now).Allowed, "chat still needs an identified author")
 	require.False(t, policy.CheckAt(alice, Capability("unknown"), now).Allowed)
 	require.False(t, policy.CheckAt(alice, Syndicate, now).Allowed)

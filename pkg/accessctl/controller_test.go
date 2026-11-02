@@ -87,7 +87,13 @@ func TestSharedDatabaseRefreshAndConcurrentIdempotency(t *testing.T) {
 	require.True(t, second.Check("did:plc:alice", access.Streamer).Allowed)
 	snapshot := second.Snapshot()
 	require.NoError(t, first.Delete(ctx, id))
-	require.NoError(t, second.Refresh(ctx))
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stopped := make(chan error, 1)
+	go func() { stopped <- second.Run(runCtx) }()
+	require.Eventually(t, func() bool { return !second.Check("did:plc:alice", access.Streamer).Allowed }, RefreshInterval+5*time.Second, 10*time.Millisecond, "the periodic refresh must load another connection's revocation")
+	cancel()
+	require.NoError(t, <-stopped)
 	require.False(t, second.Check("did:plc:alice", access.Streamer).Allowed)
 	require.True(t, snapshot.Check("did:plc:alice", access.Streamer).Allowed, "previous immutable snapshot must remain stable")
 }
@@ -147,7 +153,7 @@ func TestPublisherMutationDoesNotRefreshUnchangedChat(t *testing.T) {
 	require.NoError(t, err)
 	select {
 	case change := <-changes:
-		t.Fatalf("unrelated publisher allowance refreshed chat: %+v", change)
+		require.False(t, change.(access.Change).ChatChanged, "publisher changes must not refresh cached chat")
 	case <-time.After(20 * time.Millisecond):
 	}
 }
