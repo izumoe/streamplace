@@ -250,6 +250,7 @@ func buildAudioTranscodePipeline(target, videoCodec string) (gst.Pipeline, error
 		if buf == nil {
 			return gst.PadProbeOK
 		}
+		defer gst.UnsafeBufferUnref(buf)
 		ts := buf.PTS()
 		if ts == gst.ClockTimeNone {
 			ts = buf.DTS()

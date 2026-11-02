@@ -1,19 +1,24 @@
 package media
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"slices"
 	"sort"
 	"testing"
 	"time"
 
 	"github.com/go-gst/go-gst/pkg/gst"
+	app "github.com/go-gst/go-gst/pkg/gstapp"
 	"github.com/stretchr/testify/require"
 	"stream.place/streamplace/pkg/config"
 	"stream.place/streamplace/pkg/crypto/signers"
 	"stream.place/streamplace/pkg/gstinit"
+	"stream.place/streamplace/pkg/gstpipeline"
 	"stream.place/streamplace/pkg/localdb"
 )
 
@@ -153,4 +158,75 @@ func TestStreamTranscoderCloseWithoutInput(t *testing.T) {
 	require.NoError(t, tr.Close())
 	require.NoError(t, tr.Close())
 	require.ErrorContains(t, tr.Feed(nil, nil), "closed")
+}
+
+func TestAudioTranscodeTimestampProbeReleasesBuffersBeforeGC(t *testing.T) {
+	previousGC := debug.SetGCPercent(-1)
+	t.Cleanup(func() { debug.SetGCPercent(previousGC) })
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	input, err := os.ReadFile(getFixture("av1-aac-frag.mp4"))
+	require.NoError(t, err)
+	// AV1 isolates the timestamp probe from the separate H264 IDR probe.
+	pipeline, err := buildAudioTranscodePipeline("opus", "av01")
+	require.NoError(t, err)
+	defer pipeline.BlockSetState(gst.StateNull, gst.ClockTimeNone)
+	vout := pipeline.GetByName("vout")
+	index := 0
+	vout.GetStaticPad("sink").AddProbe(gst.PadProbeTypeBuffer, func(_ gst.Pad, info *gst.PadProbeInfo) gst.PadProbeReturn {
+		buffer := info.GetBuffer()
+		if buffer == nil {
+			return gst.PadProbeOK
+		}
+		defer gst.UnsafeBufferUnref(buffer)
+		switch index {
+		case 0:
+			buffer.SetPTS(0)
+		case 1:
+			buffer.SetPTS(gst.ClockTimeNone)
+			buffer.SetDTS(0)
+			buffer.SetDuration(gst.ClockTimeNone)
+		case 2:
+			buffer.SetPTS(gst.ClockTimeNone)
+			buffer.SetDTS(gst.ClockTimeNone)
+			buffer.SetDuration(0)
+		case 3:
+			buffer.SetPTS(0)
+		}
+		index++
+		return gst.PadProbeOK
+	})
+	heldCh := make(chan *gst.Buffer, 4)
+	vout.GetStaticPad("src").AddProbe(gst.PadProbeTypeBuffer, func(_ gst.Pad, info *gst.PadProbeInfo) gst.PadProbeReturn {
+		buffer := info.GetBuffer()
+		if len(heldCh) < cap(heldCh) {
+			heldCh <- buffer
+		} else if buffer != nil {
+			gst.UnsafeBufferUnref(buffer)
+		}
+		return gst.PadProbeOK
+	})
+	pipeline.GetByName("src").(app.AppSrc).SetCallbacks(&app.AppSrcCallbacks{NeedData: gstpipeline.ReaderNeedDataIncremental(ctx, bytes.NewReader(input))})
+	pipeline.GetByName("sink").(app.AppSink).SetCallbacks(&app.AppSinkCallbacks{NewSample: gstpipeline.WriterNewSample(ctx, io.Discard)})
+	require.NotEqual(t, gst.StateChangeFailure, pipeline.SetState(gst.StatePlaying))
+	require.NoError(t, gstpipeline.HandleBusMessages(ctx, pipeline))
+	require.Equal(t, gst.StateChangeSuccess, pipeline.BlockSetState(gst.StateNull, gst.ClockTimeNone))
+	defer func() {
+		for len(heldCh) > 0 {
+			if buffer := <-heldCh; buffer != nil {
+				gst.UnsafeBufferUnref(buffer)
+			}
+		}
+	}()
+	require.Len(t, heldCh, 4)
+	for i := range 4 {
+		buffer := <-heldCh
+		require.NotNil(t, buffer)
+		defer gst.UnsafeBufferUnref(buffer)
+		require.Equal(t, gst.ClockTime(i)*gst.ClockTime(time.Millisecond), buffer.PTS(), "missing and regressive timestamps must advance without changing the first timestamp")
+		if i == 1 || i == 2 {
+			require.Equal(t, gst.ClockTime(time.Millisecond), buffer.Duration())
+		}
+		require.True(t, gst.UnsafeMiniObjectFromGlibBorrow(gst.UnsafeBufferToGlibNone(buffer)).IsWritable(), "the timestamp probe must release its reference before Go GC, frame %d", i)
+	}
 }
