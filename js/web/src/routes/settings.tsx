@@ -1,3 +1,4 @@
+import { useNodeAccess } from "@/hooks/use-node-access";
 import { useSession } from "@/lib/session";
 import { useStore } from "@/lib/store";
 import { useUserProfile } from "@/lib/store/hooks";
@@ -32,6 +33,7 @@ import {
 } from "../components/ui/select";
 
 interface NavLink {
+  requiresAdmin?: boolean;
   needsAuth?: boolean;
   /** Only show when danmu is unlocked (about-page easter egg). */
   requiresDanmuUnlock?: boolean;
@@ -53,6 +55,13 @@ type NavItem =
   | { role: "divider" };
 
 const NAV_ITEMS: NavItem[] = [
+  {
+    role: "link",
+    to: "/settings/access",
+    icon: Lock,
+    labelKey: "node-access-title",
+    requiresAdmin: true,
+  },
   {
     role: "link",
     to: "/settings/account",
@@ -180,7 +189,13 @@ function NavGroupItem({ item }: { item: NavGroup }) {
   );
 }
 
-function DisplayNavItem({ item }: { item: NavItem }) {
+function DisplayNavItem({
+  item,
+  isAdmin,
+}: {
+  item: NavItem;
+  isAdmin: boolean;
+}) {
   const { t } = useTranslation("settings");
   // get auth state from context or store
   const { state } = useSession();
@@ -195,6 +210,7 @@ function DisplayNavItem({ item }: { item: NavItem }) {
   if ("requiresDanmuUnlock" in item && item.requiresDanmuUnlock) {
     if (!danmuUnlocked) return null;
   }
+  if ("requiresAdmin" in item && item.requiresAdmin && !isAdmin) return null;
   if (item.role === "divider") {
     return (
       <div className="my-0.5 border-b border-(--color-border) lg:mx-2 lg:my-2 lg:border-b-0" />
@@ -215,7 +231,7 @@ function DisplayNavItem({ item }: { item: NavItem }) {
   );
 }
 
-function MobileSettingsNav() {
+function MobileSettingsNav({ isAdmin }: { isAdmin: boolean }) {
   const { t } = useTranslation("settings");
   const { state } = useSession();
   const userProfile = useUserProfile();
@@ -229,6 +245,7 @@ function MobileSettingsNav() {
     if (item.needsAuth && (state.status !== "authenticated" || !userProfile)) {
       return false;
     }
+    if (item.requiresAdmin && !isAdmin) return false;
     return !item.requiresDanmuUnlock || danmuUnlocked;
   });
 
@@ -268,6 +285,7 @@ function MobileSettingsNav() {
 }
 
 function SettingsLayout() {
+  const { isAdmin } = useNodeAccess();
   const { t } = useTranslation("settings");
 
   return (
@@ -277,7 +295,7 @@ function SettingsLayout() {
         <h2 className="font-display mb-2 text-lg font-semibold tracking-tight">
           {t("settings-title")}
         </h2>
-        <MobileSettingsNav />
+        <MobileSettingsNav isAdmin={isAdmin} />
       </div>
 
       {/* Desktop: sidebar */}
@@ -290,6 +308,7 @@ function SettingsLayout() {
             <DisplayNavItem
               key={"labelKey" in item ? item.labelKey : `divider-${i}`}
               item={item}
+              isAdmin={isAdmin}
             />
           ))}
         </nav>

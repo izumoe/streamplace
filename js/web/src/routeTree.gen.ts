@@ -22,6 +22,7 @@ import { Route as DashboardUploadRouteImport } from './routes/dashboard/upload'
 import { Route as DashboardVideosRouteImport } from './routes/dashboard/videos'
 import { Route as SettingsIndexRouteImport } from './routes/settings/index'
 import { Route as SettingsAboutRouteImport } from './routes/settings/about'
+import { Route as SettingsAccessRouteImport } from './routes/settings/access'
 import { Route as SettingsAccountRouteImport } from './routes/settings/account'
 import { Route as SettingsAdvancedRouteImport } from './routes/settings/advanced'
 import { Route as SettingsBackupRouteImport } from './routes/settings/backup'
@@ -107,6 +108,11 @@ const SettingsIndexRoute = SettingsIndexRouteImport.update({
 const SettingsAboutRoute = SettingsAboutRouteImport.update({
   id: '/about',
   path: '/about',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsAccessRoute = SettingsAccessRouteImport.update({
+  id: '/access',
+  path: '/access',
   getParentRoute: () => SettingsRoute,
 } as any)
 const SettingsAccountRoute = SettingsAccountRouteImport.update({
@@ -228,6 +234,7 @@ export interface FileRoutesByFullPath {
   '/dashboard/upload': typeof DashboardUploadRoute
   '/dashboard/videos': typeof DashboardVideosRoute
   '/settings/about': typeof SettingsAboutRoute
+  '/settings/access': typeof SettingsAccessRoute
   '/settings/account': typeof SettingsAccountRoute
   '/settings/advanced': typeof SettingsAdvancedRoute
   '/settings/backup': typeof SettingsBackupRoute
@@ -262,6 +269,7 @@ export interface FileRoutesByTo {
   '/dashboard/upload': typeof DashboardUploadRoute
   '/dashboard/videos': typeof DashboardVideosRoute
   '/settings/about': typeof SettingsAboutRoute
+  '/settings/access': typeof SettingsAccessRoute
   '/settings/account': typeof SettingsAccountRoute
   '/settings/advanced': typeof SettingsAdvancedRoute
   '/settings/backup': typeof SettingsBackupRoute
@@ -299,6 +307,7 @@ export interface FileRoutesById {
   '/dashboard/upload': typeof DashboardUploadRoute
   '/dashboard/videos': typeof DashboardVideosRoute
   '/settings/about': typeof SettingsAboutRoute
+  '/settings/access': typeof SettingsAccessRoute
   '/settings/account': typeof SettingsAccountRoute
   '/settings/advanced': typeof SettingsAdvancedRoute
   '/settings/backup': typeof SettingsBackupRoute
@@ -337,6 +346,7 @@ export interface FileRouteTypes {
     | '/dashboard/upload'
     | '/dashboard/videos'
     | '/settings/about'
+    | '/settings/access'
     | '/settings/account'
     | '/settings/advanced'
     | '/settings/backup'
@@ -371,6 +381,7 @@ export interface FileRouteTypes {
     | '/dashboard/upload'
     | '/dashboard/videos'
     | '/settings/about'
+    | '/settings/access'
     | '/settings/account'
     | '/settings/advanced'
     | '/settings/backup'
@@ -407,6 +418,7 @@ export interface FileRouteTypes {
     | '/dashboard/upload'
     | '/dashboard/videos'
     | '/settings/about'
+    | '/settings/access'
     | '/settings/account'
     | '/settings/advanced'
     | '/settings/backup'
@@ -540,6 +552,13 @@ declare module '@tanstack/react-router' {
       path: '/about'
       fullPath: '/settings/about'
       preLoaderRoute: typeof SettingsAboutRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/access': {
+      id: '/settings/access'
+      path: '/access'
+      fullPath: '/settings/access'
+      preLoaderRoute: typeof SettingsAccessRouteImport
       parentRoute: typeof SettingsRoute
     }
     '/settings/account': {
@@ -720,6 +739,7 @@ const DashboardRouteRouteWithChildren = DashboardRouteRoute._addFileChildren(
 
 interface SettingsRouteChildren {
   SettingsAboutRoute: typeof SettingsAboutRoute
+  SettingsAccessRoute: typeof SettingsAccessRoute
   SettingsAccountRoute: typeof SettingsAccountRoute
   SettingsAdvancedRoute: typeof SettingsAdvancedRoute
   SettingsBackupRoute: typeof SettingsBackupRoute
@@ -736,6 +756,7 @@ interface SettingsRouteChildren {
 
 const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsAboutRoute: SettingsAboutRoute,
+  SettingsAccessRoute: SettingsAccessRoute,
   SettingsAccountRoute: SettingsAccountRoute,
   SettingsAdvancedRoute: SettingsAdvancedRoute,
   SettingsBackupRoute: SettingsBackupRoute,

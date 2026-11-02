@@ -89,7 +89,20 @@ export const handleWebSocketMessages = (
         };
       }
 
-      if (place.stream.livestream.livestreamView.isTypeOf(message)) {
+      if (
+        message.$type === "place.stream.chat.refresh" &&
+        Array.isArray(message.messages)
+      ) {
+        state = {
+          ...state,
+          chat: [],
+          chatIndex: {},
+          authors: {},
+          pinnedComment: message.pinnedComment ?? null,
+          replyToMessage: null,
+        };
+        state = handleWebSocketMessages(state, message.messages);
+      } else if (place.stream.livestream.livestreamView.isTypeOf(message)) {
         const newLivestream = message as LivestreamViewHydrated;
         const oldLivestream = state.livestream;
 
