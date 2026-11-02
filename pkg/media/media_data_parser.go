@@ -135,7 +135,7 @@ func ParseSegmentMediaData(ctx context.Context, mp4bs []byte) (*localdb.SegmentM
 		}
 		description := constants.Queue2Big + " ! appsink sync=false name=samples"
 		if name == "video/x-h264" {
-			description = fmt.Sprintf("%s ! tee name=t t. ! %s ! appsink sync=false name=samples t. ! %s ! h2642json ! appsink sync=false name=json", constants.Queue2Big, constants.Queue2Big, constants.Queue2Big)
+			description = fmt.Sprintf("%s ! tee name=t t. ! %s ! appsink sync=false name=samples t. ! %s ! h2642json b-frames-only=true ! appsink sync=false name=json", constants.Queue2Big, constants.Queue2Big, constants.Queue2Big)
 		}
 		bin, err := gst.ParseBinFromDescription(description, true)
 		if err != nil || !pipeline.Add(bin) {
@@ -160,15 +160,13 @@ func ParseSegmentMediaData(ctx context.Context, mp4bs []byte) (*localdb.SegmentM
 					defer info.Unmap()
 					// h2642json emits one complete JSON object per buffer.
 					var object struct {
-						Header struct {
-							BFrame bool `json:"direct spatial mv pred flag"`
-						} `json:"slice header"`
+						BFrames bool `json:"has-b-frames"`
 					}
 					if err := json.Unmarshal(info.Data(), &object); err != nil {
 						fail(fmt.Errorf("decode H264 metadata: %w", err))
 						return gst.FlowError
 					}
-					track.video.BFrames = track.video.BFrames || object.Header.BFrame
+					track.video.BFrames = track.video.BFrames || object.BFrames
 					return gst.FlowOK
 				},
 			})
