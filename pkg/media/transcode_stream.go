@@ -128,7 +128,10 @@ func (mm *MediaManager) feedStreamTranscoder(ctx context.Context, vs *validatedS
 	if t == nil {
 		// The transcoder outlives any single request; carry log values but not
 		// cancellation, and cancel explicitly on reap.
-		streamCtx := context.WithoutCancel(ctx)
+		// Admission belongs to each completed segment, not the shared encoder.
+		// distributeSegment restores a local segment's captured generation;
+		// remote segments must not inherit a previous publisher's admission.
+		streamCtx := context.WithValue(context.WithoutCancel(ctx), publisherAdmissionKey{}, nil)
 		t = mm.newStreamTranscoder(streamCtx, target, cert, keyPEM, func(token any, completed []byte) {
 			v := token.(*validatedSegment)
 			if err := mm.distributeSegment(context.WithoutCancel(streamCtx), v, completed, nil); err != nil {

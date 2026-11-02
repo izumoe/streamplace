@@ -92,7 +92,7 @@ func (mm *MediaManager) GetLiveWindow(did string) (*livehls.Writer, bool) {
 		return nil, false
 	}
 	defer state.mu.Unlock()
-	if state.writer.Empty() {
+	if state.writer == nil || state.writer.Empty() {
 		mm.liveWindowsMut.Lock()
 		delete(mm.liveWindows, did)
 		mm.liveWindowsMut.Unlock()
@@ -161,12 +161,15 @@ func (mm *MediaManager) feedLiveWindowEvents(ctx context.Context, did string, ev
 // own media sequence, so an addendum arriving a beat after its source
 // segment (the transcoder's round trip) is fine. start is the source
 // segment's start time (zero when unknown): a pre-live addendum that lands
-// after the stream went public is dropped like its source would be.
-func (mm *MediaManager) FeedLiveRenditions(ctx context.Context, did string, addendum []byte, start time.Time, published bool) {
+// after the stream went public is dropped like its source would be. An admission
+// invalidated while the feed waited returns an error so callers also withhold
+// the rendition from other delivery paths.
+func (mm *MediaManager) FeedLiveRenditions(ctx context.Context, did string, addendum []byte, start time.Time, published bool) error {
 	if len(addendum) == 0 {
-		return
+		return nil
 	}
 	mm.feedLiveWindow(ctx, did, addendum, start, published)
+	return mm.CheckPublisherContext(ctx)
 }
 
 // LiveRenditionNames lists the transcoded renditions the streamer's live

@@ -51,7 +51,7 @@ func TestTranscoderServicePublishesSignedRenditions(t *testing.T) {
 	const did = "did:test:streamer"
 	started := time.Now()
 	manager.feedLiveWindow(ctx, did, source, started, true)
-	manager.FeedLiveRenditions(ctx, did, addendum, started, true)
+	require.NoError(t, manager.FeedLiveRenditions(ctx, did, addendum, started, true))
 	window, published := manager.GetLiveWindow(did)
 	require.True(t, published)
 	require.NotNil(t, window)

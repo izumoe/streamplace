@@ -359,7 +359,9 @@ func (r *WebsocketReplicator) feedRenditions(ctx context.Context, streamer strin
 	}
 	// Only public streams are syndicated, so the ordering check that
 	// wants the start time does not apply here.
-	r.mm.FeedLiveRenditions(context.WithoutCancel(ctx), streamer, addendum, time.Time{}, true)
+	if err := r.mm.FeedLiveRenditions(context.WithoutCancel(ctx), streamer, addendum, time.Time{}, true); err != nil {
+		return fmt.Errorf("feed rendition addendum: %w", err)
+	}
 	// And onto this node's bus for WebRTC viewers who pick a rendition here.
 	r.mm.PublishRenditionsForPlayback(context.WithoutCancel(ctx), streamer, addendum, true)
 	return nil

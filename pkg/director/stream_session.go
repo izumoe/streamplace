@@ -1010,7 +1010,9 @@ func (ss *StreamSession) Transcode(ctx context.Context, spseg *placestream.Segme
 		// this stream (see subscribeSegments). Only the websocket
 		// replicator carries rendition addenda; a peer syndicating over
 		// Iroh receives the source track alone and no renditions.
-		ss.mm.FeedLiveRenditions(context.WithoutCancel(ctx), spseg.Creator, addendum, notif.Metadata.StartTime.Time(), notif.Metadata.Published)
+		if err := ss.mm.FeedLiveRenditions(context.WithoutCancel(ctx), spseg.Creator, addendum, notif.Metadata.StartTime.Time(), notif.Metadata.Published); err != nil {
+			return err
+		}
 		ss.bus.PublishSegment(ctx, spseg.Creator, media.RenditionsChannel, &bus.Seg{
 			Muxl:      addendum,
 			Published: notif.Metadata.Published,
