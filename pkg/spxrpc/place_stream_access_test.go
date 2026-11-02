@@ -95,7 +95,9 @@ func TestNodeAccessRPCStatusPrivacyAndEffectiveDenials(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &status))
 	require.Nil(t, status.Subject)
+	enforcement := map[string]bool{}
 	for _, cap := range status.Capabilities {
+		enforcement[cap.Capability] = cap.Enforced
 		if cap.Capability == "viewer" {
 			require.True(t, cap.Allowed)
 			require.False(t, cap.Enforced)
@@ -105,6 +107,10 @@ func TestNodeAccessRPCStatusPrivacyAndEffectiveDenials(t *testing.T) {
 			require.True(t, cap.Enforced)
 		}
 	}
+	require.Equal(t, map[string]bool{
+		"admin": true, "chat": true, "streamer": true,
+		"syndicate": true, "vod": true, "viewer": false,
+	}, enforcement)
 	rec = accessRequest(t, e, accessPublisher, http.MethodGet, "getStatus?subject="+accessAdmin, nil)
 	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
 	rec = accessRequest(t, e, accessAdmin, http.MethodGet, "getStatus?subject="+accessPublisher, nil)

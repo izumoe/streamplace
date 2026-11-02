@@ -60,7 +60,7 @@ func (s *Server) handlePlaceStreamAccessGetStatus(ctx context.Context, subject s
 	}
 	for _, capability := range access.Capabilities {
 		decision := snapshot.Check(subject, capability)
-		out.Capabilities = append(out.Capabilities, placestream.AccessDefs_Decision{Capability: string(capability), Mode: string(modes[capability]), Allowed: decision.Allowed, Reason: decision.Reason, Enforced: capability == access.Admin || capability == access.Streamer || capability == access.Chat})
+		out.Capabilities = append(out.Capabilities, placestream.AccessDefs_Decision{Capability: string(capability), Mode: string(modes[capability]), Allowed: decision.Allowed, Reason: decision.Reason, Enforced: capability != access.Viewer})
 	}
 	return out, nil
 }
