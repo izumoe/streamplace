@@ -156,6 +156,7 @@ func ParseSegmentMediaData(ctx context.Context, mp4bs []byte) (*localdb.SegmentM
 					if !ok {
 						return gst.FlowError
 					}
+					defer gst.UnsafeSampleUnref(sample)
 					defer info.Unmap()
 					// h2642json emits one complete JSON object per buffer.
 					var object struct {
@@ -257,6 +258,7 @@ func ParseSegmentMediaDataSinkNewSampleFunc(ctx context.Context, foundThisTrack 
 		if sample == nil {
 			return gst.FlowOK
 		}
+		defer gst.UnsafeSampleUnref(sample)
 		buf := sample.GetBuffer()
 		if buf == nil {
 			return gst.FlowError
