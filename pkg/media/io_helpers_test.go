@@ -58,6 +58,15 @@ func TestWriterNewSampleTinyAllocations(t *testing.T) {
 	runtime.KeepAlive(writer)
 }
 
+func BenchmarkWriterNewSample(b *testing.B) {
+	b.ReportAllocs()
+	for b.Loop() {
+		if err := writerNewSampleInner(b.Context(), 0, io.Discard); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func TestWriterNewSampleReleasesBufferBeforeGC(t *testing.T) {
 	previousGC := debug.SetGCPercent(-1)
 	t.Cleanup(func() { debug.SetGCPercent(previousGC) })
