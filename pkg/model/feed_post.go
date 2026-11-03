@@ -94,8 +94,10 @@ func (m *DBModel) GetReplies(repoDID string) ([]appbsky.FeedDefs_PostView, error
 	err := m.DB.
 		Preload("Repo").
 		Where("reply_root_repo_did = ? AND type = ?", repoDID, "reply").
+		Joins("LEFT JOIN blocks ON blocks.repo_did = feed_posts.reply_root_repo_did AND blocks.subject_did = feed_posts.repo_did").
+		Where("blocks.rkey IS NULL").
 		Limit(100).
-		Order("created_at DESC").
+		Order("feed_posts.created_at DESC").
 		Find(&posts).Error
 	if err != nil {
 		return nil, fmt.Errorf("error retrieving replies: %w", err)

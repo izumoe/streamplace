@@ -866,7 +866,13 @@ func (a *StreamplaceAPI) HandleChat(ctx context.Context) httprouter.Handle {
 			apierrors.WriteHTTPInternalServerError(w, "could not get replies", err)
 			return
 		}
-		bs, err := json.Marshal(replies)
+		visible := replies[:0]
+		for _, reply := range replies {
+			if a.ATSync.NodeChatAllowed(reply.Author.Did) {
+				visible = append(visible, reply)
+			}
+		}
+		bs, err := json.Marshal(visible)
 		if err != nil {
 			apierrors.WriteHTTPInternalServerError(w, "could not marshal replies", err)
 			return

@@ -11,6 +11,7 @@ import (
 
 	glex "github.com/streamplace/glex/runtime"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 	"stream.place/streamplace/pkg/access"
 	"stream.place/streamplace/pkg/appbsky"
 	"stream.place/streamplace/pkg/aqhttp"
@@ -64,6 +65,20 @@ func TestQueuedChatTaskRechecksNodeRestriction(t *testing.T) {
 		select {
 		case <-delivered:
 			t.Fatal("a queued chat task escaped an active node restriction")
+		case <-time.After(100 * time.Millisecond):
+		}
+
+		// Restriction can change while the queued task loads its destinations.
+		state.Access = nil
+		require.NoError(t, state.DB.Callback().Query().After("gorm:query").Register("restrict_during_webhook_lookup", func(tx *gorm.DB) {
+			if tx.Statement.Table == "webhooks" {
+				state.Access = policy
+			}
+		}))
+		require.NoError(t, state.processChatMessageTask(context.Background(), task))
+		select {
+		case <-delivered:
+			t.Fatal("chat escaped a restriction installed while loading webhook destinations")
 		case <-time.After(100 * time.Millisecond):
 		}
 	})

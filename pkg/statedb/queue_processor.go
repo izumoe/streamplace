@@ -730,13 +730,8 @@ func (state *StatefulDB) processChatMessageTask(ctx context.Context, task *AppTa
 		return err
 	}
 	scm := chatTask.MessageView
-	if state.Access != nil {
-		if !state.Access.Check(scm.Author.Did, access.Chat).Allowed {
-			return nil
-		}
-		if scm.ReplyTo != nil && scm.ReplyTo.ChatDefs_MessageView != nil && !state.Access.Check(scm.ReplyTo.ChatDefs_MessageView.Author.Did, access.Chat).Allowed {
-			scm.ReplyTo = nil
-		}
+	if state.Access != nil && !state.Access.Check(scm.Author.Did, access.Chat).Allowed {
+		return nil
 	}
 	rec, err := glex.RecordAs[placestream.ChatMessage](scm.Record.Val)
 	if err != nil {
@@ -754,8 +749,17 @@ func (state *StatefulDB) processChatMessageTask(ctx context.Context, task *AppTa
 				log.Error(ctx, "failed to convert webhook to lexicon", "err", err, "webhook_id", w.ID)
 				continue
 			}
-			go func(lexiconWebhook placestream.ServerDefs_Webhook, wid string) {
-				err := webhook.SendChatWebhook(ctx, &lexiconWebhook, scm.Author.Did, &scm)
+			go func(lexiconWebhook placestream.ServerDefs_Webhook, wid string, message placestream.ChatDefs_MessageView) {
+				// Destination lookup can outlast the policy that dequeued this task.
+				if state.Access != nil {
+					if !state.Access.Check(message.Author.Did, access.Chat).Allowed {
+						return
+					}
+					if message.ReplyTo != nil && message.ReplyTo.ChatDefs_MessageView != nil && !state.Access.Check(message.ReplyTo.ChatDefs_MessageView.Author.Did, access.Chat).Allowed {
+						message.ReplyTo = nil
+					}
+				}
+				err := webhook.SendChatWebhook(ctx, &lexiconWebhook, message.Author.Did, &message)
 				if err != nil {
 					log.Error(ctx, "failed to send chat to webhook", "err", err, "webhook_id", wid)
 					err = state.IncrementWebhookError(wid)
@@ -769,7 +773,7 @@ func (state *StatefulDB) processChatMessageTask(ctx context.Context, task *AppTa
 						log.Error(ctx, "failed to reset webhook error count", "err", err, "webhook_id", wid)
 					}
 				}
-			}(lexiconWebhook, w.ID)
+			}(lexiconWebhook, w.ID, scm)
 		}
 	}
 	return nil
