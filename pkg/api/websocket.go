@@ -183,9 +183,40 @@ func (a *StreamplaceAPI) HandleWebsocket(ctx context.Context) httprouter.Handle 
 				}
 			}
 
+			// The subscription already buffers channel changes. Send history
+			// first so a later live or moderation event cannot be overwritten.
+			snapshot, err := a.chatRefresh(ctx, repoDID, 0)
+			if err != nil {
+				log.Error(ctx, "could not load chat snapshot", "error", err)
+				conn.Close()
+				cancel()
+				return
+			}
+			// Legacy clients still receive individual message/pin views.
+			for _, message := range snapshot.Messages {
+				send(message)
+			}
+			if snapshot.PinnedComment != nil {
+				send(snapshot.PinnedComment)
+			}
+
 			for {
 				select {
 				case msg := <-ch:
+					if pending, ok := msg.(*pendingChatRefresh); ok {
+						select {
+						case <-pending.ready:
+						case <-ctx.Done():
+							return
+						}
+						if pending.err != nil {
+							conn.Close()
+							cancel()
+							return
+						}
+						send(pending.snapshot)
+						continue
+					}
 					if _, failed := msg.(chatRefreshFailed); failed {
 						conn.Close()
 						cancel()
@@ -318,21 +349,6 @@ func (a *StreamplaceAPI) HandleWebsocket(ctx context.Context) httprouter.Handle 
 
 		go func() {
 			initialBurst <- a.viewerCountMessage(ctx, repoDID)
-		}()
-
-		go func() {
-			snapshot, err := a.chatRefresh(ctx, repoDID, 0)
-			if err != nil {
-				log.Error(ctx, "could not load chat snapshot", "error", err)
-				return
-			}
-			// Legacy clients still receive individual message/pin views.
-			for _, message := range snapshot.Messages {
-				initialBurst <- message
-			}
-			if snapshot.PinnedComment != nil {
-				initialBurst <- snapshot.PinnedComment
-			}
 		}()
 
 		go func() {

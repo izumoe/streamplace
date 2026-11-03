@@ -181,6 +181,14 @@ type chatRefreshWorker struct {
 
 type chatRefreshFailed struct{}
 
+// Reserve snapshot delivery before its lookup so later channel events follow it.
+// Closing ready publishes the result to all viewers waiting on this marker.
+type pendingChatRefresh struct {
+	ready    chan struct{}
+	snapshot *chatRefresh
+	err      error
+}
+
 func (a *StreamplaceAPI) subscribeChatRefresh(ctx context.Context, streamer string) func() {
 	a.chatRefreshMu.Lock()
 	if a.chatRefreshes == nil {
@@ -221,20 +229,23 @@ func (a *StreamplaceAPI) subscribeChatRefresh(ctx context.Context, streamer stri
 					if !ok || !change.ChatChanged {
 						continue
 					}
-					snapshot, err := a.chatRefresh(workerCtx, streamer, change.Revision)
+
+					pending := &pendingChatRefresh{ready: make(chan struct{})}
+					a.chatRefreshMu.Lock()
+					if workerCtx.Err() != nil || a.chatRefreshes[streamer] != worker {
+						a.chatRefreshMu.Unlock()
+						return
+					}
+					a.Bus.Publish(streamer, pending)
+					a.chatRefreshMu.Unlock()
+					pending.snapshot, pending.err = a.chatRefresh(workerCtx, streamer, change.Revision)
+					if pending.err != nil && workerCtx.Err() == nil {
+						log.Error(workerCtx, "could not refresh chat policy", "error", pending.err)
+					}
+					close(pending.ready)
 					if workerCtx.Err() != nil {
 						return
 					}
-					if err != nil {
-						log.Error(workerCtx, "could not refresh chat policy", "error", err)
-						a.Bus.Publish(streamer, chatRefreshFailed{})
-						continue
-					}
-					a.chatRefreshMu.Lock()
-					if workerCtx.Err() == nil && a.chatRefreshes[streamer] == worker {
-						a.Bus.Publish(streamer, snapshot)
-					}
-					a.chatRefreshMu.Unlock()
 				}
 			}
 		}()

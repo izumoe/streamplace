@@ -158,8 +158,15 @@ func TestChatRefreshSharedByActiveViewers(t *testing.T) {
 		t.Helper()
 		select {
 		case event := <-ch:
-			snapshot, ok := event.(*chatRefresh)
+			pending, ok := event.(*pendingChatRefresh)
 			require.True(t, ok)
+			select {
+			case <-pending.ready:
+			case <-time.After(time.Second):
+				t.Fatal("chat refresh did not finish")
+			}
+			require.NoError(t, pending.err)
+			snapshot := pending.snapshot
 			require.Len(t, snapshot.Messages, count)
 			require.Equal(t, revision, snapshot.Revision)
 		case <-time.After(time.Second):
@@ -212,7 +219,14 @@ func TestChatRefreshFailureRequestsReconnect(t *testing.T) {
 	b.Publish(access.Topic, access.Change{Revision: 1, ChatChanged: true})
 	select {
 	case event := <-messages:
-		require.IsType(t, chatRefreshFailed{}, event, "failed hydration must make sockets reconnect and clear their cached chat")
+		pending, ok := event.(*pendingChatRefresh)
+		require.True(t, ok)
+		select {
+		case <-pending.ready:
+		case <-time.After(time.Second):
+			t.Fatal("chat refresh did not finish")
+		}
+		require.ErrorContains(t, pending.err, "database is closed", "failed hydration must make sockets reconnect and clear cached chat")
 	case <-time.After(time.Second):
 		t.Fatal("missing refresh failure")
 	}
