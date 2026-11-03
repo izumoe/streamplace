@@ -817,6 +817,17 @@ func (atsync *ATProtoSynchronizer) handleCreateUpdate(ctx context.Context, userD
 		// as a pointer, which is what the replicator's subscription asserts
 		go atsync.Bus.Publish("", &view)
 
+	case *placestream.BioPage:
+		if collection.String() != constants.PLACE_STREAM_BIO_PAGE || rkey.String() != "self" {
+			return nil
+		}
+		if _, err := atsync.SyncBlueskyRepoCached(ctx, userDID); err != nil {
+			return fmt.Errorf("failed to sync bio owner: %w", err)
+		}
+		if err := atsync.Model.CreateBioPage(ctx, &model.BioPage{RepoDID: userDID, RepoRev: repoRev, Record: recCBOR}); err != nil {
+			return fmt.Errorf("failed to index bio page: %w", err)
+		}
+
 	case *placestream.MetadataConfiguration:
 		repo, err := atsync.SyncBlueskyRepoCached(ctx, userDID)
 		if err != nil {

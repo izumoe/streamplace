@@ -571,6 +571,9 @@ func (atsync *ATProtoSynchronizer) handleIndexedOps(ctx context.Context, evt *in
 			})
 			if err != nil {
 				log.Error(ctx, "failed to handle create update", "err", err)
+				if collection.String() == constants.PLACE_STREAM_BIO_PAGE {
+					complete = false
+				}
 				continue
 			}
 
@@ -730,6 +733,13 @@ func (atsync *ATProtoSynchronizer) handleIndexedOps(ctx context.Context, evt *in
 				log.Debug(ctx, "deleting video", "uri", uri)
 				if err := atsync.Model.DeleteVideo(ctx, uri); err != nil {
 					log.Error(ctx, "failed to delete video", "err", err)
+				}
+			}
+
+			if collection.String() == constants.PLACE_STREAM_BIO_PAGE && rkey.String() == "self" {
+				if err := atsync.Model.DeleteBioPage(ctx, evt.Repo, evt.Rev); err != nil {
+					log.Error(ctx, "failed to delete bio page", "err", err)
+					complete = false
 				}
 			}
 
