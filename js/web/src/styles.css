@@ -18,6 +18,7 @@ code {
 }
 
 :root {
+  --bio-panel-width: calc(var(--spacing) * 88);
   --background: oklch(0.9797 0.0091 341.8);
   --foreground: oklch(0.2917 0.0806 320.4);
   --card: oklch(1 0 0);
