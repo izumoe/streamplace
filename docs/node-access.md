@@ -98,3 +98,25 @@ The `place.stream.access` XRPC methods expose own status and administrator-only
 listing, creation, and exact deletion. They use existing verified authentication.
 The interface checks the signed-in session's node authority before making access
 requests, requiring a new sign-in when the selected node differs.
+
+## Acceptance checks
+
+In the configured build container, use a current node build and run:
+
+```sh
+E2E_UNAPPROVED_STREAM=1 hack/e2e-web-local.sh \
+  --config ../web/playwright.config.ts \
+  --project=chromium node-access-media.spec.ts
+```
+
+Set `E2E_BUILDDIR` when the build directory differs from the harness default.
+This isolated fixture starts its administrator without publishing approval and
+makes the peer receive-only. The test exercises real OAuth and UI approval,
+WHIP revocation and fresh admission, anonymous peer media playback, and
+unchanged PDS key records. It writes sanitized acceptance evidence without
+retaining traces containing the private test stream key.
+
+`TestAccessMigrationPreservesExistingNodeState` checks an additive SQLite upgrade
+with existing configuration and OAuth-session rows. These checks qualify the
+current build's origin/peer behavior; mixed upstream/fork distribution still
+requires a separately qualified binary pair, including its muxl versions.

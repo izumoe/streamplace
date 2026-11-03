@@ -50,15 +50,19 @@ func TestE2ENodeProfilerEnvironment(t *testing.T) {
 	}
 }
 
-func TestE2EExternalStreamFlag(t *testing.T) {
+func TestE2EPublisherFlags(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		args []string
-		want bool
+		name       string
+		args       []string
+		want       bool
+		unapproved bool
 	}{
 		{name: "fixture by default", args: []string{"e2e"}},
 		{name: "external publisher", args: []string{"e2e", "--external-stream"}, want: true},
 		{name: "explicit fixture", args: []string{"e2e", "--external-stream=false"}},
+		{name: "unapproved fixture", args: []string{"e2e", "--unapproved-stream"}, unapproved: true},
+		{name: "unapproved external publisher", args: []string{"e2e", "--external-stream", "--unapproved-stream"}, want: true, unapproved: true},
+		{name: "explicit approved fixture", args: []string{"e2e", "--unapproved-stream=false"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cmd := makeE2eCommand(&config.BuildFlags{})
@@ -66,6 +70,7 @@ func TestE2EExternalStreamFlag(t *testing.T) {
 			stop := errors.New("flags parsed")
 			cmd.Before = func(_ context.Context, cmd *urfavecli.Command) (context.Context, error) {
 				require.Equal(t, tc.want, cmd.Bool("external-stream"))
+				require.Equal(t, tc.unapproved, cmd.Bool("unapproved-stream"))
 				return nil, stop
 			}
 			require.ErrorIs(t, cmd.Run(t.Context(), tc.args), stop)
