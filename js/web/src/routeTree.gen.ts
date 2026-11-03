@@ -37,6 +37,7 @@ import { Route as SettingsPrivacyRouteImport } from './routes/settings/privacy'
 import { Route as UserVideoTidRouteImport } from './routes/$user/video/$tid'
 import { Route as DashboardKeysIndexRouteImport } from './routes/dashboard/keys/index'
 import { Route as DashboardMultistreamIndexRouteImport } from './routes/dashboard/multistream/index'
+import { Route as DashboardProfileIndexRouteImport } from './routes/dashboard/profile/index'
 import { Route as DashboardRecommendationsIndexRouteImport } from './routes/dashboard/recommendations/index'
 import { Route as DashboardStreamIndexRouteImport } from './routes/dashboard/stream/index'
 import { Route as DashboardWebhooksIndexRouteImport } from './routes/dashboard/webhooks/index'
@@ -186,6 +187,11 @@ const DashboardMultistreamIndexRoute =
     path: '/multistream/',
     getParentRoute: () => DashboardRouteRoute,
   } as any)
+const DashboardProfileIndexRoute = DashboardProfileIndexRouteImport.update({
+  id: '/profile/',
+  path: '/profile/',
+  getParentRoute: () => DashboardRouteRoute,
+} as any)
 const DashboardRecommendationsIndexRoute =
   DashboardRecommendationsIndexRouteImport.update({
     id: '/recommendations/',
@@ -254,6 +260,7 @@ export interface FileRoutesByFullPath {
   '/embed/info-widget/$user': typeof EmbedInfoWidgetUserRoute
   '/dashboard/keys/': typeof DashboardKeysIndexRoute
   '/dashboard/multistream/': typeof DashboardMultistreamIndexRoute
+  '/dashboard/profile/': typeof DashboardProfileIndexRoute
   '/dashboard/recommendations/': typeof DashboardRecommendationsIndexRoute
   '/dashboard/stream/': typeof DashboardStreamIndexRoute
   '/dashboard/webhooks/': typeof DashboardWebhooksIndexRoute
@@ -289,6 +296,7 @@ export interface FileRoutesByTo {
   '/embed/info-widget/$user': typeof EmbedInfoWidgetUserRoute
   '/dashboard/keys': typeof DashboardKeysIndexRoute
   '/dashboard/multistream': typeof DashboardMultistreamIndexRoute
+  '/dashboard/profile': typeof DashboardProfileIndexRoute
   '/dashboard/recommendations': typeof DashboardRecommendationsIndexRoute
   '/dashboard/stream': typeof DashboardStreamIndexRoute
   '/dashboard/webhooks': typeof DashboardWebhooksIndexRoute
@@ -327,6 +335,7 @@ export interface FileRoutesById {
   '/embed/info-widget/$user': typeof EmbedInfoWidgetUserRoute
   '/dashboard/keys/': typeof DashboardKeysIndexRoute
   '/dashboard/multistream/': typeof DashboardMultistreamIndexRoute
+  '/dashboard/profile/': typeof DashboardProfileIndexRoute
   '/dashboard/recommendations/': typeof DashboardRecommendationsIndexRoute
   '/dashboard/stream/': typeof DashboardStreamIndexRoute
   '/dashboard/webhooks/': typeof DashboardWebhooksIndexRoute
@@ -366,6 +375,7 @@ export interface FileRouteTypes {
     | '/embed/info-widget/$user'
     | '/dashboard/keys/'
     | '/dashboard/multistream/'
+    | '/dashboard/profile/'
     | '/dashboard/recommendations/'
     | '/dashboard/stream/'
     | '/dashboard/webhooks/'
@@ -401,6 +411,7 @@ export interface FileRouteTypes {
     | '/embed/info-widget/$user'
     | '/dashboard/keys'
     | '/dashboard/multistream'
+    | '/dashboard/profile'
     | '/dashboard/recommendations'
     | '/dashboard/stream'
     | '/dashboard/webhooks'
@@ -438,6 +449,7 @@ export interface FileRouteTypes {
     | '/embed/info-widget/$user'
     | '/dashboard/keys/'
     | '/dashboard/multistream/'
+    | '/dashboard/profile/'
     | '/dashboard/recommendations/'
     | '/dashboard/stream/'
     | '/dashboard/webhooks/'
@@ -659,6 +671,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DashboardMultistreamIndexRouteImport
       parentRoute: typeof DashboardRouteRoute
     }
+    '/dashboard/profile/': {
+      id: '/dashboard/profile/'
+      path: '/profile'
+      fullPath: '/dashboard/profile/'
+      preLoaderRoute: typeof DashboardProfileIndexRouteImport
+      parentRoute: typeof DashboardRouteRoute
+    }
     '/dashboard/recommendations/': {
       id: '/dashboard/recommendations/'
       path: '/recommendations'
@@ -717,6 +736,7 @@ interface DashboardRouteRouteChildren {
   DashboardIndexRoute: typeof DashboardIndexRoute
   DashboardKeysIndexRoute: typeof DashboardKeysIndexRoute
   DashboardMultistreamIndexRoute: typeof DashboardMultistreamIndexRoute
+  DashboardProfileIndexRoute: typeof DashboardProfileIndexRoute
   DashboardRecommendationsIndexRoute: typeof DashboardRecommendationsIndexRoute
   DashboardStreamIndexRoute: typeof DashboardStreamIndexRoute
   DashboardWebhooksIndexRoute: typeof DashboardWebhooksIndexRoute
@@ -728,6 +748,7 @@ const DashboardRouteRouteChildren: DashboardRouteRouteChildren = {
   DashboardIndexRoute: DashboardIndexRoute,
   DashboardKeysIndexRoute: DashboardKeysIndexRoute,
   DashboardMultistreamIndexRoute: DashboardMultistreamIndexRoute,
+  DashboardProfileIndexRoute: DashboardProfileIndexRoute,
   DashboardRecommendationsIndexRoute: DashboardRecommendationsIndexRoute,
   DashboardStreamIndexRoute: DashboardStreamIndexRoute,
   DashboardWebhooksIndexRoute: DashboardWebhooksIndexRoute,
