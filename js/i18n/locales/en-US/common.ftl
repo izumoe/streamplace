@@ -500,3 +500,26 @@ upload-title-untitled = Untitled
 ## Emoji picker
 emoji-skin-tone = Skin tone
 emoji-search = Search emoji…
+
+player-stats-stream-details = Stream details
+player-stats-broadcaster-delay = Broadcaster → viewer
+player-stats-not-measured = Not measured
+player-stats-broadcaster-delay-help = Capture-to-display timing is not supplied by this stream. Live edge delay excludes capture, encoding and server processing.
+player-stats-server-processing = Server processing
+player-stats-server-processing-help = Per-stream signing and validation timings are not supplied to this player.
+player-stats-live-edge-delay = Live edge delay (est.)
+player-stats-live-edge-delay-help = Displayed video behind the receiver's estimated live edge. This is not capture-to-display latency.
+player-stats-playback-delay = Playback delay target
+player-stats-playback-delay-help = Intentional receiver delay for buffering and scheduling; included in live edge delay, not added to it.
+player-stats-publication-batch = Publication batch
+player-stats-publication-batch-help = Duration of signed media delivered in a burst. This is media duration, not server processing time.
+player-stats-rtt = Relay RTT
+player-stats-rtt-help = Round-trip time to the connected relay, not one-way broadcaster latency.
+player-stats-av-sync = Video − audio
+player-stats-av-sync-help = Media timestamp difference. Positive means video is ahead of audio playout; excludes physical display and speaker delay.
+player-stats-processing-delay = Receiver processing (avg.)
+player-stats-processing-delay-help = WebRTC time from the first RTP packet of a video frame to decoded output, averaged over the current video stream. Includes assembly, buffering and decode; these timings overlap.
+player-stats-decode-time = Video decode (avg.)
+player-stats-decode-time-help = WebRTC video decode time per decoded frame, averaged over the current video stream.
+player-stats-jitter-buffer = Jitter buffer (avg.)
+player-stats-jitter-buffer-help = WebRTC video jitter buffer residence time per emitted frame, averaged over the current video stream.

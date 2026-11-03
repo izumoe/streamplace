@@ -488,10 +488,49 @@ test("MoQ plays real video and audio, pauses, and releases resources on transpor
     exact: true,
   });
   await expect(stats).toBeVisible();
+  for (const label of [
+    "Live edge delay (est.)",
+    "Playback delay target",
+    "Publication batch",
+    "Relay RTT",
+    "Video − audio",
+  ]) {
+    const row = stats
+      .locator("div[title]")
+      .filter({ has: page.getByText(label, { exact: true }) });
+    await expect(row).toContainText(/-?\d+\.\d ms/);
+  }
+  const avOffset = stats
+    .locator("div[title]")
+    .filter({ has: page.getByText("Video − audio", { exact: true }) })
+    .locator("span")
+    .last();
+  // Catch timestamp unit errors against actual playout, allowing scheduling jitter.
+  await expect
+    .poll(async () => Math.abs(Number.parseFloat(await avOffset.innerText())))
+    .toBeLessThan(1000);
+  await expect(stats.getByText("Not measured", { exact: true })).toHaveCount(2);
+  await page.screenshot({
+    path: testInfo.outputPath("player-timing-stats.png"),
+  });
+  const details = stats.locator("details");
+  await expect(details).not.toHaveAttribute("open");
+  await stats.getByText("Stream details", { exact: true }).click();
+  await expect(details).toHaveAttribute("open");
   await expect(stats.getByText("MoQ", { exact: true })).toBeVisible();
   await expect(stats.getByText("Skipped", { exact: true })).toHaveCount(0);
   await expect(stats.getByText("FPS", { exact: true })).toHaveCount(0);
   await expect(stats.getByText("Bitrate", { exact: true })).toHaveCount(0);
+  await stats.getByText("Stream details", { exact: true }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(stats).toBeVisible();
+  const panelBounds = await stats.boundingBox();
+  const playerBounds = await player.boundingBox();
+  expect(panelBounds!.width).toBeLessThanOrEqual(playerBounds!.width);
+  expect(panelBounds!.height).toBeLessThanOrEqual(playerBounds!.height);
+  await page.screenshot({
+    path: testInfo.outputPath("player-timing-stats-mobile.png"),
+  });
   expect(pageErrors).toEqual([]);
 });
 
@@ -541,4 +580,41 @@ test("MoQ connection loss falls back to a live transport that decodes video", as
     /^(webrtc|hls)$/,
   );
   await expectVideoAdvancing(player.locator("video"));
+});
+
+test("WebRTC exposes receiver processing, decode and jitter buffer timing", async ({
+  page,
+}, testInfo) => {
+  await page.addInitScript(() =>
+    Object.defineProperty(window, "WebTransport", { value: undefined }),
+  );
+  const player = await openLivePlayer(page);
+  await expect(player).toHaveAttribute("data-playback-transport", "webrtc");
+  await expectVideoAdvancing(player.locator("video"));
+  await player.hover();
+  await player.locator('button[title="Settings"]').click();
+  await page
+    .getByRole("menuitemcheckbox", { name: "Stats for Nerds", exact: true })
+    .click();
+  await page.keyboard.press("Escape");
+  const stats = page.getByRole("dialog", {
+    name: "Stats for Nerds",
+    exact: true,
+  });
+  for (const label of [
+    "Receiver processing (avg.)",
+    "Video decode (avg.)",
+    "Jitter buffer (avg.)",
+  ]) {
+    const row = stats
+      .locator("div[title]")
+      .filter({ has: page.getByText(label, { exact: true }) });
+    await expect(row).toContainText(/\d+\.\d ms/);
+  }
+  await expect(
+    stats.getByText("Publication batch", { exact: true }),
+  ).toHaveCount(0);
+  await page.screenshot({
+    path: testInfo.outputPath("webrtc-timing-stats.png"),
+  });
 });

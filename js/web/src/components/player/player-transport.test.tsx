@@ -224,6 +224,14 @@ it.each([undefined, 0, 7])(
           bitrate: value === undefined ? undefined : value * 1000,
           renditionBitrate: value === undefined ? undefined : value * 1000,
           availableBandwidth: value === undefined ? undefined : value * 2000,
+          liveEdgeDelay: value,
+          playbackDelayMs: value,
+          publicationBatchMs: value,
+          roundTripTimeMs: value,
+          avSyncMs: value === undefined ? undefined : -value,
+          processingDelayMs: value,
+          decodeTimeMs: value,
+          jitterBufferMs: value,
           totalFrames: 120,
           level: -1,
         }),
@@ -254,7 +262,31 @@ it.each([undefined, 0, 7])(
       expect(
         dialog.textContent?.includes("player-stats-available-bandwidth"),
       ).toBe(value !== undefined);
+      expect(dialog.textContent).toContain("player-stats-broadcaster-delay");
+      expect(dialog.textContent).toContain("player-stats-not-measured");
+      const details = dialog.querySelector("details")!;
+      expect(details).not.toBeNull();
+      expect(details.open).toBe(false);
+      expect(details.textContent).toContain("player-stats-session");
+      for (const label of [
+        "live-edge-delay",
+        "playback-delay",
+        "publication-batch",
+        "rtt",
+        "av-sync",
+        "processing-delay",
+        "decode-time",
+        "jitter-buffer",
+      ]) {
+        const row = Array.from(dialog.querySelectorAll("[title]")).find(
+          (element) => element.textContent?.includes(`player-stats-${label}`),
+        );
+        expect(row !== undefined).toBe(value !== undefined);
+        if (row) expect(details.contains(row)).toBe(false);
+      }
       if (value !== undefined) {
+        expect(dialog.textContent).toContain(`${value.toFixed(1)} ms`);
+        expect(dialog.textContent).toContain(`${(-value).toFixed(1)} ms`);
         expect(dialog.textContent).toContain(`${value} / 120`);
       }
     } finally {

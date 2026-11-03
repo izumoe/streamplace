@@ -2,6 +2,7 @@ import type * as Watch from "@moq/watch";
 import { useEffect, useImperativeHandle, useRef, type RefObject } from "react";
 import { useTranslation } from "react-i18next";
 import {
+  getMoqBatchDuration,
   getMoqPlaybackFloor,
   getMoqPlaybackSource,
   STALL_TIMEOUT_MS,
@@ -130,6 +131,8 @@ export function MoQPlayer(props: MoQPlayerProps) {
       const display = player.video.out.display.peek();
       const bufferedEnd = player.video.out.buffered.peek().at(-1)?.end;
       const target = controlsRef.current?.target.peek();
+      const reference = player.sync.out.reference.peek();
+      const catalog = player.broadcast.out.catalog.peek();
       state.onStatsChange({
         width: display?.width ?? 0,
         height: display?.height ?? 0,
@@ -139,6 +142,18 @@ export function MoQPlayer(props: MoQPlayerProps) {
           bufferedEnd === undefined || video === undefined
             ? 0
             : Math.max(0, bufferedEnd - video) / 1000,
+        // The sync reference is anchored to received media, not the source's wall clock.
+        liveEdgeDelay:
+          reference === undefined || video === undefined
+            ? undefined
+            : Math.max(0, performance.now() - reference - video) / 1000,
+        playbackDelayMs: player.sync.out.delay.peek(),
+        publicationBatchMs: catalog && getMoqBatchDuration(catalog),
+        roundTripTimeMs: connection?.probe.peek()?.rtt,
+        avSyncMs:
+          video === undefined || audio === undefined
+            ? undefined
+            : video - audio,
         totalFrames: frames,
         renditionBitrate: config?.bitrate,
         availableBandwidth: connection?.probe.peek()?.estimatedRecvRate,

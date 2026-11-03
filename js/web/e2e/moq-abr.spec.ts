@@ -422,6 +422,7 @@ test("Enhanced RTMP Auto downshifts and recovers through a bandwidth-limited QUI
       .getByRole("menuitemcheckbox", { name: "Stats for Nerds" })
       .click();
     await page.keyboard.press("Escape");
+    await stats.getByText("Stream details", { exact: true }).click();
     await expect(stats).toContainText("Video bitrate estimate");
     await expect(stats).toContainText("Bandwidth estimate");
     await expectPlaying("green");

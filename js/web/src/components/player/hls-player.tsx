@@ -269,14 +269,9 @@ export function HLSPlayer({
       lastFpsSample.time = now;
       lastFpsSample.frames = totalFrames;
 
-      // Latency to the live edge: distance between where we're playing
-      // and the position hls.js considers "live". hls.js nulls this out
-      // before the first playlist loads and for VOD.
-      const liveEdge = hls?.liveSyncPosition;
-      const latencyToBroadcaster =
-        typeof liveEdge === "number" && liveEdge > 0
-          ? Math.max(0, liveEdge - video.currentTime)
-          : undefined;
+      // liveSyncPosition is the delayed playback target, not the live edge.
+      const live = mode === "live" && hls?.latestLevelDetails?.live;
+      const targetDelay = live ? hls.targetLatency : null;
 
       onStatsChangeRef.current?.({
         width: currentLevelData?.width ?? video.videoWidth,
@@ -292,11 +287,12 @@ export function HLSPlayer({
         level: currentLevel,
         codecs: currentLevelData?.codecs,
         hlsVersion: Hls.version,
-        latencyToBroadcaster,
+        liveEdgeDelay: live ? hls.latency : undefined,
+        playbackDelayMs: targetDelay === null ? undefined : targetDelay * 1000,
       });
     }, 1000);
     return () => clearInterval(id);
-  }, [active, videoRef]);
+  }, [active, mode, videoRef]);
 
   return null;
 }

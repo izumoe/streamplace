@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { MoQPlayer } from "./moq-player";
+import type { PlayerStats } from "./player";
 
 const fixture = vi.hoisted(() => ({
   player: undefined as unknown,
@@ -11,9 +12,13 @@ const fixture = vi.hoisted(() => ({
 }));
 
 type Playback = {
+  sync: Watch.Sync;
+  renderer: {
+    out: { timestamp: Watch.Signals.Signal<Watch.Net.Time.Milli | undefined> };
+  };
   audio: {
     source: Watch.Audio.Source;
-    out: { timestamp: Watch.Signals.Signal<Watch.Net.Time.Micro | undefined> };
+    out: { timestamp: Watch.Signals.Signal<Watch.Net.Time.Milli | undefined> };
   };
 };
 
@@ -39,7 +44,7 @@ vi.mock("@moq/watch", async (original) => {
         supported: sdk.Audio.Decoder.supported,
       }),
       out: {
-        timestamp: new Signal<Watch.Net.Time.Micro | undefined>(undefined),
+        timestamp: new Signal<Watch.Net.Time.Milli | undefined>(undefined),
       },
     };
     video = {
@@ -107,6 +112,7 @@ vi.mock("@moq/watch", async (original) => {
 let container: HTMLDivElement;
 let root: Root;
 let unavailable = vi.fn<() => void>();
+let stats: PlayerStats | undefined;
 
 beforeEach(async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -130,6 +136,7 @@ beforeEach(async () => {
       moq: { url: "https://node.example", name: "playback/alice" },
     }),
   );
+  stats = undefined;
   fixture.player = undefined;
   fixture.resolve = undefined;
   fixture.audio = true;
@@ -162,7 +169,9 @@ async function render(muted = false) {
         onBufferingChange={() => {}}
         onQualitiesChange={() => {}}
         onCurrentQualityChange={() => {}}
-        onStatsChange={() => {}}
+        onStatsChange={(value) => {
+          stats = value;
+        }}
       />,
     ),
   );
@@ -230,3 +239,34 @@ it.each(["muted audio", "video only", "empty audio catalog"])(
     expect(unavailable).not.toHaveBeenCalled();
   },
 );
+
+it("reports MoQ receiver timing from the real sync clock, without inventing broadcaster latency", async () => {
+  vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+  vi.spyOn(performance, "now").mockReturnValue(10_000);
+  const sdk = await import("@moq/watch");
+  await render(true);
+  const player = fixture.player as Playback;
+  await act(async () => {
+    player.sync.received(sdk.Net.Time.Milli(6000));
+    player.renderer.out.timestamp.set(sdk.Net.Time.Milli(4000));
+    player.audio.out.timestamp.set(sdk.Net.Time.Milli(3900));
+    await vi.advanceTimersByTimeAsync(1000);
+  });
+  expect(stats).toMatchObject({
+    liveEdgeDelay: 2,
+    playbackDelayMs: 1300,
+    publicationBatchMs: 1000,
+    avSyncMs: 100,
+  });
+  await act(async () => {
+    player.audio.out.timestamp.set(sdk.Net.Time.Milli(4100));
+    await vi.advanceTimersByTimeAsync(1000);
+  });
+  expect(stats?.avSyncMs).toBe(-100);
+  await act(async () => {
+    player.renderer.out.timestamp.set(undefined);
+    await vi.advanceTimersByTimeAsync(1000);
+  });
+  expect(stats?.liveEdgeDelay).toBeUndefined();
+  expect(stats?.avSyncMs).toBeUndefined();
+});
