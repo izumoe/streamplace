@@ -3,6 +3,7 @@ package spxrpc
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -163,7 +164,12 @@ func (s *Server) handleComAtprotoRepoGetRecord(ctx context.Context, c string, co
 		return nil, fmt.Errorf("error checking for local PDS: %w", err)
 	}
 	if !isLocal {
-		var out comatproto.RepoGetRecord_Output
+		// Keep the record opaque: decoding known types here would discard
+		// extension fields before an editor can read and preserve them.
+		var out struct {
+			comatproto.RepoGetRecord_Output
+			Value json.RawMessage `json:"value"`
+		}
 		params := make(map[string]interface{})
 		params["repo"] = repo
 		params["collection"] = collection
@@ -177,7 +183,11 @@ func (s *Server) handleComAtprotoRepoGetRecord(ctx context.Context, c string, co
 			log.Error(ctx, "upstream xrpc error", "error", err)
 			return nil, err
 		}
-		return &out, nil
+		out.RepoGetRecord_Output.Value, err = glex.Unknown(out.Value)
+		if err != nil {
+			return nil, fmt.Errorf("failed to preserve upstream record: %w", err)
+		}
+		return &out.RepoGetRecord_Output, nil
 	}
 
 	if s.isServerPDS(ctx) {
