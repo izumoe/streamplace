@@ -103,6 +103,10 @@ async function expectAudioPlaying(page: Page, testInfo: TestInfo) {
 test("MoQ cold startup allows discovery and the requested playout buffer", async ({
   page,
 }, testInfo) => {
+  const audioMessages: string[] = [];
+  page.on("console", (message) => {
+    if (message.text().includes("[audio]")) audioMessages.push(message.text());
+  });
   await page.addInitScript(observeAudioOutput);
   // Delay the real discovery response; media and transport remain untouched.
   await page.route(
@@ -114,6 +118,11 @@ test("MoQ cold startup allows discovery and the requested playout buffer", async
     },
   );
   const player = await openLivePlayer(page);
+  expect(
+    await page.evaluate(
+      () => crossOriginIsolated && typeof SharedArrayBuffer === "function",
+    ),
+  ).toBe(true);
   const canvas = player.locator("canvas");
   await expect(canvas).toHaveCSS("opacity", "1");
   await expect(player).toHaveAttribute("data-playback-transport", "moq");
@@ -124,6 +133,12 @@ test("MoQ cold startup allows discovery and the requested playout buffer", async
   await player.hover();
   await player.locator('button[title="Unmute"]').click();
   await expectAudioPlaying(page, testInfo);
+  expect(audioMessages).toContain(
+    "[audio] using SharedArrayBuffer audio buffer",
+  );
+  expect(audioMessages.some((message) => message.includes("unavailable"))).toBe(
+    false,
+  );
   await expect(player).toHaveAttribute("data-playback-transport", "moq");
 });
 

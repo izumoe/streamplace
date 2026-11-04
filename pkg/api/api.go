@@ -453,6 +453,8 @@ func (a *StreamplaceAPI) notFoundLinkingHandler(ctx context.Context, linker *lin
 		}
 	})
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		// Enable shared-memory audio without severing OAuth popup relationships.
+		w.Header().Set("Document-Isolation-Policy", "isolate-and-credentialless")
 		proto := "http"
 		if req.TLS != nil {
 			proto = "https"
