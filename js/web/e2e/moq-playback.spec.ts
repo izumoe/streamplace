@@ -100,6 +100,33 @@ async function expectAudioPlaying(page: Page, testInfo: TestInfo) {
   }
 }
 
+test("MoQ cold startup allows discovery and the requested playout buffer", async ({
+  page,
+}, testInfo) => {
+  await page.addInitScript(observeAudioOutput);
+  // Delay the real discovery response; media and transport remain untouched.
+  await page.route(
+    "**/xrpc/place.stream.playback.getPlaybackServer?*",
+    async (route) => {
+      const response = await route.fetch();
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+      await route.fulfill({ response });
+    },
+  );
+  const player = await openLivePlayer(page);
+  const canvas = player.locator("canvas");
+  await expect(canvas).toHaveCSS("opacity", "1");
+  await expect(player).toHaveAttribute("data-playback-transport", "moq");
+  const picture = () =>
+    canvas.evaluate((element: HTMLCanvasElement) => element.toDataURL());
+  const first = await picture();
+  await expect.poll(picture).not.toBe(first);
+  await player.hover();
+  await player.locator('button[title="Unmute"]').click();
+  await expectAudioPlaying(page, testInfo);
+  await expect(player).toHaveAttribute("data-playback-transport", "moq");
+});
+
 test("Enhanced RTMP keeps same-height H264 tracks distinct and decodes supported AV1", async ({
   page,
 }, testInfo) => {

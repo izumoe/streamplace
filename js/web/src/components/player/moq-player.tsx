@@ -25,6 +25,8 @@ type MoQPlayerProps = {
   ref?: RefObject<PlayerBackendHandle | null>;
 };
 
+const FIRST_FRAME_TIMEOUT_MS = 2000;
+
 type Controls = {
   paused: Watch.Signals.Signal<boolean>;
   muted: Watch.Signals.Signal<boolean>;
@@ -71,6 +73,7 @@ export function MoQPlayer(props: MoQPlayerProps) {
     let effects: Watch.Signals.Effect | undefined;
     let lastVideoProgress = Date.now();
     let lastAudioProgress = lastVideoProgress;
+    let videoStarted = false;
     let videoTimestamp: number | undefined;
     let audioTimestamp: number | undefined;
 
@@ -91,12 +94,13 @@ export function MoQPlayer(props: MoQPlayerProps) {
       propsRef.current.onUnavailable();
     }
 
-    // One clock covers both a hung startup and a decoder that stops advancing.
+    // First-frame startup includes the SDK's intentional playout delay.
     const watchdog = setInterval(() => {
       const now = Date.now();
       const state = propsRef.current;
       const video = player?.renderer.out.timestamp.peek();
       const audio = player?.audio.out.timestamp.peek();
+      if (video !== undefined) videoStarted = true;
       const audioRenditions =
         player?.audio.source.out.catalog.peek()?.renditions;
       if (
@@ -117,8 +121,14 @@ export function MoQPlayer(props: MoQPlayerProps) {
       }
       videoTimestamp = video;
       audioTimestamp = audio;
+      const videoTimeout = videoStarted
+        ? STALL_TIMEOUT_MS
+        : Math.min(
+            STALL_TIMEOUT_MS,
+            FIRST_FRAME_TIMEOUT_MS + (player?.sync.out.delay.peek() ?? 0),
+          );
       if (
-        now - lastVideoProgress >= STALL_TIMEOUT_MS ||
+        now - lastVideoProgress >= videoTimeout ||
         now - lastAudioProgress >= STALL_TIMEOUT_MS
       ) {
         unavailable();
