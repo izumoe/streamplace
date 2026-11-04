@@ -297,11 +297,7 @@ func readFixture(ctx context.Context, engine muxl.Engine, path string) (*fixture
 					if err := units.Unmarshal(encoded); err != nil {
 						return nil, nil, err
 					}
-					for _, unit := range units {
-						if kind := unit[0] & 31; kind >= 1 && kind <= 5 {
-							packet.au = append(packet.au, unit)
-						}
-					}
+					packet.au = units
 				case *codecs.AV1:
 					var units av1.Bitstream
 					if err := units.Unmarshal(encoded); err != nil {

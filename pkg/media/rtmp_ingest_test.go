@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -121,11 +122,7 @@ func readRTMPFixture(t testing.TB, name string) rtmpFixture {
 				} else {
 					var nalus h264.AVCC
 					require.NoError(t, nalus.Unmarshal(data))
-					for _, nal := range nalus {
-						if typ := nal[0] & 31; typ >= 1 && typ <= 5 {
-							au = append(au, nal)
-						}
-					}
+					au = nalus
 				}
 				stamp := time.Duration(dts-videoBase) * time.Second / time.Duration(video.Timescale())
 				cts := time.Duration(samples.CtsOffsets[i]) * time.Second / time.Duration(video.Timescale())
@@ -368,19 +365,37 @@ func assertRTMPPlayableBatches(t *testing.T, audio rtmpFixture, videos []rtmpFix
 func TestRTMPDirectIngestPublishesMultitrackBeforeEOF(t *testing.T) {
 	gstinit.InitGST()
 	red := readRTMPFixture(t, "ertmp-red-h264.mp4")
+	require.True(t, slices.ContainsFunc(red.frames[0].AU, func(unit []byte) bool {
+		return len(unit) > 0 && unit[0]&31 == 6
+	}), "live ingest coverage must include the source's SEI alongside its picture")
 	blue := readRTMPFixture(t, "ertmp-blue-h264.mp4")
 	green := readRTMPFixture(t, "ertmp-green-av1.mp4")
 	for _, tc := range []struct {
-		name   string
-		videos []rtmpFixture
-		bursts bool
+		name       string
+		videos     []rtmpFixture
+		bursts     bool
+		delimiters bool
 	}{
-		{"mixed codecs", []rtmpFixture{red, blue, green}, false},
-		{"three H264", []rtmpFixture{red, blue, red}, false},
-		{"three H264 uneven arrival", []rtmpFixture{red, blue, red}, true},
+		{"mixed codecs", []rtmpFixture{red, blue, green}, false, false},
+		{"three H264", []rtmpFixture{red, blue, red}, false, false},
+		{"three H264 uneven arrival", []rtmpFixture{red, blue, red}, true, false},
+		{"three H264 access-unit delimiters", []rtmpFixture{red, blue, red}, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			session := rtmpSessionForFixtures(t, red, tc.videos...)
+			if tc.delimiters {
+				for range len(session.EventChan) {
+					event := <-session.EventChan
+					if packet, ok := event.(*RTMPVideoData); ok {
+						// Keep a valid AUD before the unchanged picture and SEI.
+						withDelimiter := *packet
+						withDelimiter.AU = append([][]byte{{0x09, 0xf0}}, packet.AU...)
+						event = &withDelimiter
+					}
+					session.EventChan <- event
+				}
+			}
+
 			if tc.bursts {
 				// Independent encoders can deliver one track ahead of another.
 				// Keep each track ordered, but deliver audio and then each video's
