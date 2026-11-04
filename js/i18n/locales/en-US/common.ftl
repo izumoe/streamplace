@@ -538,6 +538,7 @@ player-stats-group-bandwidth-help = Estimates depend on the transport. Selected 
 player-stats-no-processing = This transport does not report receiver processing timings.
 player-stats-no-data = No measurements available for this transport.
 player-stats-collecting = Collecting samples…
+player-stats-stale = Readings are stale. Waiting for a fresh sample.
 player-stats-chart-label = { $group } over the last 60 seconds
 player-stats-ttfb = TTFB
 

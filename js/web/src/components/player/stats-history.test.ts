@@ -50,6 +50,14 @@ it("does not duplicate a sample during strict-mode effect replay", () => {
   expect(appendStatsSample(first, stats, 1000)).toBe(first);
 });
 
+it("retains the newest snapshot when the clock has not advanced", () => {
+  const first = appendStatsSample([], stats, 1000);
+  const latest = { ...stats, buffered: 2 };
+  const next = appendStatsSample(first, latest, 1000);
+  expect(next).toEqual([{ at: 1000, stats: latest }]);
+  expect(first[0].stats).toBe(stats);
+});
+
 it("converts seconds and bits per second to each chart's units", () => {
   const values = {
     ...stats,

@@ -149,8 +149,10 @@ export function WebRTCPlayer({
         reconnectTimerRef.current = null;
         if (!cancelled && activeRef.current && !gaveUpRef.current) {
           // Tear down old connection, spin up a new one.
-          pcRef.current?.close();
+          stopStatsPolling();
+          const previous = pcRef.current;
           pcRef.current = null;
+          previous?.close();
           connect();
         }
       }, RECONNECT_DELAY_MS);
@@ -216,9 +218,10 @@ export function WebRTCPlayer({
       let hasReceivedFrames = false;
 
       statsIntervalRef.current = setInterval(async () => {
-        if (cancelled) return;
+        if (cancelled || pc !== pcRef.current) return;
         try {
           const stats = await pc.getStats();
+          if (cancelled || pc !== pcRef.current) return;
           let framesReceived = 0;
           let audioReceived = 0;
           let width = 0;
@@ -363,7 +366,7 @@ export function WebRTCPlayer({
 
       // Detect disconnection and schedule a reconnect.
       peerConnection.addEventListener("connectionstatechange", () => {
-        if (cancelled) return;
+        if (cancelled || peerConnection !== pcRef.current) return;
         const state = peerConnection.connectionState;
         if (
           state === "failed" ||
@@ -400,6 +403,7 @@ export function WebRTCPlayer({
       }
       pcRef.current?.close();
       pcRef.current = null;
+      video.srcObject = null;
     };
   }, [src, active, videoRef]);
 

@@ -10,6 +10,10 @@ import { observeAudioOutput } from "../../e2e-web/flows/audio-observer";
 
 declare global {
   interface Window {
+    webrtcStatsTest?: {
+      paused: boolean;
+      peers: Map<RTCPeerConnection, number>;
+    };
     loseMoqConnection?: () => Promise<void>;
     moqCodecSupport?: { codec: string; supported: boolean }[];
     moqVideoPressure?: {
@@ -670,9 +674,21 @@ test("MoQ connection loss falls back to a live transport that decodes video", as
 test("WebRTC exposes receiver processing, decode and jitter buffer timing", async ({
   page,
 }, testInfo) => {
-  await page.addInitScript(() =>
-    Object.defineProperty(window, "WebTransport", { value: undefined }),
-  );
+  await page.addInitScript(() => {
+    Object.defineProperty(window, "WebTransport", { value: undefined });
+    const state = {
+      paused: false,
+      peers: new Map<RTCPeerConnection, number>(),
+    };
+    window.webrtcStatsTest = state;
+    const getStats = RTCPeerConnection.prototype.getStats;
+    RTCPeerConnection.prototype.getStats = function (...args) {
+      state.peers.set(this, (state.peers.get(this) ?? 0) + 1);
+      if (state.paused)
+        return Promise.reject(new DOMException("Stats reporting suspended"));
+      return getStats.apply(this, args);
+    };
+  });
   const player = await openLivePlayer(page);
   await expect(player).toHaveAttribute("data-playback-transport", "webrtc");
   await expectVideoAdvancing(player.locator("video"));
@@ -712,6 +728,50 @@ test("WebRTC exposes receiver processing, decode and jitter buffer timing", asyn
   await page.screenshot({
     path: testInfo.outputPath("webrtc-timing-stats.png"),
   });
+  await page.evaluate(() => {
+    window.webrtcStatsTest!.paused = true;
+  });
+  await expect(
+    stats.getByText("Readings are stale. Waiting for a fresh sample.").first(),
+  ).toBeVisible();
+  await expect(stats.locator(".recharts-surface")).toHaveCount(0);
+  await expectVideoAdvancing(player.locator("video"));
+  await page.evaluate(() => {
+    window.webrtcStatsTest!.paused = false;
+  });
+  await expect(stats.locator("[data-stat=processingDelayMs]")).toContainText(
+    /\d+\.\d ms/,
+  );
+  await expect
+    .poll(() => stats.locator(".recharts-line-curve").count())
+    .toBeGreaterThan(0);
+
+  await page.evaluate(() => {
+    const peers = window.webrtcStatsTest!.peers;
+    const peer = [...peers.keys()].find(
+      (pc) => pc.connectionState === "connected",
+    )!;
+    peer.close();
+    // A local close does not emit the state event that network failure emits.
+    peer.dispatchEvent(new Event("connectionstatechange"));
+  });
+  // Embedded viewers fall back to HLS; the backend reconnect path is used
+  // by streamer monitors and is covered by the polling lifecycle test.
+  await expect(player).toHaveAttribute("data-playback-transport", "hls");
+  await expect
+    .poll(() =>
+      player
+        .locator("video")
+        .evaluate((video: HTMLVideoElement) => video.srcObject === null),
+    )
+    .toBe(true);
+  const oldPolls = await page.evaluate(
+    () => [...window.webrtcStatsTest!.peers.values()][0],
+  );
+  await expectVideoAdvancing(player.locator("video"));
+  expect(
+    await page.evaluate(() => [...window.webrtcStatsTest!.peers.values()][0]),
+  ).toBe(oldPolls);
 });
 
 test("a stats download failure leaves live playback running", async ({

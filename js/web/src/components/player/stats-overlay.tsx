@@ -44,6 +44,7 @@ const COLORS = [
   "var(--chart-3)",
   "var(--chart-4)",
 ];
+const STATS_STALE_MS = 3000;
 
 export default function StatsOverlay({
   stats,
@@ -63,11 +64,22 @@ export default function StatsOverlay({
   portalContainer?: RefObject<HTMLDivElement | null>;
 }) {
   const { t } = useTranslation();
-  const [history, setHistory] = useState<StatsSample[]>([]);
+  const [history, setHistory] = useState<StatsSample[]>(() =>
+    appendStatsSample([], stats, performance.now()),
+  );
+  const sample = history.at(-1)!;
+  // Synchronize before rendering children, so plots and current values agree.
+  if (sample.stats !== stats)
+    setHistory(appendStatsSample(history, stats, performance.now()));
+  const [expiredSample, setExpiredSample] = useState<PlayerStats | null>(null);
+  const stale = expiredSample === stats;
   useEffect(() => {
-    const at = performance.now();
-    setHistory((previous) => appendStatsSample(previous, stats, at));
-  }, [stats]);
+    const timeout = setTimeout(
+      () => setExpiredSample(stats),
+      Math.max(0, sample.at + STATS_STALE_MS - performance.now()),
+    );
+    return () => clearTimeout(timeout);
+  }, [stats, sample.at]);
 
   const compact = [
     "liveEdgeDelay",
@@ -94,7 +106,12 @@ export default function StatsOverlay({
         </span>
         <span>{protocol}</span>
       </div>
-      {primary && (
+      {stale && (
+        <p role="status" className="text-muted-foreground my-2">
+          {t("player-stats-stale")}
+        </p>
+      )}
+      {!stale && primary && (
         <div className="my-2">
           <div className="text-muted-foreground">{t(primary.label)}</div>
           <div className="mt-1 text-2xl font-medium tracking-tight tabular-nums">
@@ -103,13 +120,16 @@ export default function StatsOverlay({
         </div>
       )}
       <dl className="space-y-1">
-        {compact.slice(1).map((metric) => (
-          <Row
-            key={metric.key}
-            label={t(metric.label)}
-            value={formatValue(getMetricValue(stats, metric), metric.unit)}
-          />
-        ))}
+        {!stale &&
+          compact
+            .slice(1)
+            .map((metric) => (
+              <Row
+                key={metric.key}
+                label={t(metric.label)}
+                value={formatValue(getMetricValue(stats, metric), metric.unit)}
+              />
+            ))}
       </dl>
       <Sheet>
         <SheetTrigger
@@ -161,7 +181,7 @@ export default function StatsOverlay({
                 key={group}
                 group={group}
                 history={history}
-                stats={stats}
+                stats={stale ? null : stats}
               />
             ))}
           </div>
@@ -185,43 +205,48 @@ export default function StatsOverlay({
               </p>
             </div>
           )}
-          <details className="mx-4 mb-4 rounded-lg border p-3 text-xs">
-            <summary className="focus-visible:ring-ring cursor-pointer rounded font-medium focus-visible:ring-2">
-              {t("player-stats-stream-details")}
-            </summary>
-            <dl className="mt-3 space-y-2 font-mono">
-              <Row
-                label={t("player-stats-resolution")}
-                value={`${stats.width}×${stats.height}`}
-              />
-              <Row
-                label={t("player-stats-viewport")}
-                value={`${stats.viewportWidth}×${stats.viewportHeight}`}
-              />
-              {stats.fps !== undefined && (
-                <Row label="FPS" value={stats.fps.toFixed(1)} />
-              )}
-              {stats.droppedFrames !== undefined && (
+          {!stale && (
+            <details className="mx-4 mb-4 rounded-lg border p-3 text-xs">
+              <summary className="focus-visible:ring-ring cursor-pointer rounded font-medium focus-visible:ring-2">
+                {t("player-stats-stream-details")}
+              </summary>
+              <dl className="mt-3 space-y-2 font-mono">
                 <Row
-                  label={t("player-stats-skipped")}
-                  value={`${stats.droppedFrames} / ${stats.totalFrames}`}
+                  label={t("player-stats-resolution")}
+                  value={`${stats.width}×${stats.height}`}
                 />
-              )}
-              {stats.codecs && (
-                <Row label={t("player-stats-codecs")} value={stats.codecs} />
-              )}
-              <Row label={t("player-stats-protocol")} value={protocol} />
-              <Row label={t("player-stats-latency-mode")} value={latencyMode} />
-              <Row
-                label={t("player-stats-render-surface")}
-                value={renderSurface}
-              />
-              {stats.hlsVersion && (
-                <Row label="hls.js version" value={stats.hlsVersion} />
-              )}
-              <Row label={t("player-stats-session")} value={sessionId} />
-            </dl>
-          </details>
+                <Row
+                  label={t("player-stats-viewport")}
+                  value={`${stats.viewportWidth}×${stats.viewportHeight}`}
+                />
+                {stats.fps !== undefined && (
+                  <Row label="FPS" value={stats.fps.toFixed(1)} />
+                )}
+                {stats.droppedFrames !== undefined && (
+                  <Row
+                    label={t("player-stats-skipped")}
+                    value={`${stats.droppedFrames} / ${stats.totalFrames}`}
+                  />
+                )}
+                {stats.codecs && (
+                  <Row label={t("player-stats-codecs")} value={stats.codecs} />
+                )}
+                <Row label={t("player-stats-protocol")} value={protocol} />
+                <Row
+                  label={t("player-stats-latency-mode")}
+                  value={latencyMode}
+                />
+                <Row
+                  label={t("player-stats-render-surface")}
+                  value={renderSurface}
+                />
+                {stats.hlsVersion && (
+                  <Row label="hls.js version" value={stats.hlsVersion} />
+                )}
+                <Row label={t("player-stats-session")} value={sessionId} />
+              </dl>
+            </details>
+          )}
         </SheetContent>
       </Sheet>
     </div>
@@ -235,7 +260,7 @@ function StatsChart({
 }: {
   group: StatsGroup;
   history: StatsSample[];
-  stats: PlayerStats;
+  stats: PlayerStats | null;
 }) {
   const { t } = useTranslation();
   const groupMetrics = STATS_METRICS.filter((metric) => metric.group === group);
@@ -255,7 +280,11 @@ function StatsChart({
       <p className="text-muted-foreground mt-1 min-h-12 text-xs">
         {t(`player-stats-group-${group}-help`)}
       </p>
-      {metrics.length === 0 ? (
+      {stats === null ? (
+        <p className="text-muted-foreground flex h-40 items-center text-xs">
+          {t("player-stats-stale")}
+        </p>
+      ) : metrics.length === 0 ? (
         <p className="text-muted-foreground flex h-40 items-center text-xs">
           {t(
             group === "processing"

@@ -1,4 +1,4 @@
-import { act } from "react";
+import { act, Profiler } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { PlayerStats } from "./player";
@@ -137,4 +137,61 @@ it("keeps a metric's color when another reading becomes available", async () => 
   expect(color).not.toBe("");
   await render({ ...stats, availableBandwidth: 4_000_000, bitrate: 2_000_000 });
   expect(swatch().style.background).toBe(color);
+});
+
+it("expires readings without another report and recovers on a fresh sample", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+  try {
+    await render();
+    await act(async () => vi.advanceTimersByTimeAsync(3000));
+    expect(container.textContent).toContain("player-stats-stale");
+    expect(container.textContent).not.toContain("1.50 s");
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>(
+          'button[aria-label="player-stats-open-diagnostics"]',
+        )!
+        .click(),
+    );
+    const panel = document.querySelector("[data-player-diagnostics]")!;
+    expect(panel.querySelectorAll(".recharts-surface")).toHaveLength(0);
+    expect(panel.textContent).not.toContain("1.50 s");
+    await render({ ...stats, liveEdgeDelay: 2 });
+    expect(container.textContent).not.toContain("player-stats-stale");
+    expect(container.textContent).toContain("2.00 s");
+    expect(panel.querySelectorAll(".recharts-surface").length).toBeGreaterThan(
+      0,
+    );
+    await act(async () => root.unmount());
+    // Base UI's animation-frame fallback finishes after the portal unmounts.
+    await act(async () => vi.advanceTimersByTimeAsync(100));
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("commits each incoming snapshot once, with its history already updated", async () => {
+  vi.spyOn(performance, "now").mockReturnValue(1000);
+  const commits: string[] = [];
+  const update = (value: PlayerStats) =>
+    act(async () =>
+      root.render(
+        <Profiler id="stats" onRender={(_, phase) => commits.push(phase)}>
+          <StatsOverlay
+            stats={value}
+            live
+            protocol="MoQ"
+            latencyMode="Low"
+            renderSurface="canvas"
+            sessionId="test-session"
+          />
+        </Profiler>,
+      ),
+    );
+  await update(stats);
+  commits.length = 0;
+  await update({ ...stats, liveEdgeDelay: 2 });
+  expect(commits).toEqual(["update"]);
+  expect(container.textContent).toContain("2.00 s");
 });

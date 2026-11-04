@@ -119,7 +119,10 @@ export function appendStatsSample(
   at: number,
 ): StatsSample[] {
   const last = history.at(-1);
-  if (last?.stats === stats || (last && at <= last.at)) return history;
+  if (last?.stats === stats) return history;
+  // Reduced-precision clocks can give distinct snapshots the same timestamp.
+  if (last && at <= last.at)
+    return [...history.slice(0, -1), { at: last.at, stats }];
   const next = history.filter((point) => point.at >= at - STATS_WINDOW_MS);
   // Do not draw an apparently healthy line through a missing polling interval.
   if (next.length && last && at - last.at > 1500)
