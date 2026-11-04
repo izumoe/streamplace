@@ -109,7 +109,7 @@ jobs:
             DOCKER_REF="${REGISTRY_IMAGE}:builder-no-darwin" \
             DOCKER_PWD_MOUNT_PATH=/app \
             DOCKER_OPTS="-v $BUILD_CACHE_DIR:/cache -e SCCACHE_DIR=/cache/sccache -e SCCACHE_CACHE_SIZE=2G -e RUSTC_WRAPPER=sccache -e CARGO_INCREMENTAL=0 -e CARGO_HOME=/cache/cargo -e GOMODCACHE=/cache/go-mod -e GOCACHE=/cache/go-build -e STREAMPLACE_IGNORE_LEAKS=true -e STREAMPLACE_TEST_COUNT=1 -e CI=true -e GITHUB_ACTION=true -e GITHUB_REF_TYPE -e GITHUB_REF_NAME -e GITHUB_HEAD_REF -e GITHUB_REPOSITORY" \
-            IN_CONTAINER_CMD="trap 'sccache --show-stats' EXIT; pnpm config set --global store-dir /cache/pnpm && make app && make linux-amd64 && make test-vod && make static-test && make check && make ci-lexicons && make linux-arm64 && go run ./pkg/config/git/git.go -v > sp-version.txt"
+            IN_CONTAINER_CMD="trap 'sccache --show-stats' EXIT; git config --global --add safe.directory /app && pnpm config set --global store-dir /cache/pnpm && make app && make linux-amd64 && make test-vod && make static-test && make check && make ci-lexicons && make linux-arm64 && go run ./pkg/config/git/git.go -v > sp-version.txt"
 
       - name: Restore cache ownership
         if:
@@ -242,7 +242,7 @@ jobs:
             DOCKER_REF="${REGISTRY_IMAGE}:builder-no-darwin" \
             DOCKER_PWD_MOUNT_PATH=/app \
             DOCKER_OPTS="$options" \
-            IN_CONTAINER_CMD="trap 'sccache --show-stats' EXIT; pnpm config set --global store-dir /cache/pnpm && $command"
+            IN_CONTAINER_CMD="trap 'sccache --show-stats' EXIT; git config --global --add safe.directory /app && pnpm config set --global store-dir /cache/pnpm && $command"
 
       - name: Restore cache ownership
         if:
