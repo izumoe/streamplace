@@ -66,6 +66,23 @@ tag to exist and derives release download URLs from `GITHUB_REPOSITORY`; it does
 not create tags or contact the former GitLab package registry. A new tag starts
 a release; rerunning an already published tag does not replace its assets.
 
+## Build caches
+
+CI loads the builder through Buildx using the toolchain workflow's registry layer
+cache. It still evaluates the current Dockerfile, so a PR does not depend on its
+new pinned image already being published.
+
+Build jobs retain a bounded sccache disk cache for C/C++ and Rust, plus Go, Cargo
+and pnpm caches. Android also retains Gradle dependencies and distributions.
+Caches exclude final frontend bundles, native build trees and signing keys.
+Source and compiler changes are checked by the compiler caches; frontend exports
+are rebuilt from the current checkout. The first run populates these caches.
+
+The builder includes sccache. For local Rust builds, set `RUSTC_WRAPPER=sccache`;
+Meson detects it automatically for native C/C++, and the cross files use it when
+available. Existing local setups still build without sccache. Use
+`sccache --show-stats` to check whether a rebuild actually reused compilation.
+
 ## Building and signing separately
 
 The macOS node binaries need the Developer ID certificate after they are

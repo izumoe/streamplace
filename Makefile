@@ -714,6 +714,11 @@ DOCKER_OPTS?=
 DOCKER_PWD_MOUNT_PATH?=$$(pwd)
 .PHONY: in-container
 in-container: docker-build-builder
+	$(MAKE) run-in-container
+
+# CI has already loaded the builder with its registry layer cache.
+.PHONY: run-in-container
+run-in-container:
 	$(DOCKER_BIN) run $(DOCKER_OPTS) -v $$(pwd):$(DOCKER_PWD_MOUNT_PATH) -w $(DOCKER_PWD_MOUNT_PATH) --rm $(DOCKER_REF) bash -c "$(IN_CONTAINER_CMD)"
 
 .PHONY: docker-shell

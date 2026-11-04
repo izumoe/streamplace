@@ -53,6 +53,15 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+    env:
+      BUILD_CACHE_DIR: ${{ github.workspace }}/../.streamplace-cache
+      CACHE_PATHS: |
+        ${{ github.workspace }}/../.streamplace-cache/sccache
+        ${{ github.workspace }}/../.streamplace-cache/go-mod
+        ${{ github.workspace }}/../.streamplace-cache/go-build
+        ${{ github.workspace }}/../.streamplace-cache/cargo/registry
+        ${{ github.workspace }}/../.streamplace-cache/cargo/git
+        ${{ github.workspace }}/../.streamplace-cache/pnpm
     steps:
       - name: Maximize build space
         run: |
@@ -64,18 +73,55 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha }}
 
+      - name: Restore build caches
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.CACHE_PATHS }}
+          key:
+            ${{ runner.os }}-${{ runner.arch }}-linux-v1-${{
+            hashFiles('.ci/dockerfile-hash.yaml', 'go.sum', 'Cargo.lock',
+            'pnpm-lock.yaml', 'subprojects/*.wrap') }}-${{ github.sha }}-${{
+            github.run_attempt }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-linux-v1-${{ hashFiles('.ci/dockerfile-hash.yaml', 'go.sum', 'Cargo.lock', 'pnpm-lock.yaml', 'subprojects/*.wrap') }}-
+            ${{ runner.os }}-${{ runner.arch }}-linux-v1-
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Load current builder image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/build.Dockerfile
+          target: builder-no-darwin
+          load: true
+          tags: ${{ env.REGISTRY_IMAGE }}:builder-no-darwin
+          cache-from:
+            type=registry,ref=${{ env.REGISTRY_IMAGE }}:builder-buildcache
+
       - name: Build Linux binaries and run checks
+        id: build
         run: |
-          sudo apt install podman -y
-          # The runner's crun must support the OCI version emitted by Podman.
-          sudo curl -fsSL -o /usr/bin/crun https://github.com/containers/crun/releases/download/1.28/crun-1.28-linux-amd64
-          sudo chmod +x /usr/bin/crun
-          make in-container \
-            BUILDER_TARGET=builder-no-darwin \
+          mkdir -p "$BUILD_CACHE_DIR"
+          make run-in-container \
+            DOCKER_BIN=docker \
+            DOCKER_REF="${REGISTRY_IMAGE}:builder-no-darwin" \
             DOCKER_PWD_MOUNT_PATH=/app \
-            DOCKER_BUILD_OPTS="--layers --cache-from ghcr.io/izumoe/streamplace" \
-            DOCKER_OPTS="-e STREAMPLACE_IGNORE_LEAKS=true -e STREAMPLACE_TEST_COUNT=1 -e CI=true -e GITHUB_ACTION=true -e GITHUB_REF_TYPE -e GITHUB_REF_NAME -e GITHUB_HEAD_REF -e GITHUB_REPOSITORY" \
-            IN_CONTAINER_CMD="make app && make linux-amd64 && make test-vod && make static-test && make check && make ci-lexicons && make linux-arm64 && go run ./pkg/config/git/git.go -v > sp-version.txt"
+            DOCKER_OPTS="-v $BUILD_CACHE_DIR:/cache -e SCCACHE_DIR=/cache/sccache -e SCCACHE_CACHE_SIZE=2G -e RUSTC_WRAPPER=sccache -e CARGO_INCREMENTAL=0 -e CARGO_HOME=/cache/cargo -e GOMODCACHE=/cache/go-mod -e GOCACHE=/cache/go-build -e STREAMPLACE_IGNORE_LEAKS=true -e STREAMPLACE_TEST_COUNT=1 -e CI=true -e GITHUB_ACTION=true -e GITHUB_REF_TYPE -e GITHUB_REF_NAME -e GITHUB_HEAD_REF -e GITHUB_REPOSITORY" \
+            IN_CONTAINER_CMD="trap 'sccache --show-stats' EXIT; pnpm config set --global store-dir /cache/pnpm && make app && make linux-amd64 && make test-vod && make static-test && make check && make ci-lexicons && make linux-arm64 && go run ./pkg/config/git/git.go -v > sp-version.txt"
+
+      - name: Restore cache ownership
+        if: ${{ !cancelled() && steps.build.outcome != 'skipped' }}
+        run: sudo chown -R "$(id -u):$(id -g)" "$BUILD_CACHE_DIR"
+      - name: Save build caches
+        if:
+          ${{ !cancelled() && steps.build.outcome != 'skipped' &&
+          steps.cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.CACHE_PATHS }}
+          key: ${{ steps.cache.outputs.cache-primary-key }}
 
       - name: Publish Test Report
         if: success() || failure()
@@ -113,6 +159,17 @@ jobs:
     if: needs.plan.outputs.build == 'true'
     name: android packages
     runs-on: ubuntu-latest
+    env:
+      BUILD_CACHE_DIR: ${{ github.workspace }}/../.streamplace-cache
+      CACHE_PATHS: |
+        ${{ github.workspace }}/../.streamplace-cache/sccache
+        ${{ github.workspace }}/../.streamplace-cache/go-mod
+        ${{ github.workspace }}/../.streamplace-cache/go-build
+        ${{ github.workspace }}/../.streamplace-cache/cargo/registry
+        ${{ github.workspace }}/../.streamplace-cache/cargo/git
+        ${{ github.workspace }}/../.streamplace-cache/pnpm
+        ${{ github.workspace }}/../.streamplace-cache/gradle/wrapper
+        ${{ github.workspace }}/../.streamplace-cache/gradle/caches/modules-2
     steps:
       - name: Maximize build space
         run: |
@@ -124,7 +181,35 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha }}
 
+      - name: Restore build caches
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.CACHE_PATHS }}
+          key:
+            ${{ runner.os }}-${{ runner.arch }}-android-v1-${{
+            hashFiles('.ci/dockerfile-hash.yaml', 'go.sum', 'Cargo.lock',
+            'pnpm-lock.yaml', 'subprojects/*.wrap') }}-${{ github.sha }}-${{
+            github.run_attempt }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-android-v1-${{ hashFiles('.ci/dockerfile-hash.yaml', 'go.sum', 'Cargo.lock', 'pnpm-lock.yaml', 'subprojects/*.wrap') }}-
+            ${{ runner.os }}-${{ runner.arch }}-android-v1-
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Load current builder image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/build.Dockerfile
+          target: builder-no-darwin
+          load: true
+          tags: ${{ env.REGISTRY_IMAGE }}:builder-no-darwin
+          cache-from:
+            type=registry,ref=${{ env.REGISTRY_IMAGE }}:builder-buildcache
+
       - name: Build Android packages
+        id: build
         env:
           ANDROID_KEYSTORE_BASE64:
             ${{ startsWith(github.ref, 'refs/tags/v') &&
@@ -137,11 +222,9 @@ jobs:
             secrets.ANDROID_KEYSTORE_ALIAS || 'alias_name' }}
           RELEASE_BUILD: ${{ startsWith(github.ref, 'refs/tags/v') }}
         run: |
-          sudo apt install podman -y
-          sudo curl -fsSL -o /usr/bin/crun https://github.com/containers/crun/releases/download/1.28/crun-1.28-linux-amd64
-          sudo chmod +x /usr/bin/crun
+          mkdir -p "$BUILD_CACHE_DIR"
           command="bash hack/test-android-signing.sh && make app && make android-e2e"
-          options="-e CI=true -e GITHUB_ACTION=true -e GITHUB_REF_TYPE -e GITHUB_REF_NAME -e GITHUB_HEAD_REF -e GITHUB_REPOSITORY"
+          options="-v $BUILD_CACHE_DIR:/cache -e SCCACHE_DIR=/cache/sccache -e SCCACHE_CACHE_SIZE=2G -e RUSTC_WRAPPER=sccache -e CARGO_INCREMENTAL=0 -e CARGO_HOME=/cache/cargo -e GOMODCACHE=/cache/go-mod -e GOCACHE=/cache/go-build -e GRADLE_USER_HOME=/cache/gradle -e CI=true -e GITHUB_ACTION=true -e GITHUB_REF_TYPE -e GITHUB_REF_NAME -e GITHUB_HEAD_REF -e GITHUB_REPOSITORY"
           if [ "$RELEASE_BUILD" = true ]; then
             if [ -z "$ANDROID_KEYSTORE_BASE64" ] || [ -z "$ANDROID_KEYSTORE_PASSWORD" ]; then
               echo "Tagged Android builds require ANDROID_KEYSTORE_BASE64 and ANDROID_KEYSTORE_PASSWORD secrets" >&2
@@ -151,12 +234,24 @@ jobs:
             # E2e packages must use a disposable key, including on release tags.
             command="bash hack/test-android-signing.sh && make android && rm my-release-key.keystore && env -u ANDROID_KEYSTORE_BASE64 -u ANDROID_KEYSTORE_PASSWORD -u ANDROID_KEYSTORE_ALIAS make android-e2e"
           fi
-          make in-container \
-            BUILDER_TARGET=builder-no-darwin \
+          make run-in-container \
+            DOCKER_BIN=docker \
+            DOCKER_REF="${REGISTRY_IMAGE}:builder-no-darwin" \
             DOCKER_PWD_MOUNT_PATH=/app \
-            DOCKER_BUILD_OPTS="--layers --cache-from ghcr.io/izumoe/streamplace" \
             DOCKER_OPTS="$options" \
-            IN_CONTAINER_CMD="$command"
+            IN_CONTAINER_CMD="trap 'sccache --show-stats' EXIT; pnpm config set --global store-dir /cache/pnpm && $command"
+
+      - name: Restore cache ownership
+        if: ${{ !cancelled() && steps.build.outcome != 'skipped' }}
+        run: sudo chown -R "$(id -u):$(id -g)" "$BUILD_CACHE_DIR"
+      - name: Save build caches
+        if:
+          ${{ !cancelled() && steps.build.outcome != 'skipped' &&
+          steps.cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.CACHE_PATHS }}
+          key: ${{ steps.cache.outputs.cache-primary-key }}
 
       - name: Upload Android e2e APK
         uses: actions/upload-artifact@v4
@@ -362,12 +457,48 @@ jobs:
             runs-on: macos-15-intel
             cmd: make
             xcode-version: "16.4"
+    env:
+      BUILD_CACHE_DIR: ${{ github.workspace }}/../.streamplace-cache
+      CACHE_PATHS: |
+        ${{ github.workspace }}/../.streamplace-cache/sccache
+        ${{ github.workspace }}/../.streamplace-cache/go-mod
+        ${{ github.workspace }}/../.streamplace-cache/go-build
+        ${{ github.workspace }}/../.streamplace-cache/cargo/registry
+        ${{ github.workspace }}/../.streamplace-cache/cargo/git
+        ${{ github.workspace }}/../.streamplace-cache/pnpm
+        ~/Library/Caches/CocoaPods
+      SCCACHE_DIR: ${{ github.workspace }}/../.streamplace-cache/sccache
+      SCCACHE_CACHE_SIZE: 2G
+      RUSTC_WRAPPER: sccache
+      CARGO_INCREMENTAL: "0"
+      CARGO_HOME: ${{ github.workspace }}/../.streamplace-cache/cargo
+      GOMODCACHE: ${{ github.workspace }}/../.streamplace-cache/go-mod
+      GOCACHE: ${{ github.workspace }}/../.streamplace-cache/go-build
     steps:
       - name: Check out code
         uses: actions/checkout@v4.1.7
         with:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Restore build caches
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.CACHE_PATHS }}
+          key:
+            ${{ runner.os }}-${{ runner.arch }}-darwin-v1-${{ matrix.name }}-${{
+            matrix.xcode-version }}-${{ hashFiles('.ci/dockerfile-hash.yaml',
+            'go.sum', 'Cargo.lock', 'pnpm-lock.yaml', 'subprojects/*.wrap')
+            }}-${{ github.sha }}-${{ github.run_attempt }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-darwin-v1-${{ matrix.name }}-${{ matrix.xcode-version }}-${{ hashFiles('.ci/dockerfile-hash.yaml', 'go.sum', 'Cargo.lock', 'pnpm-lock.yaml', 'subprojects/*.wrap') }}-
+            ${{ runner.os }}-${{ runner.arch }}-darwin-v1-${{ matrix.name }}-${{ matrix.xcode-version }}-
+
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.11
+        with:
+          version: v0.19.0
 
       - uses: actions/setup-node@v4
         with:
@@ -378,6 +509,7 @@ jobs:
           xcode-version: ${{ matrix.xcode-version }}
 
       - name: Build Streamplace
+        id: build
         env:
           STREAMPLACE_TEST_COUNT: "1"
           STREAMPLACE_IGNORE_LEAKS: "true"
@@ -385,6 +517,7 @@ jobs:
         run: |
           npm install -g corepack@latest \
           && corepack enable \
+          && pnpm config set --global store-dir "$BUILD_CACHE_DIR/pnpm" \
           && export GOTOOLCHAIN=go1.26.10 \
           && brew install go llvm \
           && rustup target add wasm32-wasip1 \
@@ -395,6 +528,15 @@ jobs:
           && python -m pip install meson \
           && PATH="/opt/homebrew/opt/llvm/bin:$PATH" \
           && ${{ matrix.cmd }}
+
+      - name: Save build caches
+        if:
+          ${{ !cancelled() && steps.build.outcome != 'skipped' &&
+          steps.cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.CACHE_PATHS }}
+          key: ${{ steps.cache.outputs.cache-primary-key }}
 
       - name: Stage macOS release archive
         if: startsWith(github.ref, 'refs/tags/v') && matrix.name != 'ios'

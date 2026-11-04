@@ -72,6 +72,14 @@ RUN curl -L https://github.com/golangci/golangci-lint/releases/download/v${GOLAN
   && rm -rf golangci-lint.tar.gz golangci-lint-${GOLANGCI_LINT_VERSION}-linux-amd64
 
 RUN gem install fpm
+
+# Use the portable binary so compiler caching does not need its own Rust build.
+RUN curl -fsSL https://github.com/mozilla/sccache/releases/download/v0.19.0/sccache-v0.19.0-x86_64-unknown-linux-musl.tar.gz -o /tmp/sccache.tar.gz \
+  && echo 'aa73c7270c997894038c0d8f0d297865f57569e1687883322bc431713d4bb9dd  /tmp/sccache.tar.gz' | sha256sum -c - \
+  && tar -xzf /tmp/sccache.tar.gz -C /tmp \
+  && install /tmp/sccache-v0.19.0-x86_64-unknown-linux-musl/sccache /usr/local/bin/sccache \
+  && rm -rf /tmp/sccache.tar.gz /tmp/sccache-v0.19.0-x86_64-unknown-linux-musl
+
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=false
 ENV STREAMPLACE_TEST_POSTGRES_COMMAND="install -d -o postgres -g postgres -m 3775 /var/run/postgresql/14-main.pg_stat_tmp && sudo -u postgres /usr/lib/postgresql/14/bin/postgres -D /etc/postgresql/14/main/"
 ENV STREAMPLACE_TEST_POSTGRES_URL="postgresql://postgres:postgres@localhost:5432/streamplace"
