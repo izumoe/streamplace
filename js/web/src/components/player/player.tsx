@@ -311,13 +311,18 @@ export function Player({
     onPlaying?.();
   }, [onPlaying]);
 
-  const handleMoqUnavailable = useCallback(() => {
-    if (videoRef.current) {
-      videoRef.current.muted = moqMuted;
-      videoRef.current.volume = moqVolume;
-    }
-    setMoqUnavailableFor(src);
-  }, [src, moqMuted, moqVolume]);
+  const handleMoqUnavailable = useCallback(
+    (reason?: string, error?: unknown) => {
+      if (reason)
+        console.warn("[moq-player] falling back:", reason, error ?? "");
+      if (videoRef.current) {
+        videoRef.current.muted = moqMuted;
+        videoRef.current.volume = moqVolume;
+      }
+      setMoqUnavailableFor(src);
+    },
+    [src, moqMuted, moqVolume],
+  );
 
   const toggleMoqPlay = useCallback(() => {
     setMoqPaused(playing);

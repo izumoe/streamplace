@@ -16,7 +16,7 @@ type MoQPlayerProps = {
   paused: boolean;
   muted: boolean;
   volume: number;
-  onUnavailable: () => void;
+  onUnavailable: (reason?: string, error?: unknown) => void;
   onPlaying: () => void;
   onBufferingChange: (buffering: boolean) => void;
   onQualitiesChange: (qualities: QualityOption[]) => void;
@@ -88,10 +88,10 @@ export function MoQPlayer(props: MoQPlayerProps) {
       renditionsRef.current = [];
     }
 
-    function unavailable() {
+    function unavailable(reason?: string, error?: unknown) {
       if (stopped) return;
       close();
-      propsRef.current.onUnavailable();
+      propsRef.current.onUnavailable(reason, error);
     }
 
     // First-frame startup includes the SDK's intentional playout delay.
@@ -131,7 +131,13 @@ export function MoQPlayer(props: MoQPlayerProps) {
         now - lastVideoProgress >= videoTimeout ||
         now - lastAudioProgress >= STALL_TIMEOUT_MS
       ) {
-        unavailable();
+        unavailable(
+          now - lastVideoProgress >= videoTimeout
+            ? videoStarted
+              ? "video stalled"
+              : "first frame timed out"
+            : "audio stalled",
+        );
         return;
       }
       if (!player) return;
@@ -224,7 +230,8 @@ export function MoQPlayer(props: MoQPlayerProps) {
             return;
           }
           const floor = getMoqPlaybackFloor(catalog, publicationJitter.peek());
-          if (floor === undefined) return unavailable();
+          if (floor === undefined)
+            return unavailable("invalid publication timing");
           const requiredDelay = Watch.Net.Time.Milli(floor);
           publicationJitter.set(requiredDelay);
           // Signals propagate asynchronously; wait for the SDK to size its buffer.
@@ -253,7 +260,11 @@ export function MoQPlayer(props: MoQPlayerProps) {
           const stalled = effect.get(currentPlayer.video.out.stalled);
           const error = effect.get(currentConnection.error);
           const unsupported = effect.get(currentPlayer.video.source.out.error);
-          if ((error || unsupported) && !paused) return unavailable();
+          if ((error || unsupported) && !paused)
+            return unavailable(
+              "connection or video source failed",
+              error || unsupported,
+            );
           if (paused || stalled) waitingToPlay = true;
           propsRef.current.onBufferingChange(!paused && stalled);
         });
@@ -284,8 +295,8 @@ export function MoQPlayer(props: MoQPlayerProps) {
             target?.name ? renditionsRef.current.indexOf(target.name) : -1,
           );
         });
-      } catch {
-        if (!stopped) unavailable();
+      } catch (error) {
+        if (!stopped) unavailable("startup failed", error);
       }
     }
     void start();

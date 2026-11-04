@@ -115,7 +115,7 @@ vi.mock("@moq/watch", async (original) => {
 
 let container: HTMLDivElement;
 let root: Root;
-let unavailable = vi.fn<() => void>();
+let unavailable = vi.fn<(reason?: string, error?: unknown) => void>();
 let stats: PlayerStats | undefined;
 
 beforeEach(async () => {
@@ -148,7 +148,7 @@ beforeEach(async () => {
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
-  unavailable = vi.fn<() => void>();
+  unavailable = vi.fn<(reason?: string, error?: unknown) => void>();
   await import("@moq/watch");
 });
 
@@ -312,6 +312,10 @@ it.each([
     expect(unavailable).not.toHaveBeenCalled();
     await act(async () => vi.advanceTimersByTimeAsync(1));
     expect(unavailable).toHaveBeenCalledOnce();
+    expect(unavailable).toHaveBeenCalledWith(
+      "first frame timed out",
+      undefined,
+    );
   },
 );
 
