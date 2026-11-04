@@ -157,6 +157,8 @@ type CLI struct {
 	MoqAddr                     string
 	MoqURL                      string
 	MoqRelayURL                 string
+	MoqStatsURLs                []string
+	MoqStatsTier                string
 	BehindHTTPSProxy            bool
 	SegmentDebugDir             string
 	AdminDIDs                   []string
@@ -1079,6 +1081,18 @@ func (cli *CLI) NewCommand(name string) *urfavecli.Command {
 				Destination: &cli.MoqRelayURL,
 				Sources:     urfavecli.EnvVars("SP_MOQ_RELAY_URL"),
 			},
+			&urfavecli.StringSliceFlag{
+				Name:        "moq-stats-url",
+				Usage:       "private MoQ URL of an end-user stats broadcast; repeat for every relay node in the playback namespace (never advertise these URLs)",
+				Destination: &cli.MoqStatsURLs,
+				Sources:     urfavecli.EnvVars("SP_MOQ_STATS_URL"),
+			},
+			&urfavecli.StringFlag{
+				Name:        "moq-stats-tier",
+				Usage:       "end-user traffic tier in the configured stats broadcasts; empty selects the default tier, which must exclude cluster traffic",
+				Destination: &cli.MoqStatsTier,
+				Sources:     urfavecli.EnvVars("SP_MOQ_STATS_TIER"),
+			},
 			&urfavecli.StringFlag{
 				Name:        "moq-url",
 				Usage:       "override the moqt:// url peers use to reach this node's Media over QUIC listener (default: server-host on moq-addr's port)",
@@ -1476,6 +1490,35 @@ func (cli *CLI) CheckConfig() error {
 			errs = append(errs, fmt.Errorf("--moq-relay-url requires the websocket replicator"))
 		}
 	}
+	if len(cli.MoqStatsURLs) > 0 && cli.MoqRelayURL == "" {
+		errs = append(errs, fmt.Errorf("--moq-stats-url requires --moq-relay-url"))
+	}
+	seenStats := make(map[string]bool)
+	for _, raw := range cli.MoqStatsURLs {
+		u, err := url.Parse(raw)
+		if err != nil || u.Hostname() == "" || (u.Scheme != "https" && u.Scheme != "moqt") || u.Fragment != "" || u.User != nil {
+			errs = append(errs, fmt.Errorf("--moq-stats-url must be an absolute HTTPS or moqt URL without userinfo or a fragment"))
+			continue
+		}
+		port := u.Port()
+		if port == "" {
+			port = "443"
+		}
+		broadcast := net.JoinHostPort(strings.ToLower(u.Hostname()), port) + "/" + strings.Trim(u.Path, "/")
+		if seenStats[broadcast] {
+			errs = append(errs, fmt.Errorf("--moq-stats-url must not contain duplicate broadcasts"))
+		}
+		seenStats[broadcast] = true
+	}
+	if cli.MoqStatsTier != "" {
+		for _, part := range strings.Split(cli.MoqStatsTier, "/") {
+			if part == "" || part == "." || part == ".." {
+				errs = append(errs, fmt.Errorf("--moq-stats-tier must be a normalized track prefix"))
+				break
+			}
+		}
+	}
+
 	if cli.TranscoderURL != "" {
 		u, err := url.Parse(cli.TranscoderURL)
 		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.Fragment != "" {

@@ -69,7 +69,9 @@ type MediaManager struct {
 
 	// hlsSessions tracks live HLS playback sessions by (streamer, sid) so
 	// stateless HLS requests feed the viewer count. See hls_sessions.go.
-	hlsSessions *hlsSessionTracker
+	hlsSessions *playbackSessionTracker
+	moqSessions *playbackSessionTracker
+	moqViewers  moqViewerCounts
 	// viewRecorder, when set, is told about every new playback session
 	// (see SetViewRecorder).
 	viewRecorder func(streamer string)
@@ -166,10 +168,11 @@ func MakeMediaManager(ctx context.Context, cli *config.CLI, signer crypto.Signer
 		localDB:      ldb,
 		transcoders:  map[string]*streamTranscoder{},
 	}
-	mm.hlsSessions = newHLSSessionTracker(hlsSessionTTL,
+	mm.hlsSessions = newPlaybackSessionTracker(playbackSessionTTL,
 		func(streamer string) { mm.IncrementViewerCount(streamer, "hls") },
 		func(streamer string) { mm.DecrementViewerCount(streamer, "hls") },
 	)
+	mm.initMoqViewers()
 	go mm.runCacheExpiry(ctx)
 	return mm, nil
 }

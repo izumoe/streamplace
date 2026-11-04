@@ -45,10 +45,11 @@ Media over QUIC playback advertised by the active origin
 
 **Properties:**
 
-| Name   | Type     | Req'd | Description                                                      | Constraints   |
-| ------ | -------- | ----- | ---------------------------------------------------------------- | ------------- |
-| `url`  | `string` | ✅    | Origin endpoint, including its certificate hash when self-signed | Format: `uri` |
-| `name` | `string` | ✅    | Broadcast path to subscribe to at the origin                     |               |
+| Name         | Type     | Req'd | Description                                                                             | Constraints   |
+| ------------ | -------- | ----- | --------------------------------------------------------------------------------------- | ------------- |
+| `url`        | `string` | ✅    | Origin endpoint, including its certificate hash when self-signed                        | Format: `uri` |
+| `name`       | `string` | ✅    | Broadcast path to subscribe to at the origin                                            |               |
+| `sessionUrl` | `string` | ❌    | Origin-owned endpoint for best-effort player session reporting; optional on older nodes | Format: `uri` |
 
 ---
 
@@ -107,6 +108,11 @@ Media over QUIC playback advertised by the active origin
         "name": {
           "type": "string",
           "description": "Broadcast path to subscribe to at the origin"
+        },
+        "sessionUrl": {
+          "type": "string",
+          "format": "uri",
+          "description": "Origin-owned endpoint for best-effort player session reporting; optional on older nodes"
         }
       }
     }

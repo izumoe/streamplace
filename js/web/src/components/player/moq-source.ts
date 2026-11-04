@@ -80,5 +80,24 @@ export async function getMoqPlaybackSource(src: string, signal: AbortSignal) {
     throw new Error("Invalid MoQ certificate fingerprint");
   }
   url.searchParams.delete("certhash");
-  return { url, name: moq.name as string, certificateHash };
+  let sessionUrl: URL | undefined;
+  if (typeof moq.sessionUrl === "string") {
+    try {
+      const endpoint = new URL(moq.sessionUrl);
+      if (
+        endpoint.protocol === "https:" &&
+        !endpoint.username &&
+        !endpoint.password
+      )
+        sessionUrl = endpoint;
+    } catch {
+      /* Reporting is optional; malformed reporting metadata cannot break playback. */
+    }
+  }
+  return {
+    url,
+    name: moq.name as string,
+    certificateHash,
+    ...(sessionUrl ? { sessionUrl } : {}),
+  };
 }

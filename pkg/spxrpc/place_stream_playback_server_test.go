@@ -3,6 +3,7 @@ package spxrpc
 import (
 	"context"
 	"encoding/json"
+	"net/url"
 	"testing"
 	"time"
 
@@ -47,7 +48,7 @@ func TestPlaybackServerMoqDiscovery(t *testing.T) {
 			require.NoError(t, json.Unmarshal(encoded, &response))
 			require.Equal(t, []string{"https://playback.example"}, response.Servers)
 			if tc.want {
-				require.Equal(t, map[string]string{"url": moqURL, "name": "playback/" + did}, response.Moq)
+				require.Equal(t, map[string]string{"url": moqURL, "name": "playback/" + did, "sessionUrl": "https://origin.example/api/moq/session?streamer=" + url.QueryEscape(did)}, response.Moq)
 			} else {
 				require.Nil(t, response.Moq)
 			}

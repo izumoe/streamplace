@@ -153,6 +153,7 @@ func NewServer(ctx context.Context, cli *config.CLI, model model.Model, stateful
 	// Live HLS, same override rationale (Range + mpegurl), served from the
 	// in-memory live window instead of a stored metafile.
 	e.GET("/xrpc/place.stream.playback.getLivePlaylist", s.HandleGetLivePlaylist)
+	e.POST("/api/moq/session", s.HandleMoqSession)
 	e.GET("/xrpc/place.stream.playback.getLiveSegment", s.HandleGetLiveSegment)
 	// The same segments under a path-shaped URL, for a CDN pulling from
 	// this node (see liveCDN): one cacheable, signable path per segment.

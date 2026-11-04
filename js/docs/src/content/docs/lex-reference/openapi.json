@@ -7690,6 +7690,11 @@
           "name": {
             "type": "string",
             "description": "Broadcast path to subscribe to at the origin"
+          },
+          "sessionUrl": {
+            "type": "string",
+            "description": "Origin-owned endpoint for best-effort player session reporting; optional on older nodes",
+            "format": "uri"
           }
         },
         "required": ["url", "name"]

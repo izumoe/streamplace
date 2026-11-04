@@ -1,6 +1,7 @@
 import type * as Watch from "@moq/watch";
 import { useEffect, useImperativeHandle, useRef, type RefObject } from "react";
 import { useTranslation } from "react-i18next";
+import { createMoqSession } from "./moq-session";
 import {
   getMoqBatchDuration,
   getMoqPlaybackFloor,
@@ -68,6 +69,7 @@ export function MoQPlayer(props: MoQPlayerProps) {
     if (!canvas) return;
     const abort = new AbortController();
     let stopped = false;
+    let session: ReturnType<typeof createMoqSession> | undefined;
     let player: Watch.Player | undefined;
     let connection: Watch.Net.Connection | undefined;
     let effects: Watch.Signals.Effect | undefined;
@@ -77,8 +79,15 @@ export function MoQPlayer(props: MoQPlayerProps) {
     let videoTimestamp: number | undefined;
     let audioTimestamp: number | undefined;
 
+    function pageHidden(event: PageTransitionEvent) {
+      if (!event.persisted) session?.close();
+    }
+    window.addEventListener("pagehide", pageHidden);
+
     function close() {
       stopped = true;
+      window.removeEventListener("pagehide", pageHidden);
+      session?.close();
       abort.abort();
       clearInterval(watchdog);
       effects?.close();
@@ -118,6 +127,13 @@ export function MoQPlayer(props: MoQPlayerProps) {
         (audio !== undefined && audio !== audioTimestamp)
       ) {
         lastAudioProgress = now;
+      }
+      if (
+        !state.paused &&
+        ((video !== undefined && video !== videoTimestamp) ||
+          (audio !== undefined && audio !== audioTimestamp))
+      ) {
+        void session?.touch();
       }
       videoTimestamp = video;
       audioTimestamp = audio;
@@ -190,6 +206,15 @@ export function MoQPlayer(props: MoQPlayerProps) {
         const source = await getMoqPlaybackSource(src, abort.signal);
         if (stopped) return;
         if (!source) return unavailable();
+        if (source.sessionUrl) {
+          const sourceURL = new URL(src);
+          // An owner preview token must stay on the node that issued it.
+          const sid =
+            source.sessionUrl.origin === sourceURL.origin
+              ? (sourceURL.searchParams.get("sid") ?? "")
+              : "";
+          session = createMoqSession(source.sessionUrl, sid);
+        }
         // The package creates browser media resources while importing it.
         const Watch = await import("@moq/watch");
         if (stopped) return;

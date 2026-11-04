@@ -239,6 +239,57 @@ a constant 200 ms margin as source cadence changes.
 Missing or invalid timing, or a buffering floor that reaches the player's
 ten-second progress budget, triggers fallback to the other transports.
 
+## Viewer counts
+
+MoQ viewers contribute to the existing local viewer count, Prometheus
+`protocol="moq"` gauge and `place.stream.live.viewerCount` records. Counts are
+sessions, not unique people. Replication paths (`source/<DID>` and the legacy
+raw DID) are excluded.
+
+By default, our player reports actual video or audio progress at most once
+every ten seconds. Discovery supplies an optional `moq.sessionUrl` pointing to
+the originating node's `POST /api/moq/session?streamer=<DID>`. Reporting to the
+origin avoids counting a peer's player again alongside the origin's relay total.
+The endpoint uses the existing stream-bound signed playback sessions and live
+publication/ban gates. The player closes its lease on unmount or ordinary page
+navigation; missed closes expire after 30 seconds plus the five-second sweep.
+Reporting failures never gate playback. A paused or stalled player eventually
+stops counting. Older discovery responses without `sessionUrl` remain playable.
+
+This fallback is approximate: it cannot see third-party clients that do not
+report sessions. When authorized relay stats are available, configure the
+private connection URLs of every contributing stats broadcast:
+
+```sh
+streamplace \
+  --moq-relay-url https://relay.example/tenant/origin \
+  --moq-stats-url 'https://relay.example/.stats/node/sjc?jwt=STATS_TOKEN' \
+  --moq-stats-url 'https://relay.example/.stats/node/lhr?jwt=STATS_TOKEN' \
+  --moq-stats-tier viewer
+```
+
+The corresponding environment variables are `SP_MOQ_STATS_URL` (comma-separated)
+and `SP_MOQ_STATS_TIER`. Stats URLs are server-only and are never advertised.
+Each connection must be scoped to the named stats broadcast. The native SDK
+consumes `<tier>/publisher.json`; no HTTP polling or extra dependency is needed.
+The selected tier must include only end users. An empty tier selects the default,
+which is suitable only when it excludes relay-to-relay subscriptions. Relay
+stats count broadcast subscriptions, including catalog-only subscribers.
+
+The reader follows the [MoQ stats contract](https://doc.moq.dev/concept/stats):
+`broadcasts_started - broadcasts_ended`, with the legacy names accepted. It
+filters full broadcast paths to the configured relay URL's namespace plus
+`playback/<DID>`. Stats from all configured nodes must be available before their
+sum replaces player sessions. Zero is authoritative; a closed, refused or
+invalid feed restores the warm player-session fallback. Unchanged live feeds
+remain valid without new frames. The two MoQ sources are never added together.
+
+Configure one Streamplace node to report a relay namespace's totals, and keep
+the node list complete as relay topology changes. Shared reporting owners or a
+tier containing cluster traffic would overcount; an incomplete node list would
+undercount. Anonymous relay access often does not grant stats access, so leave
+stats URLs unset until the appropriate project credentials are available.
+
 ## Track layout and peer replication
 
 Use this section when changing the publisher or subscriber. A MoQ frame here is

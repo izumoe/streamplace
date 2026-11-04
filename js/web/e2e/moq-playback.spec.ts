@@ -100,6 +100,35 @@ async function expectAudioPlaying(page: Page, testInfo: TestInfo) {
   }
 }
 
+test("MoQ player sessions update viewer counts and close on navigation", async ({
+  page,
+  request,
+}) => {
+  const server = process.env.SERVER_URL!;
+  const did = process.env.ACCOUNT_DID!;
+  const heartbeat = page.waitForResponse(
+    (response) =>
+      response.url().includes("/api/moq/session?") &&
+      response.request().method() === "POST" &&
+      response.status() === 200,
+  );
+  const player = await openLivePlayer(page);
+  await expect(player).toHaveAttribute("data-playback-transport", "moq");
+  const first = await heartbeat;
+  expect((await first.json()).sid).toBeTruthy();
+  const count = async () => {
+    const response = await request.get(
+      `${server}/api/view-count/${encodeURIComponent(did)}`,
+    );
+    expect(response.ok()).toBe(true);
+    return (await response.json()).count;
+  };
+  await expect.poll(count, { timeout: 40_000 }).toBe(1);
+  await page.goto("about:blank");
+  // The lease TTL is 30 seconds, so this must be the explicit close.
+  await expect.poll(count, { timeout: 5_000 }).toBe(0);
+});
+
 test("MoQ cold startup allows discovery and the requested playout buffer", async ({
   page,
 }, testInfo) => {

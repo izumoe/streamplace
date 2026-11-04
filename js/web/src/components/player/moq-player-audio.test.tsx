@@ -164,12 +164,16 @@ afterEach(async () => {
   vi.useRealTimers();
 });
 
-async function render(muted = false, paused = false) {
+async function render(
+  muted = false,
+  paused = false,
+  src = "https://node.example/xrpc/place.stream.playback.getLivePlaylist?streamer=alice",
+) {
   await act(async () =>
     root.render(
       <MoQPlayer
         canvasRef={{ current: document.createElement("canvas") }}
-        src="https://node.example/xrpc/place.stream.playback.getLivePlaylist?streamer=alice"
+        src={src}
         paused={paused}
         muted={muted}
         volume={1}
@@ -185,6 +189,73 @@ async function render(muted = false, paused = false) {
     ),
   );
 }
+
+it("reports progressing audio while video rendering is hidden", async () => {
+  vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+  const reports: unknown[] = [];
+  vi.stubGlobal("fetch", async (_url: URL, init?: RequestInit) => {
+    if (init?.method === "POST") {
+      reports.push(JSON.parse(init.body as string));
+      return Response.json({ sid: "signed-session" });
+    }
+    return Response.json({
+      moq: {
+        url: "https://relay.example",
+        name: "playback/alice",
+        sessionUrl: "https://origin.example/api/moq/session?streamer=alice",
+      },
+    });
+  });
+  const sdk = await import("@moq/watch");
+  await render(
+    false,
+    false,
+    "https://node.example/live?streamer=alice&sid=private-owner-session",
+  );
+  const player = fixture.player as Playback;
+  await act(async () => {
+    player.audio.out.timestamp.set(sdk.Net.Time.Milli(1000));
+    await vi.advanceTimersByTimeAsync(1000);
+  });
+  expect(reports).toEqual([{ sid: "", closed: false }]);
+  expect(unavailable).not.toHaveBeenCalled();
+});
+
+it("closes a session on full-page navigation, but keeps a cached page resumable", async () => {
+  vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+  const reports: { closed: boolean }[] = [];
+  vi.stubGlobal("fetch", async (_url: URL, init?: RequestInit) => {
+    if (init?.method === "POST") {
+      reports.push(JSON.parse(init.body as string));
+      return Response.json({ sid: "signed-session" });
+    }
+    return Response.json({
+      moq: {
+        url: "https://relay.example",
+        name: "playback/alice",
+        sessionUrl: "https://origin.example/api/moq/session?streamer=alice",
+      },
+    });
+  });
+  const sdk = await import("@moq/watch");
+  await render();
+  await act(async () => {
+    (fixture.player as Playback).audio.out.timestamp.set(
+      sdk.Net.Time.Milli(1000),
+    );
+    await vi.advanceTimersByTimeAsync(1000);
+    window.dispatchEvent(
+      new PageTransitionEvent("pagehide", { persisted: true }),
+    );
+  });
+  expect(reports.map((report) => report.closed)).toEqual([false]);
+  await act(async () =>
+    window.dispatchEvent(
+      new PageTransitionEvent("pagehide", { persisted: false }),
+    ),
+  );
+  expect(reports.map((report) => report.closed)).toEqual([false, true]);
+});
 
 it("waits for an advertised audio codec's native support probe", async () => {
   await render();

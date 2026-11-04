@@ -245,6 +245,7 @@ func (a *StreamplaceAPI) Handler(ctx context.Context) (http.Handler, error) {
 	apiRouter.NotFound = a.HandleAPI404(ctx)
 	apiRouterHandler := a.RateLimitMiddleware(ctx)(apiRouter)
 	xrpcHandler := a.RateLimitMiddleware(ctx)(xrpc)
+	apiRouter.Handler("POST", "/api/moq/session", xrpc)
 	router.Handler("GET", "/api/*resource", apiRouterHandler)
 	router.Handler("HEAD", "/api/*resource", apiRouterHandler)
 	router.Handler("POST", "/api/*resource", apiRouterHandler)

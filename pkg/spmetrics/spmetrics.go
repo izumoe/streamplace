@@ -317,33 +317,23 @@ var DuplicateMistWorkers = promauto.NewGauge(prometheus.GaugeOpts{
 	Help: "duplicate-mist shadow worker subprocesses currently running (including ones draining after publisher EOF)",
 })
 
-func ViewerInc(user string, protocol string) {
-	go func() {
-		viewersLock.Lock()
-		defer viewersLock.Unlock()
-		viewersByStreamer[user]++
-		viewersByProtocol[protocol]++
-		Viewers.WithLabelValues(user).Set(float64(viewersByStreamer[user]))
-		ViewersTotal.WithLabelValues(protocol).Set(float64(viewersByProtocol[protocol]))
-	}()
-}
+func ViewerInc(user string, protocol string) { ViewerAdd(user, protocol, 1) }
 
-func ViewerDec(user string, protocol string) {
-	go func() {
-		viewersLock.Lock()
-		defer viewersLock.Unlock()
-		viewersByStreamer[user]--
-		if viewersByStreamer[user] == 0 {
-			Viewers.DeleteLabelValues(user)
-		} else {
-			Viewers.WithLabelValues(user).Set(float64(viewersByStreamer[user]))
-		}
-		viewersByProtocol[protocol]--
-		// Per-protocol series stay at 0 rather than vanishing: a node with
-		// no viewers should read 0, not "no data". (Per-streamer ones are
-		// unbounded, so those are still dropped.)
-		ViewersTotal.WithLabelValues(protocol).Set(float64(viewersByProtocol[protocol]))
-	}()
+func ViewerDec(user string, protocol string) { ViewerAdd(user, protocol, -1) }
+
+// ViewerAdd applies an aggregate change without creating a goroutine per viewer.
+func ViewerAdd(user string, protocol string, delta int) {
+	viewersLock.Lock()
+	defer viewersLock.Unlock()
+	viewersByStreamer[user] += delta
+	viewersByProtocol[protocol] += delta
+	if viewersByStreamer[user] == 0 {
+		delete(viewersByStreamer, user)
+		Viewers.DeleteLabelValues(user)
+	} else {
+		Viewers.WithLabelValues(user).Set(float64(viewersByStreamer[user]))
+	}
+	ViewersTotal.WithLabelValues(protocol).Set(float64(viewersByProtocol[protocol]))
 }
 
 func GetViewCount(user string) int {
@@ -363,7 +353,7 @@ func init() {
 		v.WithLabelValues("")
 	}
 	SegmentSubscriptionsOpen.WithLabelValues("", "")
-	for _, protocol := range []string{"webrtc", "hls", "local"} {
+	for _, protocol := range []string{"webrtc", "hls", "moq", "local"} {
 		ViewersTotal.WithLabelValues(protocol)
 	}
 	for _, outcome := range []string{"connect", "not_syndicated", "self", "already_connected", "no_url"} {

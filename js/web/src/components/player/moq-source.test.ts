@@ -97,6 +97,47 @@ describe("supportsMoqPlayback", () => {
 });
 
 describe("getMoqPlaybackSource", () => {
+  it("reports sessions to the origin rather than the discovery node", async () => {
+    const endpoint =
+      "https://origin.example/api/moq/session?streamer=did:plc:alice";
+    vi.stubGlobal("fetch", async () =>
+      Response.json({
+        moq: {
+          url: "https://relay.example/tenant",
+          name: "playback/did:plc:alice",
+          sessionUrl: endpoint,
+        },
+      }),
+    );
+    const result = await getMoqPlaybackSource(
+      SOURCE,
+      new AbortController().signal,
+    );
+    expect(result?.sessionUrl?.href).toBe(endpoint);
+  });
+
+  it.each([
+    "invalid",
+    "javascript:alert(1)",
+    "https://user:secret@origin.example/session",
+  ])("ignores an unsafe optional session endpoint: %s", async (sessionUrl) => {
+    vi.stubGlobal("fetch", async () =>
+      Response.json({
+        moq: {
+          url: "https://relay.example/tenant",
+          name: "playback/did:plc:alice",
+          sessionUrl,
+        },
+      }),
+    );
+    const result = await getMoqPlaybackSource(
+      SOURCE,
+      new AbortController().signal,
+    );
+    expect(result?.sessionUrl).toBeUndefined();
+    expect(result?.name).toBe("playback/did:plc:alice");
+  });
+
   it("discovers the resolved broadcast and pins the advertised certificate", async () => {
     const requests: URL[] = [];
     vi.stubGlobal("fetch", async (url: URL) => {

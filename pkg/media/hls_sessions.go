@@ -5,54 +5,50 @@ import (
 	"time"
 )
 
-// hlsSessionTTL is how long an HLS playback session stays counted after its
-// last request. A live player re-fetches the media playlist every target
-// duration (~2s) and segments continuously, so a session silent this long is
-// gone. Generous enough to ride out a stall/refresh without dropping to zero.
-const hlsSessionTTL = 30 * time.Second
+// Playback leases survive brief stalls. HLS playlists renew about every two
+// seconds; the MoQ player reports progress every ten seconds.
+const playbackSessionTTL = 30 * time.Second
+const playbackSessionSweepInterval = 5 * time.Second
 
-// hlsSessionSweepInterval is how often the janitor checks for idle sessions.
-const hlsSessionSweepInterval = 5 * time.Second
-
-type hlsSessionKey struct {
+type playbackSessionKey struct {
 	streamer string
 	sid      string
 }
 
-// hlsSessionTracker turns stateless HLS requests into viewer sessions: the
+// playbackSessionTracker turns playback activity into viewer sessions: the
 // first request carrying a given (streamer, sid) starts a session (onNew),
 // and a session that goes idle for ttl ends it (onExpire). The two callbacks
 // fire exactly once per session, in order, so they can safely drive an
 // increment/decrement pair.
-type hlsSessionTracker struct {
+type playbackSessionTracker struct {
 	ttl      time.Duration
 	onNew    func(streamer string)
 	onExpire func(streamer string)
 	now      func() time.Time // clock, overridable in tests
 
 	mu             sync.Mutex
-	lastSeen       map[hlsSessionKey]time.Time
+	lastSeen       map[playbackSessionKey]time.Time
 	janitorRunning bool
 }
 
-func newHLSSessionTracker(ttl time.Duration, onNew, onExpire func(streamer string)) *hlsSessionTracker {
-	return &hlsSessionTracker{
+func newPlaybackSessionTracker(ttl time.Duration, onNew, onExpire func(streamer string)) *playbackSessionTracker {
+	return &playbackSessionTracker{
 		ttl:      ttl,
 		onNew:    onNew,
 		onExpire: onExpire,
 		now:      time.Now,
-		lastSeen: map[hlsSessionKey]time.Time{},
+		lastSeen: map[playbackSessionKey]time.Time{},
 	}
 }
 
 // Touch records a request for (streamer, sid), starting a session if it's
 // new. Empty sids are ignored — there's no session to attribute the request
 // to.
-func (t *hlsSessionTracker) Touch(streamer, sid string) {
+func (t *playbackSessionTracker) Touch(streamer, sid string) {
 	if streamer == "" || sid == "" {
 		return
 	}
-	k := hlsSessionKey{streamer: streamer, sid: sid}
+	k := playbackSessionKey{streamer: streamer, sid: sid}
 	t.mu.Lock()
 	_, known := t.lastSeen[k]
 	t.lastSeen[k] = t.now()
@@ -61,10 +57,10 @@ func (t *hlsSessionTracker) Touch(streamer, sid string) {
 		t.janitorRunning = true
 		startJanitor = true
 	}
-	t.mu.Unlock()
 	if !known {
 		t.onNew(streamer)
 	}
+	t.mu.Unlock()
 	if startJanitor {
 		go t.janitor()
 	}
@@ -72,8 +68,8 @@ func (t *hlsSessionTracker) Touch(streamer, sid string) {
 
 // janitor sweeps periodically while any session exists, and exits once the
 // tracker drains (the next Touch starts a fresh one).
-func (t *hlsSessionTracker) janitor() {
-	ticker := time.NewTicker(hlsSessionSweepInterval)
+func (t *playbackSessionTracker) janitor() {
+	ticker := time.NewTicker(playbackSessionSweepInterval)
 	defer ticker.Stop()
 	for range ticker.C {
 		if t.sweep() {
@@ -84,7 +80,7 @@ func (t *hlsSessionTracker) janitor() {
 
 // sweep expires sessions idle past the ttl and reports whether the tracker is
 // now empty (meaning the calling janitor should exit).
-func (t *hlsSessionTracker) sweep() bool {
+func (t *playbackSessionTracker) sweep() bool {
 	cutoff := t.now().Add(-t.ttl)
 	t.mu.Lock()
 	var expired []string
@@ -98,10 +94,10 @@ func (t *hlsSessionTracker) sweep() bool {
 	if empty {
 		t.janitorRunning = false
 	}
-	t.mu.Unlock()
 	for _, streamer := range expired {
 		t.onExpire(streamer)
 	}
+	t.mu.Unlock()
 	return empty
 }
 
@@ -110,4 +106,15 @@ func (t *hlsSessionTracker) sweep() bool {
 // requests; the first touch counts the viewer, going idle uncounts them.
 func (mm *MediaManager) TouchHLSSession(streamer, sid string) {
 	mm.hlsSessions.Touch(streamer, sid)
+}
+
+// Close removes a lease immediately when a player stops or changes transport.
+func (t *playbackSessionTracker) Close(streamer, sid string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	key := playbackSessionKey{streamer: streamer, sid: sid}
+	if _, ok := t.lastSeen[key]; ok {
+		delete(t.lastSeen, key)
+		t.onExpire(streamer)
+	}
 }

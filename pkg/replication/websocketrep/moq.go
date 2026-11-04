@@ -64,6 +64,9 @@ func (r *WebsocketReplicator) serveMoQ(ctx context.Context) error {
 	if r.cli.MoqAddr != "" {
 		g.Go(func() error { return r.listenMoQ(gctx, origin) })
 	}
+	if len(r.cli.MoqStatsURLs) > 0 {
+		g.Go(func() error { return r.runMoqViewerStats(gctx) })
+	}
 	if r.cli.MoqRelayURL != "" {
 		g.Go(func() error { return r.publishMoQRelay(gctx, origin) })
 	}
