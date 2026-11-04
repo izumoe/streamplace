@@ -548,4 +548,4 @@ replace (
 	moq.dev/moq-ffi => github.com/streamplace/moq/go/ffi v0.0.0-20261017225858-0014d50204dd
 )
 
-replace github.com/streamplace/muxl/go => github.com/izumoe/muxl/go v0.3.7-0.20261030223243-fc0cef124a2e
+replace github.com/streamplace/muxl/go => github.com/izumoe/muxl/go v0.3.7-0.20261104223407-162aba7b421e

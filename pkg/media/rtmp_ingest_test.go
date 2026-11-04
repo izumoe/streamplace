@@ -526,6 +526,18 @@ func TestRTMPMultitrackCompletionAndExtraction(t *testing.T) {
 					counts[id] += event.SampleCounts[id]
 				}
 			}
+			var first *muxl.MuxlEvent
+			for _, event := range events {
+				if event.Type == "segment" || event.Type == "signed-segment" {
+					first = event
+					break
+				}
+			}
+			require.NotNil(t, first)
+			for id, data := range expected {
+				require.True(t, bytes.Equal(data, first.Tracks[id]), "older peers retain only the first media event: track %s must carry its complete signed GOP", id)
+			}
+
 			tracks, err := MuxlTracks(ctx, source)
 			require.NoError(t, err)
 			require.Equal(t, 4, len(tracks), "all source videos and common AAC reach MoQ")
