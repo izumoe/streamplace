@@ -602,7 +602,7 @@ export function Player({
           <Suspense fallback={null}>
             <StatsOverlay
               key={`${src}:${mode}:${transport}`}
-              portalContainer={fullscreen ? containerRef : undefined}
+              onClose={() => setShowStats(false)}
               stats={stats}
               live={mode === "live"}
               protocol={

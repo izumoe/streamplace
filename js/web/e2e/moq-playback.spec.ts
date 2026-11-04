@@ -492,88 +492,101 @@ test("MoQ plays real video and audio, pauses, and releases resources on transpor
     exact: true,
   });
   await expect(stats).toBeVisible();
+  await expect(stats.locator("h3")).toHaveCSS("font-size", "12px");
+  await expect(stats.locator("[data-stat] dd").first()).toHaveCSS(
+    "font-size",
+    "12px",
+  );
   await page.screenshot({ path: testInfo.outputPath("stats-summary.png") });
-  const openDiagnostics = stats.getByRole("button", {
-    name: "Open diagnostics",
-    exact: true,
-  });
-  expect((await openDiagnostics.boundingBox())!.height).toBeGreaterThanOrEqual(
-    44,
+  await expect(page.locator('[data-slot="sheet-overlay"]')).toHaveCount(0);
+  const bounds = (await stats.boundingBox())!;
+  const videoBounds = (await player.boundingBox())!;
+  expect(bounds.width).toBeLessThanOrEqual(videoBounds.width / 2);
+  expect(bounds.width * bounds.height).toBeLessThan(
+    videoBounds.width * videoBounds.height * 0.3,
   );
-  await openDiagnostics.focus();
-  await page.keyboard.press("Space");
-  const diagnostics = page.getByRole("dialog", {
-    name: "Playback diagnostics",
-    exact: true,
-  });
-  await expect(diagnostics).toBeVisible();
-  expect((await diagnostics.boundingBox())!.width).toBeGreaterThan(600);
-  await expect(page.locator('[data-slot="sheet-overlay"]')).toHaveCSS(
-    "backdrop-filter",
-    "none",
-  );
-  await expect(page.locator('[data-slot="sheet-overlay"]')).toHaveCSS(
-    "background-color",
-    "rgba(0, 0, 0, 0)",
+  expect(
+    await stats.evaluate(
+      (element) => getComputedStyle(element).backgroundColor,
+    ),
+  ).toMatch(/0\.75|75%/);
+  await expect(stats).toHaveCSS("backdrop-filter", "none");
+  expect(
+    (await stats
+      .getByRole("button", { name: "Close", exact: true })
+      .boundingBox())!.height,
+  ).toBeGreaterThanOrEqual(
+    (await page.evaluate(() => matchMedia("(pointer: fine)").matches))
+      ? 24
+      : 44,
   );
   for (const key of [
     "liveEdgeDelay",
     "playbackDelayMs",
     "publicationBatchMs",
-    "roundTripTimeMs",
-    "avSyncMs",
   ]) {
-    await expect(diagnostics.locator(`[data-stat="${key}"] dd`)).toContainText(
+    await expect(stats.locator(`[data-stat="${key}"] dd`)).toContainText(
       /-?\d+\.\d+ (ms|s)/,
     );
   }
-  const avOffset = diagnostics.locator('[data-stat="avSyncMs"] dd');
+  await expect
+    .poll(() => stats.locator(".recharts-line-curve").count())
+    .toBeGreaterThan(0);
+  await expect(stats.locator(".recharts-surface")).toHaveCount(2);
+  await page.screenshot({
+    path: testInfo.outputPath("stats-diagnostics-moq.png"),
+  });
+  // The exposed video remains interactive while diagnostics are visible.
+  await player.click({
+    position: { x: videoBounds.width - 24, y: videoBounds.height / 2 },
+  });
+  await expect(player.locator('button[title="Play"]')).toBeVisible();
+  await expect(stats).toBeVisible();
+  await player.locator('button[title="Play"]').click();
+  for (const key of ["roundTripTimeMs", "avSyncMs"]) {
+    await expect(stats.locator(`[data-stat="${key}"] dd`)).toContainText(
+      /-?\d+\.\d+ (ms|s)/,
+    );
+  }
+  const avOffset = stats.locator('[data-stat="avSyncMs"] dd');
   await expect(avOffset).toHaveText(/^-?\d+\.\d ms$/);
   await expect
     .poll(async () => Math.abs(Number.parseFloat(await avOffset.innerText())))
     .toBeLessThan(1000);
-  await expect(
-    diagnostics.getByText(
-      "This transport does not report receiver processing timings.",
-      { exact: true },
-    ),
-  ).toBeVisible();
-  await expect
-    .poll(() => diagnostics.locator(".recharts-line-curve").count())
-    .toBeGreaterThan(0);
-  await expect(
-    diagnostics.locator("span").filter({ hasText: "Not measured" }),
-  ).toHaveCount(2);
-  await page.screenshot({
-    path: testInfo.outputPath("stats-diagnostics-moq.png"),
-  });
-  const details = diagnostics.locator("details");
-  await expect(details).not.toHaveAttribute("open");
-  await diagnostics.getByText("Stream details", { exact: true }).click();
-  await expect(details).toHaveAttribute("open");
-  await expect(details.getByText("MoQ", { exact: true })).toBeVisible();
-  await expect(details.getByText("Skipped", { exact: true })).toHaveCount(0);
-  await expect(details.getByText("FPS", { exact: true })).toHaveCount(0);
+  await expect(stats.locator('[data-stat="processingDelayMs"]')).toHaveCount(0);
+  await expect(stats.locator("details")).toHaveCount(0);
+  await expect(stats).toContainText("Not measured");
+  await expect(stats).toContainText("MoQ");
+  await expect(stats.getByText("Skipped", { exact: true })).toHaveCount(0);
+  await expect(stats.getByText("FPS", { exact: true })).toHaveCount(0);
+  await stats.getByRole("button", { name: "Close", exact: true }).focus();
   await page.keyboard.press("Escape");
-  await expect(diagnostics).not.toBeVisible();
-  await expect(openDiagnostics).toBeFocused();
+  await expect(stats).not.toBeVisible();
+  async function showStats() {
+    await player.hover();
+    await player.locator('button[title="Settings"]').click();
+    await page
+      .getByRole("menuitemcheckbox", { name: "Stats for Nerds", exact: true })
+      .click();
+    await page.keyboard.press("Escape");
+    await expect(stats).toBeVisible();
+  }
   await player.hover();
   await player.locator('button[title="Fullscreen"]').click();
   await expect
     .poll(() => page.evaluate(() => document.fullscreenElement !== null))
     .toBe(true);
-  await openDiagnostics.click();
-  await expect(diagnostics).toBeVisible();
+  await showStats();
   expect(
-    await diagnostics.evaluate((element) =>
+    await stats.evaluate((element) =>
       document.fullscreenElement?.contains(element),
     ),
   ).toBe(true);
   const chartFrame = await frame();
   await expect.poll(frame).not.toBe(chartFrame);
   await expectAudioPlaying(page, testInfo);
-  await diagnostics.getByRole("button", { name: "Close", exact: true }).click();
-  await expect(diagnostics).not.toBeVisible();
+  await stats.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(stats).not.toBeVisible();
   await player.hover();
   await player.locator('button[title="Exit fullscreen"]').click();
   await expect
@@ -588,38 +601,51 @@ test("MoQ plays real video and audio, pauses, and releases resources on transpor
   await page.keyboard.press("Escape");
   await expect(player).toHaveAttribute("data-playback-transport", "hls");
   await expectVideoAdvancing(player.locator("video"));
-  await openDiagnostics.click();
-  await expect(diagnostics).toBeVisible();
-  await expect(
-    diagnostics.locator('[data-stat="publicationBatchMs"]'),
-  ).toHaveCount(0);
+  await showStats();
+  await expect(stats.locator('[data-stat="publicationBatchMs"]')).toHaveCount(
+    0,
+  );
   await expect
-    .poll(() => diagnostics.locator(".recharts-line-curve").count())
+    .poll(() => stats.locator(".recharts-line-curve").count())
     .toBeGreaterThan(0);
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(diagnostics).toBeVisible();
-  const panelBounds = await diagnostics.boundingBox();
-  expect(panelBounds!.width).toBeLessThanOrEqual(390);
-  expect(panelBounds!.height).toBeLessThanOrEqual(844);
+  const panelBounds = (await stats.boundingBox())!;
+  const mobilePlayer = (await player.boundingBox())!;
+  expect(panelBounds.width).toBeLessThanOrEqual(mobilePlayer.width / 2);
+  expect(panelBounds.width * panelBounds.height).toBeLessThan(
+    mobilePlayer.width * mobilePlayer.height * 0.5,
+  );
   expect(
-    await diagnostics.evaluate(
+    await stats.evaluate(
       (element) => element.scrollWidth <= element.clientWidth,
     ),
   ).toBe(true);
   await page.screenshot({
     path: testInfo.outputPath("stats-diagnostics-mobile.png"),
   });
-  await diagnostics.evaluate((element) => {
+  // Inline players can be much shorter than the fullscreen embed.
+  await player.evaluate((element) => {
+    element.style.height = "220px";
+  });
+  const shortPlayer = (await player.boundingBox())!;
+  const shortStats = (await stats.boundingBox())!;
+  expect(shortStats.width * shortStats.height).toBeLessThan(
+    (shortPlayer.width * shortPlayer.height) / 2,
+  );
+  expect(shortStats.y + shortStats.height).toBeLessThanOrEqual(
+    shortPlayer.y + shortPlayer.height,
+  );
+  await page.screenshot({
+    path: testInfo.outputPath("stats-diagnostics-inline.png"),
+  });
+  await stats.locator("[data-stats-scroll]").evaluate((element) => {
     element.scrollTop = element.scrollHeight;
   });
   await expect(
-    diagnostics.getByRole("button", { name: "Close", exact: true }),
+    stats.getByRole("button", { name: "Close", exact: true }),
   ).toBeVisible();
-  await diagnostics.getByRole("button", { name: "Close", exact: true }).click();
-  await expect(stats).toBeVisible();
-  await page.screenshot({
-    path: testInfo.outputPath("stats-summary-mobile.png"),
-  });
+  await stats.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(stats).not.toBeVisible();
   expect(pageErrors).toEqual([]);
 });
 
@@ -698,33 +724,20 @@ test("WebRTC exposes receiver processing, decode and jitter buffer timing", asyn
     .getByRole("menuitemcheckbox", { name: "Stats for Nerds", exact: true })
     .click();
   await page.keyboard.press("Escape");
-  const summary = page.getByRole("dialog", {
+  const stats = page.getByRole("dialog", {
     name: "Stats for Nerds",
     exact: true,
   });
-  await summary
-    .getByRole("button", { name: "Open diagnostics", exact: true })
-    .click();
-  const stats = page.getByRole("dialog", {
-    name: "Playback diagnostics",
-    exact: true,
-  });
-  for (const label of [
-    "Receiver processing (avg.)",
-    "Video decode (avg.)",
-    "Jitter buffer (avg.)",
-  ]) {
-    const row = stats
-      .locator("[data-stat]")
-      .filter({ has: page.getByText(label, { exact: true }) });
+  for (const key of ["processingDelayMs", "decodeTimeMs", "jitterBufferMs"]) {
+    const row = stats.locator(`[data-stat="${key}"]`);
     await expect(row).toContainText(/\d+\.\d ms/);
     await expect
       .poll(() => stats.locator(".recharts-line-curve").count())
       .toBeGreaterThan(0);
   }
-  await expect(
-    stats.getByText("Publication batch", { exact: true }),
-  ).toHaveCount(0);
+  await expect(stats.locator('[data-stat="publicationBatchMs"]')).toHaveCount(
+    0,
+  );
   await page.screenshot({
     path: testInfo.outputPath("webrtc-timing-stats.png"),
   });

@@ -311,7 +311,7 @@ test("Enhanced RTMP Auto downshifts and recovers through a bandwidth-limited QUI
   });
   const player = page.locator("[data-playback-transport]");
   const canvas = player.locator("canvas");
-  const stats = page.getByRole("dialog", { name: "Playback diagnostics" });
+  const stats = page.getByRole("dialog", { name: "Stats for Nerds" });
   async function picture() {
     return page.evaluate(
       () =>
@@ -420,11 +420,10 @@ test("Enhanced RTMP Auto downshifts and recovers through a bandwidth-limited QUI
       .getByRole("menuitemcheckbox", { name: "Stats for Nerds" })
       .click();
     await page.keyboard.press("Escape");
-    await page
-      .getByRole("button", { name: "Open diagnostics", exact: true })
-      .click();
-    await expect(stats).toContainText("Video bitrate estimate");
-    await expect(stats).toContainText("Bandwidth estimate");
+    await expect(stats.locator('[data-stat="renditionBitrate"]')).toBeVisible();
+    await expect(
+      stats.locator('[data-stat="availableBandwidth"]'),
+    ).toBeVisible();
     await expectPlaying("green");
     const restrictedBitrate = 1_000_000;
     shaper.limit(restrictedBitrate);

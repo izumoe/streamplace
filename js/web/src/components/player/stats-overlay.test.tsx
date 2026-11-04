@@ -90,45 +90,34 @@ async function render(value = stats) {
         latencyMode="Low"
         renderSurface="canvas"
         sessionId="test-session"
+        onClose={() => {}}
       />,
     ),
   );
 }
 
-it("starts compact and opens real timing graphs without replacing unavailable readings with zero", async () => {
-  await render();
+it("shows all reported readings and raw fields without a modal or backdrop", async () => {
+  await render({ ...stats, bitrate: 6_000_000 });
   expect(container.textContent).toContain("1.50 s");
-  expect(container.textContent).not.toContain("test-session");
-  const expand = container.querySelector<HTMLButtonElement>(
-    'button[aria-label="player-stats-open-diagnostics"]',
-  )!;
-  expect(expand).not.toBeNull();
-  await act(async () => expand.click());
-  const panel = document.querySelector('[role="dialog"][aria-labelledby]')!;
-  expect(panel).not.toBeNull();
+  const panel = container.querySelector("[data-player-diagnostics]")!;
+  expect(document.querySelector('[data-slot="sheet-overlay"]')).toBeNull();
+  expect(document.querySelector('[aria-modal="true"]')).toBeNull();
   expect(panel.textContent).toContain("player-stats-history-window");
-  expect(panel.textContent).toContain("player-stats-broadcaster-delay-help");
-  expect(panel.textContent).toContain("player-stats-no-processing");
+  expect(
+    panel.querySelector('[title="player-stats-broadcaster-delay-help"]'),
+  ).not.toBeNull();
+  expect(panel.querySelector("details")).toBeNull();
+  expect(panel.textContent).not.toContain("player-stats-no-processing");
   expect(panel.textContent).toContain("test-session");
-  await render({ ...stats, liveEdgeDelay: 2, avSyncMs: undefined });
-  expect(panel.querySelectorAll(".recharts-surface").length).toBeGreaterThan(0);
-  const close = panel.querySelector<HTMLButtonElement>(
-    '[data-slot="sheet-close"]',
-  )!;
-  await act(async () => close.click());
+  await render({ ...stats, bitrate: 6_000_000, liveEdgeDelay: 2 });
+  expect(panel.querySelectorAll(".recharts-surface")).toHaveLength(2);
+  expect(panel.querySelector('[data-stat="avSyncMs"]')).not.toBeNull();
+  expect(panel.querySelector("select")).toBeNull();
   expect(container.textContent).toContain("2.00 s");
-  expect(expand.isConnected).toBe(true);
 });
 
 it("keeps a metric's color when another reading becomes available", async () => {
   await render({ ...stats, availableBandwidth: 4_000_000 });
-  await act(async () =>
-    container
-      .querySelector<HTMLButtonElement>(
-        'button[aria-label="player-stats-open-diagnostics"]',
-      )!
-      .click(),
-  );
   const swatch = () =>
     document.querySelector<HTMLElement>(
       '[data-stat="availableBandwidth"] dt span',
@@ -146,13 +135,6 @@ it("expires readings without another report and recovers on a fresh sample", asy
     await act(async () => vi.advanceTimersByTimeAsync(3000));
     expect(container.textContent).toContain("player-stats-stale");
     expect(container.textContent).not.toContain("1.50 s");
-    await act(async () =>
-      container
-        .querySelector<HTMLButtonElement>(
-          'button[aria-label="player-stats-open-diagnostics"]',
-        )!
-        .click(),
-    );
     const panel = document.querySelector("[data-player-diagnostics]")!;
     expect(panel.querySelectorAll(".recharts-surface")).toHaveLength(0);
     expect(panel.textContent).not.toContain("1.50 s");
@@ -163,7 +145,7 @@ it("expires readings without another report and recovers on a fresh sample", asy
       0,
     );
     await act(async () => root.unmount());
-    // Base UI's animation-frame fallback finishes after the portal unmounts.
+    // Flush pending UI animation-frame fallbacks after unmount.
     await act(async () => vi.advanceTimersByTimeAsync(100));
     expect(vi.getTimerCount()).toBe(0);
   } finally {
@@ -185,6 +167,7 @@ it("commits each incoming snapshot once, with its history already updated", asyn
             latencyMode="Low"
             renderSurface="canvas"
             sessionId="test-session"
+            onClose={() => {}}
           />
         </Profiler>,
       ),

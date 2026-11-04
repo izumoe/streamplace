@@ -466,6 +466,7 @@ export function PlayerControls({
               />
             </DropdownMenuTrigger>
             <DropdownMenuContent
+              portalContainer={isFullscreen ? containerRef : undefined}
               side="top"
               align="end"
               className="border-white/10 bg-black/85 backdrop-blur"

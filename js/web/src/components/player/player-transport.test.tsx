@@ -252,16 +252,8 @@ it.each([undefined, 0, 7])(
         '[role="dialog"][aria-label="player-stats"]',
       )!;
       expect(summary).not.toBeNull();
-      expect(summary.textContent).not.toContain("player-stats-session");
-      await act(async () =>
-        container
-          .querySelector<HTMLButtonElement>(
-            'button[aria-label="player-stats-open-diagnostics"]',
-          )!
-          .click(),
-      );
-      const dialog = document.querySelector('[data-slot="sheet-content"]')!;
-      expect(dialog).not.toBeNull();
+      const dialog = summary;
+      const text = dialog.textContent ?? "";
       expect(dialog.textContent?.includes("player-stats-skipped")).toBe(
         value !== undefined,
       );
@@ -279,18 +271,17 @@ it.each([undefined, 0, 7])(
         "decode-time",
         "jitter-buffer",
       ]) {
-        expect(dialog.textContent?.includes(`player-stats-${label}`)).toBe(
+        expect(text.includes(`player-stats-${label}`)).toBe(
           value !== undefined,
         );
       }
       expect(dialog.textContent).toContain("player-stats-broadcaster-delay");
       expect(dialog.textContent).toContain("player-stats-not-measured");
-      const details = dialog.querySelector("details")!;
-      expect(details.open).toBe(false);
-      expect(details.textContent).toContain("player-stats-session");
+      expect(dialog.querySelector("details")).toBeNull();
+      expect(dialog.textContent).toContain("player-stats-session");
       if (value !== undefined) {
-        expect(dialog.textContent).toContain(`${value.toFixed(1)} ms`);
-        expect(dialog.textContent).toContain(`${(-value).toFixed(1)} ms`);
+        expect(text).toContain(`${value.toFixed(1)} ms`);
+        expect(text).toContain(`${(-value).toFixed(1)} ms`);
         expect(dialog.textContent).toContain(`${value} / 120`);
       }
     } finally {
