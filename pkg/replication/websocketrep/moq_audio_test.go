@@ -37,7 +37,7 @@ func TestMoqDeliversAudioContinuationBeforeVideoEnds(t *testing.T) {
 	defer tracks.finish()
 	publish := func(data []byte, sequence uint64) {
 		t.Helper()
-		require.NoError(t, tracks.publish(ctx, producer, data, func(track *official.CMAFProducer) (*official.CMAFGroupProducer, error) {
+		require.NoError(t, tracks.publish(ctx, producer, data, false, func(track *official.CMAFProducer) (*official.CMAFGroupProducer, error) {
 			return track.CreateGroup(sequence)
 		}))
 	}
@@ -107,7 +107,7 @@ func TestMoqDeliversAudioContinuationBeforeVideoEnds(t *testing.T) {
 	ready := make(chan struct{})
 	served := make(chan struct{})
 	go func() {
-		r.serveTracks(replayCtx, "did:test:audio", moqSourceChannel, replay, func() error { close(ready); return nil })
+		r.serveTracks(replayCtx, "did:test:audio", moqSourceChannel, replay, false, func() error { close(ready); return nil })
 		close(served)
 	}()
 	defer func() { stop(); <-served }()

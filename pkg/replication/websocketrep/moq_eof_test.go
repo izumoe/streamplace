@@ -84,7 +84,7 @@ func TestMoqDrainsPartialEOF(t *testing.T) {
 			defer tracks.finish()
 			publish := func(data []byte, sequence uint64) {
 				t.Helper()
-				require.NoError(t, tracks.publish(ctx, producer, data, func(track *official.CMAFProducer) (*official.CMAFGroupProducer, error) {
+				require.NoError(t, tracks.publish(ctx, producer, data, false, func(track *official.CMAFProducer) (*official.CMAFGroupProducer, error) {
 					return track.CreateGroup(sequence)
 				}))
 			}

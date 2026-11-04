@@ -29,6 +29,8 @@ import (
 // carries both as one CMAF track per MUXL track (see docs/moq-for-devs.md).
 const moqSourceChannel = "source"
 
+const moqFullSourcePrefix = "source/"
+
 // Subscriber priorities: under contention the source tracks, which carry
 // the audio, go before the renditions.
 const (
@@ -160,9 +162,14 @@ func (r *WebsocketReplicator) serveBroadcast(ctx context.Context, req *official.
 		return
 	}
 	sourceChannel := moqSourceChannel
+	h264Only := true
 	if strings.HasPrefix(streamer, "playback/") {
 		streamer = strings.TrimPrefix(streamer, "playback/")
 		sourceChannel = media.PlaybackSourceRendition
+		h264Only = false
+	} else if strings.HasPrefix(streamer, moqFullSourcePrefix) {
+		streamer = strings.TrimPrefix(streamer, moqFullSourcePrefix)
+		h264Only = false
 	}
 	if r.cli.DisableSyndication || !r.bus.HasSegments(streamer, sourceChannel) {
 		_ = req.Reject(404)
@@ -191,17 +198,27 @@ func (r *WebsocketReplicator) serveBroadcast(ctx context.Context, req *official.
 			}
 		}
 	}()
-	r.serveTracks(ctx, streamer, sourceChannel, broadcast, func() error { return req.Accept(broadcast) })
+	accepted := false
+	r.serveTracks(ctx, streamer, sourceChannel, broadcast, h264Only, func() error {
+		if err := req.Accept(broadcast); err != nil {
+			return err
+		}
+		accepted = true
+		return nil
+	})
+	if !accepted {
+		_ = req.Reject(500)
+	}
 }
 
 // serveTracks feeds broadcast from the streamer's bus until ctx ends or a
-// segment can't be served: every MUXL track of the source segments and
-// rendition addenda becomes a CMAF track in the broadcast's catalog, primed
+// segment can't be served. Source tracks are selected for the requested mode;
+// rendition addenda keep their tracks. The CMAF broadcast is primed
 // with the bus's recent segments like the websocket path. publish makes the
 // broadcast reachable once the first source segment's tracks are all in the
 // catalog: it grows a track at a time, and a subscriber that saw part of
 // the set would reassemble partial segments.
-func (r *WebsocketReplicator) serveTracks(ctx context.Context, streamer, sourceChannel string, broadcast *official.BroadcastProducer, publish func() error) {
+func (r *WebsocketReplicator) serveTracks(ctx context.Context, streamer, sourceChannel string, broadcast *official.BroadcastProducer, h264Only bool, publish func() error) {
 	source := r.bus.SubscribeSegmentBuf(ctx, streamer, sourceChannel, 2)
 	defer r.bus.UnsubscribeSegment(context.Background(), streamer, sourceChannel, source)
 	renditions := r.bus.SubscribeSegmentBuf(ctx, streamer, media.RenditionsChannel, 4)
@@ -263,7 +280,7 @@ func (r *WebsocketReplicator) serveTracks(ctx context.Context, streamer, sourceC
 			if sourceChannel == media.PlaybackSourceRendition {
 				err = tracks.publishPlayback(ctx, broadcast, seg.Muxl)
 			} else {
-				err = tracks.publish(ctx, broadcast, seg.Muxl, func(t *official.CMAFProducer) (*official.CMAFGroupProducer, error) { return t.CreateGroup(n) })
+				err = tracks.publish(ctx, broadcast, seg.Muxl, h264Only, func(t *official.CMAFProducer) (*official.CMAFGroupProducer, error) { return t.CreateGroup(n) })
 			}
 		case seg := <-renditions.C:
 			if !seg.Published {
@@ -272,7 +289,7 @@ func (r *WebsocketReplicator) serveTracks(ctx context.Context, streamer, sourceC
 			if sourceChannel == media.PlaybackSourceRendition {
 				err = tracks.publishPlayback(ctx, broadcast, seg.Muxl)
 			} else {
-				err = tracks.publish(ctx, broadcast, seg.Muxl, (*official.CMAFProducer).AppendGroup)
+				err = tracks.publish(ctx, broadcast, seg.Muxl, false, (*official.CMAFProducer).AppendGroup)
 			}
 		}
 		if err == nil && publish != nil && sequence > 0 {
@@ -326,10 +343,26 @@ func (ts moqTracks) finishGroups() error {
 // per moof+mdat, the track's leading boxes (its C2PA manifest and MUXL
 // catalog) riding the first, so the group's frames concatenate back to
 // the signed bytes.
-func (ts moqTracks) publish(ctx context.Context, broadcast *official.BroadcastProducer, seg []byte, group func(*official.CMAFProducer) (*official.CMAFGroupProducer, error)) error {
-	tracks, err := media.MuxlTracks(ctx, seg)
+func (ts moqTracks) publish(ctx context.Context, broadcast *official.BroadcastProducer, seg []byte, h264Only bool, group func(*official.CMAFProducer) (*official.CMAFGroupProducer, error)) error {
+	var tracks map[string][]byte
+	var err error
+	if h264Only {
+		var videoID uint32
+		for name := range ts {
+			if strings.HasPrefix(name, "video") {
+				id, parseErr := strconv.ParseUint(strings.TrimPrefix(name, "video"), 10, 32)
+				if parseErr == nil && id < uint64(media.RenditionTrackID(0)) {
+					videoID = uint32(id)
+					break
+				}
+			}
+		}
+		tracks, err = media.H264ReplicationTracks(ctx, seg, videoID)
+	} else {
+		tracks, err = media.MuxlTracks(ctx, seg)
+	}
 	if err != nil {
-		return fmt.Errorf("segment is not MUXL: %w", err)
+		return fmt.Errorf("replication source tracks: %w", err)
 	}
 	for name, data := range tracks {
 		if err := ts.publishTrack(ctx, broadcast, name, data, group); err != nil {
@@ -586,6 +619,30 @@ func requestMoqBroadcast(ctx context.Context, client *official.Client, streamer 
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	return announced.Available(ctx)
+}
+
+// requestReplicationBroadcast uses the full source when a peer supports it.
+// Only an explicit missing-broadcast response permits the H264 fallback.
+func requestReplicationBroadcast(ctx context.Context, client *official.Client, streamer string) (*official.BroadcastConsumer, error) {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	var lastErr error
+	for _, path := range [...]string{moqFullSourcePrefix + streamer, streamer} {
+		broadcast, err := requestMoqBroadcast(ctx, client, path)
+		if err == nil {
+			_, err = broadcast.Catalog(ctx)
+			if err == nil {
+				return broadcast, nil
+			}
+		}
+		protocol, ok := official.ProtocolError(err)
+		// MoQ encodes stream application errors at wire code 64 + application code.
+		if !ok || protocol.Scope != official.ErrorScopeStream || protocol.Kind != official.ProtocolKindApp || protocol.Code != 64+404 {
+			return nil, err
+		}
+		lastErr = err
+	}
+	return nil, lastErr
 }
 
 // consume follows one streamer's broadcast catalog and feeds its tracks

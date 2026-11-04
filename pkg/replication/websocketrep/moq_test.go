@@ -29,6 +29,11 @@ func signedSegments(t *testing.T, ctx context.Context) [][]byte {
 	t.Helper()
 	ms, err := media.NewEphemeralMediaSigner("test-streamer")
 	require.NoError(t, err)
+	return signedSegmentsWithSigner(t, ctx, ms)
+}
+
+func signedSegmentsWithSigner(t *testing.T, ctx context.Context, ms *media.MediaSignerLocal) [][]byte {
+	t.Helper()
 	frag, err := os.ReadFile("../../../test/fixtures/h264-opus-frag.mp4")
 	require.NoError(t, err)
 	events := make(chan *muxl.MuxlEvent, 16)

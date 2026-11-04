@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"net/url"
 	"strings"
 	"sync"
@@ -339,7 +340,7 @@ func (r *WebsocketReplicator) openMoq(ctx context.Context, origin *placestream.B
 		return err
 	}
 	defer client.Close()
-	broadcast, err := requestMoqBroadcast(ctx, client, origin.Streamer)
+	broadcast, err := requestReplicationBroadcast(ctx, client, origin.Streamer)
 	if err != nil {
 		spmetrics.ReplicationConnectErrorsTotal.Inc()
 		return fmt.Errorf("could not request broadcast: %w", err)
@@ -363,7 +364,7 @@ func (r *WebsocketReplicator) openWebsocket(ctx context.Context, origin *placest
 		return fmt.Errorf("origin has no websocket URL")
 	}
 	dialCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	conn, _, err := websocket.DefaultDialer.DialContext(dialCtx, *origin.WebsocketURL, nil)
+	conn, _, err := websocket.DefaultDialer.DialContext(dialCtx, *origin.WebsocketURL, http.Header{"Streamplace-Source": {"full"}})
 	cancel()
 	if err != nil {
 		spmetrics.ReplicationConnectErrorsTotal.Inc()
@@ -410,7 +411,7 @@ func (r *WebsocketReplicator) openWebsocket(ctx context.Context, origin *placest
 			}
 			continue
 		}
-		err = r.mm.ValidateMP4(context.Background(), bytes.NewReader(msg), false)
+		err = r.mm.ValidateReplicatedMP4(context.Background(), bytes.NewReader(msg), origin.Streamer)
 		if err != nil {
 			return fmt.Errorf("could not validate segment: %w", err)
 		}

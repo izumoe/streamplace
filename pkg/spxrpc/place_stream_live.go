@@ -353,7 +353,9 @@ func (s *Server) handlePlaceStreamLiveSubscribeSegments(c echo.Context) error {
 
 	ctx, cancel := context.WithCancel(c.Request().Context())
 	defer cancel()
+	fullSource := c.Request().Header.Get("Streamplace-Source") == "full"
 	go func() {
+		defer ws.Close()
 
 		segChan := s.bus.SubscribeSegmentBuf(ctx, user, "source", 2)
 		defer s.bus.UnsubscribeSegment(ctx, user, "source", segChan)
@@ -379,6 +381,14 @@ func (s *Server) handlePlaceStreamLiveSubscribeSegments(c echo.Context) error {
 				data := file.Muxl
 				if file.AudioOnly {
 					data = media.FrameRenditions(data)
+				} else if !fullSource {
+					var err error
+					data, err = media.H264ReplicationSource(ctx, data)
+					if err != nil {
+						log.Warn(ctx, "could not select H264 replication source", "error", err)
+						cancel()
+						return
+					}
 				}
 				err := ws.WriteMessage(websocket.BinaryMessage, data)
 				if err != nil {

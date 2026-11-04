@@ -17,12 +17,27 @@ places to start reading the code.
 3. Another node can subscribe, reconstruct the signed segments and verify them.
    A browser can subscribe to the playback broadcast and decode the media.
 
-There are two broadcast paths for a stream:
+There are three broadcast paths for a stream:
 
-| Subscriber   | Path                   | Media                                                      |
-| ------------ | ---------------------- | ---------------------------------------------------------- |
-| Another node | `did:plc:...`          | Completed, signed segments, including available renditions |
-| Browser      | `playback/did:plc:...` | Verified source media grouped for playback                 |
+| Subscriber                   | Path                   | Media                                                                |
+| ---------------------------- | ---------------------- | -------------------------------------------------------------------- |
+| Node with multitrack support | `source/did:plc:...`   | Full completed, signed source and available renditions               |
+| Older node                   | `did:plc:...`          | Largest H264 source video, all signed audio and available renditions |
+| Browser                      | `playback/did:plc:...` | Full verified source media grouped for playback                      |
+
+The compatibility source selects existing encoded tracks; it does not re-encode
+or re-sign them. Its original selected H264 manifest identifies that source.
+The full source keeps every original track and its canonical identity. AV1-only
+sources need a multitrack-capable peer; the compatibility path requires H264.
+A compatibility broadcast keeps its selected video for its lifetime and ends
+when that track ends, allowing the peer to rediscover the stream.
+
+Nodes request the full source first and use the older path only after an explicit
+404 broadcast rejection. Authorization failures, other server errors and catalog
+timeouts remain failures. WebSocket subscribers opt into the full source with
+`Streamplace-Source: full`; requests without that header get the H264 source.
+The origin record and signed media format stay unchanged. Generated audio keeps
+its original signer and the receiver's existing transcoder trust requirements.
 
 Worker-based ingest can publish verified source media for playback before audio
 completion adds AAC. Direct RTMP ingest publishes after source GoP signing and

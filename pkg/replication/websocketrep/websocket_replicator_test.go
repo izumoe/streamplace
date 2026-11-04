@@ -2,8 +2,10 @@ package websocketrep
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -13,6 +15,8 @@ import (
 	glex "github.com/streamplace/glex/runtime"
 	"github.com/stretchr/testify/require"
 	"stream.place/streamplace/pkg/config"
+	"stream.place/streamplace/pkg/gstinit"
+	"stream.place/streamplace/pkg/media"
 	"stream.place/streamplace/pkg/moq"
 	"stream.place/streamplace/pkg/placestream"
 	"stream.place/streamplace/pkg/statedb"
@@ -149,4 +153,73 @@ func TestMyMoqURLUsesRelayWithoutListenerCertificate(t *testing.T) {
 		}, moqCert: cert}
 		require.Equal(t, "https://relay.example/anon/node", r.getMyMoqURL())
 	}
+}
+
+func TestOpenWebsocketRequestsFullSourcePreservingOriginQuery(t *testing.T) {
+	requests := make(chan *http.Request, 1)
+	upgrader := websocket.Upgrader{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		conn, err := upgrader.Upgrade(w, req, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		requests <- req
+		_ = conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), time.Now().Add(time.Second))
+	}))
+	defer srv.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	origin := "ws" + strings.TrimPrefix(srv.URL, "http") + "/segments?streamer=did%3Aplc%3Atest&marker=retained"
+	stream := originView("did:plc:test", origin).Record.Val.(*placestream.BroadcastOrigin)
+	r := &WebsocketReplicator{}
+	require.Error(t, r.openWebsocket(ctx, stream), "the peer's normal close ends the pull")
+	select {
+	case req := <-requests:
+		query, err := url.ParseQuery(req.URL.RawQuery)
+		require.NoError(t, err)
+		require.Equal(t, "full", req.Header.Get("Streamplace-Source"))
+		require.Empty(t, query.Get("source"), "capability negotiation must not add an undeclared XRPC parameter")
+		require.Equal(t, "did:plc:test", query.Get("streamer"))
+		require.Equal(t, "retained", query.Get("marker"))
+		require.Equal(t, origin, *stream.WebsocketURL, "negotiation must not mutate the origin record")
+	case <-ctx.Done():
+		t.Fatal("the peer did not receive a websocket request")
+	}
+}
+
+func TestWebsocketReplicationBindsSourceToNamedStreamer(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	gstinit.InitGST()
+	signer, err := media.NewEphemeralMediaSigner("named-source")
+	require.NoError(t, err)
+	signer.PrebuiltManifest = []byte(fmt.Sprintf(`{"title":"source identity","assertions":[{"label":"c2pa.actions","data":{"actions":[{"action":"c2pa.created"}]}},{"label":"cawg.metadata","data":{"@context":{"dc":"http://purl.org/dc/elements/1.1/"},"dc:creator":%q,"dc:title":"source identity","dc:date":"1970-01-01T00:00:00.000Z"}}]}`, signer.DID()))
+	source := signedSegmentsWithSigner(t, ctx, signer)[0]
+	valid, err := media.ValidateMP4MediaC2PA(ctx, source)
+	require.NoError(t, err)
+	other, err := media.NewEphemeralMediaSigner("different-streamer")
+	require.NoError(t, err)
+	require.NotEqual(t, valid.Meta.Creator, other.DID())
+	served := make(chan error, 1)
+	upgrader := websocket.Upgrader{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		conn, err := upgrader.Upgrade(w, req, nil)
+		if err != nil {
+			served <- err
+			return
+		}
+		defer conn.Close()
+		served <- conn.WriteMessage(websocket.BinaryMessage, source)
+	}))
+	defer srv.Close()
+	cli := &config.CLI{BroadcasterHost: "node.test", ServerHost: "node.test", DataDir: t.TempDir(), Syndicate: []string{valid.Meta.Creator}}
+	require.True(t, cli.ShouldSyndicate(valid.Meta.Creator))
+	mm := media.NewOffline(cli)
+	r := &WebsocketReplicator{mm: mm}
+	u := "ws" + strings.TrimPrefix(srv.URL, "http")
+	err = r.openWebsocket(ctx, &placestream.BroadcastOrigin{Streamer: other.DID(), WebsocketURL: &u})
+	require.Zero(t, len(mm.BufferedSegments(valid.Meta.Creator)), "another streamer's valid media must not be admitted")
+	require.ErrorContains(t, err, "not "+other.DID())
+	require.NoError(t, <-served)
 }
