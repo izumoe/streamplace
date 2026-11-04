@@ -23,6 +23,7 @@ import (
 	"github.com/bluenviron/mediacommon/v2/pkg/codecs/av1"
 	"github.com/bluenviron/mediacommon/v2/pkg/codecs/h264"
 	"github.com/bluenviron/mediacommon/v2/pkg/codecs/mpeg4audio"
+	"github.com/go-gst/go-gst/pkg/gst"
 	"github.com/stretchr/testify/require"
 	"stream.place/streamplace/pkg/bus"
 	"stream.place/streamplace/pkg/config"
@@ -362,35 +363,74 @@ func assertRTMPPlayableBatches(t *testing.T, audio rtmpFixture, videos []rtmpFix
 	}
 }
 
+func TestRTMPDirectPipelineRejectsInvalidH264Configuration(t *testing.T) {
+	gstinit.InitGST()
+	video := readRTMPFixture(t, "ertmp-red-h264.mp4")
+	codec := video.video.Track.Codec.(*codecs.H264)
+	for _, tc := range []struct {
+		name     string
+		sps, pps []byte
+	}{
+		{"missing SPS", nil, codec.PPS},
+		{"truncated SPS", codec.SPS[:3], codec.PPS},
+		{"oversized SPS", bytes.Repeat([]byte{0x67}, 1<<16), codec.PPS},
+		{"missing PPS", codec.SPS, nil},
+		{"oversized PPS", codec.SPS, bytes.Repeat([]byte{0x68}, 1<<16)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			session := &RTMPSession{VideoTracks: []RTMPVideoTrack{{Track: &gortmplib.Track{Codec: &codecs.H264{SPS: tc.sps, PPS: tc.pps}}}}, AudioTrack: video.audio}
+			muxer := gst.ElementFactoryMakeWithProperties("mp4mux", nil)
+			require.NotNil(t, muxer.RequestPadSimple("video_%u"))
+			require.NotNil(t, muxer.RequestPadSimple("audio_%u"))
+			pipeline, _, err := newRTMPDirectPipeline(session, muxer)
+			if pipeline != nil {
+				require.NotEqual(t, gst.StateChangeFailure, pipeline.SetState(gst.StateNull))
+			}
+			require.ErrorContains(t, err, "SPS/PPS")
+		})
+	}
+}
+
 func TestRTMPDirectIngestPublishesMultitrackBeforeEOF(t *testing.T) {
 	gstinit.InitGST()
 	red := readRTMPFixture(t, "ertmp-red-h264.mp4")
-	require.True(t, slices.ContainsFunc(red.frames[0].AU, func(unit []byte) bool {
+	seiIndex := slices.IndexFunc(red.frames[0].AU, func(unit []byte) bool {
 		return len(unit) > 0 && unit[0]&31 == 6
-	}), "live ingest coverage must include the source's SEI alongside its picture")
+	})
+	require.NotEqual(t, -1, seiIndex, "live ingest coverage must include the source's SEI alongside its picture")
+	sei := red.frames[0].AU[seiIndex]
 	blue := readRTMPFixture(t, "ertmp-blue-h264.mp4")
 	green := readRTMPFixture(t, "ertmp-green-av1.mp4")
 	for _, tc := range []struct {
-		name       string
-		videos     []rtmpFixture
-		bursts     bool
-		delimiters bool
+		name    string
+		videos  []rtmpFixture
+		bursts  bool
+		framing string
 	}{
-		{"mixed codecs", []rtmpFixture{red, blue, green}, false, false},
-		{"three H264", []rtmpFixture{red, blue, red}, false, false},
-		{"three H264 uneven arrival", []rtmpFixture{red, blue, red}, true, false},
-		{"three H264 access-unit delimiters", []rtmpFixture{red, blue, red}, false, true},
+		{"mixed codecs", []rtmpFixture{red, blue, green}, false, ""},
+		{"three H264", []rtmpFixture{red, blue, red}, false, ""},
+		{"three H264 uneven arrival", []rtmpFixture{red, blue, red}, true, ""},
+		{"three H264 access-unit delimiters", []rtmpFixture{red, blue, red}, false, "AUD"},
+		{"three H264 trailing SEI", []rtmpFixture{red, blue, red}, false, "trailing SEI"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			session := rtmpSessionForFixtures(t, red, tc.videos...)
-			if tc.delimiters {
+			if tc.framing != "" {
 				for range len(session.EventChan) {
 					event := <-session.EventChan
 					if packet, ok := event.(*RTMPVideoData); ok {
-						// Keep a valid AUD before the unchanged picture and SEI.
-						withDelimiter := *packet
-						withDelimiter.AU = append([][]byte{{0x09, 0xf0}}, packet.AU...)
-						event = &withDelimiter
+						framedPacket := *packet
+						switch tc.framing {
+						case "AUD":
+							framedPacket.AU = append([][]byte{{0x09, 0xf0}}, packet.AU...)
+						case "trailing SEI":
+							if slices.ContainsFunc(packet.AU, func(unit []byte) bool {
+								return len(unit) > 0 && unit[0]&31 == 5
+							}) {
+								framedPacket.AU = append(append([][]byte(nil), packet.AU...), sei)
+							}
+						}
+						event = &framedPacket
 					}
 					session.EventChan <- event
 				}
@@ -438,6 +478,17 @@ func TestRTMPDirectIngestPublishesMultitrackBeforeEOF(t *testing.T) {
 			})
 			require.ErrorIs(t, err, context.Canceled, "a complete live batch must publish while packet input remains open")
 			require.NotEmpty(t, first)
+			if tc.framing == "trailing SEI" {
+				expected := len(tc.videos)
+				for _, video := range tc.videos {
+					for _, unit := range video.frames[0].AU {
+						if bytes.Equal(unit, sei) {
+							expected++
+						}
+					}
+				}
+				require.GreaterOrEqual(t, bytes.Count(first, sei), expected, "all leading and trailing SEI bytes reach the signed batch")
+			}
 			result, err := ValidateMP4Media(t.Context(), first)
 			require.NoError(t, err)
 			require.Len(t, result.MediaData.Video, 3)

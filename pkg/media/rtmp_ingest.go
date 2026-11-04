@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -123,11 +124,31 @@ func newRTMPDirectPipeline(session *RTMPSession, signer gst.Element) (gst.Pipeli
 		var parser, output string
 		switch codec := video.Track.Codec.(type) {
 		case *codecs.H264:
-			if len(codec.SPS) == 0 || len(codec.PPS) == 0 {
-				return nil, nil, fmt.Errorf("H264 video %d has no SPS/PPS", i)
+			if len(codec.SPS) < 4 || len(codec.SPS) > math.MaxUint16 || len(codec.PPS) == 0 || len(codec.PPS) > math.MaxUint16 {
+				return nil, nil, fmt.Errorf("H264 video %d has invalid SPS/PPS", i)
 			}
+			avcc := &mp4.AVCDecoderConfiguration{
+				ConfigurationVersion:       1,
+				Profile:                    codec.SPS[1],
+				ProfileCompatibility:       codec.SPS[2],
+				Level:                      codec.SPS[3],
+				Reserved:                   0b111111,
+				LengthSizeMinusOne:         3,
+				Reserved2:                  0b111,
+				NumOfSequenceParameterSets: 1,
+				SequenceParameterSets:      []mp4.AVCParameterSet{{Length: uint16(len(codec.SPS)), NALUnit: codec.SPS}},
+				NumOfPictureParameterSets:  1,
+				PictureParameterSets:       []mp4.AVCParameterSet{{Length: uint16(len(codec.PPS)), NALUnit: codec.PPS}},
+			}
+			avcc.SetType(mp4.BoxTypeAvcC())
+			var config bytes.Buffer
+			if _, err := mp4.Marshal(&config, avcc, mp4.Context{}); err != nil {
+				return nil, nil, fmt.Errorf("H264 video %d configuration: %w", i, err)
+			}
+			// Preserve RTMP access-unit boundaries, including SEI after the picture.
+			// Annex B reparsing can split that metadata into an untimed extra buffer.
 			parser, output = "h264parse", "video/x-h264,stream-format=avc,alignment=au"
-			caps = append(caps, "video/x-h264,stream-format=byte-stream,alignment=au")
+			caps = append(caps, fmt.Sprintf("%s,codec_data=(buffer)%x", output, config.Bytes()))
 		case *codecs.AV1:
 			var config mp4.Av1C
 			if _, err := mp4.Unmarshal(bytes.NewReader(video.AV1Config), uint64(len(video.AV1Config)), &config, mp4.Context{}); err != nil || len(config.ConfigOBUs) == 0 {
@@ -304,7 +325,7 @@ func feedRTMPPackets(ctx context.Context, session *RTMPSession, sources []app.Ap
 				}
 				track := session.VideoTracks[packet.TrackID]
 				units := packet.AU
-				switch codec := track.Track.Codec.(type) {
+				switch track.Track.Codec.(type) {
 				case *codecs.H264:
 					hasPicture := false
 					for _, unit := range units {
@@ -332,11 +353,8 @@ func feedRTMPPackets(ctx context.Context, session *RTMPSession, sources []app.Ap
 						units = append(pending[packet.TrackID], units...)
 						pending[packet.TrackID] = nil
 					}
-					if !started[packet.TrackID] {
-						units = append([][]byte{codec.SPS, codec.PPS}, units...)
-					}
 					var err error
-					data, err = h264.AnnexB(units).Marshal()
+					data, err = h264.AVCC(units).Marshal()
 					if err != nil {
 						return fmt.Errorf("H264 access unit: %w", err)
 					}
