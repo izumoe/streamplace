@@ -112,12 +112,15 @@ jobs:
             IN_CONTAINER_CMD="trap 'sccache --show-stats' EXIT; pnpm config set --global store-dir /cache/pnpm && make app && make linux-amd64 && make test-vod && make static-test && make check && make ci-lexicons && make linux-arm64 && go run ./pkg/config/git/git.go -v > sp-version.txt"
 
       - name: Restore cache ownership
-        if: ${{ !cancelled() && steps.build.outcome != 'skipped' }}
+        if:
+          ${{ !cancelled() && (steps.build.outcome == 'success' ||
+          steps.build.outcome == 'failure') }}
         run: sudo chown -R "$(id -u):$(id -g)" "$BUILD_CACHE_DIR"
       - name: Save build caches
         if:
-          ${{ !cancelled() && steps.build.outcome != 'skipped' &&
-          steps.cache.outputs.cache-hit != 'true' }}
+          ${{ !cancelled() && (steps.build.outcome == 'success' ||
+          steps.build.outcome == 'failure') && steps.cache.outputs.cache-hit !=
+          'true' }}
         uses: actions/cache/save@v4
         with:
           path: ${{ env.CACHE_PATHS }}
@@ -242,12 +245,15 @@ jobs:
             IN_CONTAINER_CMD="trap 'sccache --show-stats' EXIT; pnpm config set --global store-dir /cache/pnpm && $command"
 
       - name: Restore cache ownership
-        if: ${{ !cancelled() && steps.build.outcome != 'skipped' }}
+        if:
+          ${{ !cancelled() && (steps.build.outcome == 'success' ||
+          steps.build.outcome == 'failure') }}
         run: sudo chown -R "$(id -u):$(id -g)" "$BUILD_CACHE_DIR"
       - name: Save build caches
         if:
-          ${{ !cancelled() && steps.build.outcome != 'skipped' &&
-          steps.cache.outputs.cache-hit != 'true' }}
+          ${{ !cancelled() && (steps.build.outcome == 'success' ||
+          steps.build.outcome == 'failure') && steps.cache.outputs.cache-hit !=
+          'true' }}
         uses: actions/cache/save@v4
         with:
           path: ${{ env.CACHE_PATHS }}
@@ -531,8 +537,9 @@ jobs:
 
       - name: Save build caches
         if:
-          ${{ !cancelled() && steps.build.outcome != 'skipped' &&
-          steps.cache.outputs.cache-hit != 'true' }}
+          ${{ !cancelled() && (steps.build.outcome == 'success' ||
+          steps.build.outcome == 'failure') && steps.cache.outputs.cache-hit !=
+          'true' }}
         uses: actions/cache/save@v4
         with:
           path: ${{ env.CACHE_PATHS }}
