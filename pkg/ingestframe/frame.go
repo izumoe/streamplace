@@ -68,6 +68,8 @@ const (
 	// CompletedSourceSegment carries the canonical completion of a SourceSegment.
 	// It is independently validated and distributed through the ordinary path.
 	CompletedSourceSegment Type = 8
+	// AudioAddendum carries a signed audio-only codec tail after its source.
+	AudioAddendum Type = 9
 )
 
 func (t Type) String() string {
@@ -88,6 +90,8 @@ func (t Type) String() string {
 		return "source-segment"
 	case CompletedSourceSegment:
 		return "completed-source-segment"
+	case AudioAddendum:
+		return "audio-addendum"
 	default:
 		return fmt.Sprintf("unknown(%d)", uint8(t))
 	}
@@ -182,3 +186,5 @@ func (fr *Reader) ReadFrame() (Type, []byte, error) {
 	}
 	return m.Type, m.Payload, nil
 }
+
+func (fw *Writer) AudioAddendum(seg []byte) error { return fw.WriteFrame(AudioAddendum, seg) }

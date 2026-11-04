@@ -248,6 +248,10 @@ func (mm *MediaManager) consumeWorkerFrames(ctx context.Context, fr *ingestframe
 			if published != nil {
 				lastSource = published
 			}
+		case ingestframe.AudioAddendum:
+			if err := mm.ReceiveAudioAddendum(ctx, streamer, payload); err != nil {
+				return sawEnd, err
+			}
 		case ingestframe.End:
 			sawEnd = true
 		case ingestframe.Error:

@@ -20,6 +20,7 @@ type Seg struct {
 	PacketizedData    *PacketizedSegment
 	Published         bool
 	PlaybackPublished bool
+	AudioOnly         bool // an independently signed audio addendum, without replaying video
 }
 
 // PacketizedSample is one WebRTC-writable sample — a video access unit or an

@@ -23,14 +23,6 @@ import (
 func isAACCodec(codec string) bool  { return strings.HasPrefix(codec, "mp4a") }
 func isOpusCodec(codec string) bool { return strings.HasPrefix(codec, "opus") }
 
-// transcodeManifest is the C2PA manifest for a transcode-completed audio
-// track: it opens the source segment as an ingredient and records a
-// c2pa.transcoded action referencing it, both by TranscodeIngredientLabel.
-// muxl-sign stamps the per-segment time into cawg.metadata as it signs.
-func transcodeManifest(creator string) []byte {
-	return transcodeManifestFor(creator, "transcoded audio")
-}
-
 // transcodeManifestFor is the C2PA manifest a transcoded track is signed
 // with: opened + transcoded actions over the source ingredient, and the
 // streamer as creator.
@@ -81,7 +73,7 @@ func (mm *MediaManager) transcodeSigner() (cert []byte, keyPEM []byte, err error
 
 // audioCompletionTarget inspects a segment's catalog and reports the codec to
 // add ("opus" or "aac") when exactly one of AAC/Opus is present alongside a
-// video track (needed as the segmentation clock). need is false when both
+// video track. need is false when both
 // codecs are already present, there's no audio, there's no video, or the codec
 // is neither — in which case the segment is distributed as-is.
 func (mm *MediaManager) audioCompletionTarget(ctx context.Context, seg []byte) (target string, need bool) {
@@ -131,150 +123,35 @@ func missingAudioCodec(haveAAC, haveOpus bool) (target string, need bool) {
 	}
 }
 
-// buildAudioTranscodePipeline constructs the audio-transcode pipeline shared by
-// the per-segment ([transcodeAudioSegment]) and continuous ([streamTranscoder])
-// paths: an `appsrc` of fMP4 → qtdemux → encoded video passthrough + audio
-// (decode → re-encode to target) → fragmented mp4mux → `appsink`. Video rides
-// along only so muxl can anchor the canonical segment on the video keyframe;
-// callers keep the original signed video and use only the transcoded audio
-// track. Callers wire the `src`/`sink` callbacks and set the pipeline playing.
-// target is the codec being produced: "opus" (source AAC) or "aac" (source Opus).
-func buildAudioTranscodePipeline(target, videoCodec string) (gst.Pipeline, error) {
-	// Queue sizing: a single qtdemux feeds both branches, so if either queue
-	// hits a limit and blocks the demux, the sibling branch starves and mp4mux
-	// deadlocks waiting for it (then appsrc backpressures and the Feed blocks).
-	// gst's default queue caps at max-size-time=1s, which a long GoP overflows:
-	// a 2s GoP overflowed the video queue's time cap and wedged a live stream
-	// (TestStreamTranscoderDoubleGopWedge). Use the shared Queue2Big preset
-	// (no time/buffer cap, generous byte cap) like the other demux-fed pipelines
-	// (rtmp_push, packetize, media_data_parser) so an over-long GoP flows
-	// through instead of deadlocking, while memory stays bounded.
+// buildAudioTranscodePipeline continuously encodes audio from fMP4 input.
+// Encoded packets go directly to sink; a parallel muxer supplies their native
+// initialization through header. Video is drained without entering the muxer.
+// Callers install callbacks and start the pipeline. target is "opus" or "aac".
+func buildAudioTranscodePipeline(target string) (gst.Pipeline, error) {
 	var audioChain string
 	switch target {
-	case "opus": // source is AAC
-		audioChain = constants.Queue2Big + " name=aq ! aacparse ! fdkaacdec ! audioconvert ! audioresample ! opusenc name=aenc"
-	case "aac": // source is Opus
-		audioChain = constants.Queue2Big + " name=aq ! opusparse ! opusdec ! audioconvert ! audioresample ! fdkaacenc name=aenc"
+	case "opus":
+		audioChain = "aacparse ! fdkaacdec ! audioconvert ! audioresample ! opusenc name=aenc"
+	case "aac":
+		audioChain = "opusparse ! opusdec ! audioconvert ! audioresample ! fdkaacenc name=aenc"
 	default:
 		return nil, fmt.Errorf("unsupported transcode target %q", target)
 	}
-
-	videoParser := "parsebin"
-	switch {
-	case strings.HasPrefix(videoCodec, "avc1"), strings.HasPrefix(videoCodec, "avc3"):
-		videoParser = "h264parse"
-	case strings.HasPrefix(videoCodec, "av01"):
-		videoParser = "av1parse"
-	}
-	launched, err := gst.ParseLaunch(strings.Join([]string{
+	element, err := gst.ParseLaunch(strings.Join([]string{
 		"appsrc name=src ! qtdemux name=demux",
-		"demux.video_0 ! " + constants.Queue2Big + " name=vq ! " + videoParser + " name=vparse ! identity name=vout",
-		"demux.audio_0 ! " + audioChain,
+		"demux.video_0 ! " + constants.Queue2Big + " ! fakesink sync=false async=false",
+		"demux.audio_0 ! " + constants.Queue2Big + " name=aq ! " + audioChain + " ! tee name=encoded",
+		"encoded. ! appsink name=sink sync=false async=false enable-last-sample=false",
+		"encoded. ! mux.audio_0",
+		"mp4mux name=mux fragment-duration=1 ! appsink name=header sync=false async=false enable-last-sample=false",
 	}, "\n"))
 	if err != nil {
 		return nil, fmt.Errorf("create transcode pipeline: %w", err)
 	}
-	pipeline, ok := launched.(gst.Pipeline)
+	pipeline, ok := element.(gst.Pipeline)
 	if !ok {
 		return nil, fmt.Errorf("create transcode pipeline: parsed description is not a pipeline")
 	}
-
-	// Fragmented muxer + appsink, built programmatically so we can set the
-	// enum fragment-mode and pre-request pads in video-then-audio order.
-	mux := gst.ElementFactoryMakeWithProperties("mp4mux", map[string]any{
-		"name":              "mux",
-		"fragment-mode":     int32(0),
-		"fragment-duration": uint32(1),
-	})
-	if mux == nil {
-		return nil, fmt.Errorf("create mp4mux: element factory returned nil")
-	}
-	sink := gst.ElementFactoryMakeWithProperties("appsink", map[string]any{"name": "sink", "sync": false})
-	if sink == nil {
-		return nil, fmt.Errorf("create appsink: element factory returned nil")
-	}
-	if !pipeline.AddMany(mux, sink) {
-		return nil, fmt.Errorf("add mux/sink to pipeline failed")
-	}
-	if !mux.Link(sink) {
-		return nil, fmt.Errorf("link mux→sink failed")
-	}
-
-	// Pre-request pads in order so the muxer assigns video=track 1, audio=2.
-	videoMuxPad := mux.RequestPadSimple("video_%u")
-	audioMuxPad := mux.RequestPadSimple("audio_%u")
-	if videoMuxPad == nil || audioMuxPad == nil {
-		return nil, fmt.Errorf("failed to request mp4mux pads")
-	}
-
-	vparse := pipeline.GetByName("vparse")
-	if vparse == nil {
-		return nil, fmt.Errorf("vparse element not found")
-	}
-	// Only H264 needs the IDR correction. AV1's parser supplies its own sync
-	// flags; interpreting its OBUs as H264 NALs would erase every cut point.
-	if videoParser == "h264parse" {
-		installIDRKeyframeProbe(context.Background(), vparse.GetStaticPad("src"), "completion")
-	} else if videoParser == "parsebin" {
-		vparse.ConnectPadAdded(func(_ gst.Element, pad gst.Pad) {
-			if caps := padCaps(pad); caps != nil && caps.GetStructure(0).GetName() == "video/x-h264" {
-				installIDRKeyframeProbe(context.Background(), pad, "completion")
-			}
-		})
-	}
-	aenc := pipeline.GetByName("aenc")
-	if aenc == nil {
-		return nil, fmt.Errorf("aenc element not found")
-	}
-	// Repair the passthrough video's timestamps before the muxer. Variable-frame-
-	// rate WHIP capture can emit several frames at one instant (observed: three
-	// frames sharing a PTS, sub-100µs "durations", N/A durations — a capture
-	// artifact ffmpeg tolerates). GStreamer's qtdemux collapses those into buffers
-	// with a zero duration and then no PTS *and* no DTS; mp4mux rejects a PTS-less
-	// buffer ("Buffer has no PTS" → "Could not multiplex stream"), which kills the
-	// whole pipeline — so the stream silently loses its transcoded AAC track for
-	// the rest of its life (observed in prod on a 1080p60 High-profile Opus
-	// stream). The muxed video is only a segmentation clock and is discarded
-	// downstream (finishTranscodedSegment keeps just the transcoded audio), so we
-	// force a valid, strictly increasing PTS: keep the real one where present,
-	// otherwise carry the previous timestamp forward by one step. Keyframes (the
-	// GoP/segment cut points) always carry a real PTS, so segment boundaries — and
-	// the 1:1 source pairing — are preserved; only degenerate intra-GoP frames are
-	// nudged, by at most a few ms within their own GoP.
-	const tsStep = gst.ClockTime(1_000_000) // 1 ms — ≥1 tick at any sane video timescale
-	var lastTS gst.ClockTime
-	haveLast := false
-	vparseSrc := pipeline.GetByName("vout").GetStaticPad("src")
-	vparseSrc.AddProbe(gst.PadProbeTypeBuffer, func(_ gst.Pad, info *gst.PadProbeInfo) gst.PadProbeReturn {
-		buf := info.GetBuffer()
-		if buf == nil {
-			return gst.PadProbeOK
-		}
-		defer gst.UnsafeBufferUnref(buf)
-		ts := buf.PTS()
-		if ts == gst.ClockTimeNone {
-			ts = buf.DTS()
-		}
-		if haveLast && (ts == gst.ClockTimeNone || ts <= lastTS) {
-			ts = lastTS + tsStep // missing or non-monotonic → carry forward
-		} else if ts == gst.ClockTimeNone {
-			ts = 0 // very first buffer with no timestamp at all
-		}
-		buf.SetPTS(ts)
-		if d := buf.Duration(); d == gst.ClockTimeNone || d == 0 {
-			buf.SetDuration(tsStep)
-		}
-		lastTS = ts
-		haveLast = true
-		return gst.PadProbeOK
-	})
-	if r := vparseSrc.Link(videoMuxPad); r != gst.PadLinkOK {
-		return nil, fmt.Errorf("link video chain → mux: %v", r)
-	}
-	if r := aenc.GetStaticPad("src").Link(audioMuxPad); r != gst.PadLinkOK {
-		return nil, fmt.Errorf("link audio chain → mux: %v", r)
-	}
-
 	return pipeline, nil
 }
 

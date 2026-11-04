@@ -172,12 +172,28 @@ func (r *WebsocketReplicator) serveTracks(ctx context.Context, streamer, sourceC
 	// how a peer puts the segment back together (see consumeSource).
 	var sequence uint64
 	var batchDuration time.Duration
+	var sourceID string
 	for {
 		var err error
 		select {
 		case <-ctx.Done():
 			return
 		case seg := <-source.C:
+			if seg.AudioOnly {
+				if !seg.Published || sequence == 0 || seg.Filepath == "" || seg.Filepath != sourceID {
+					continue
+				}
+				if sourceChannel == media.PlaybackSourceRendition {
+					err = tracks.publishPlayback(ctx, broadcast, seg.Muxl)
+				} else {
+					err = tracks.publishAudioAddendum(ctx, broadcast, seg.Muxl)
+				}
+				if err != nil {
+					log.Warn(ctx, "moq: could not publish audio continuation", "error", err)
+					return
+				}
+				continue
+			}
 			if !seg.Published {
 				if sourceChannel == media.PlaybackSourceRendition {
 					if err := tracks.finishGroups(); err != nil {
@@ -201,6 +217,7 @@ func (r *WebsocketReplicator) serveTracks(ctx context.Context, streamer, sourceC
 					return
 				}
 			}
+			sourceID = seg.Filepath
 			n := sequence
 			sequence++
 			if sourceChannel == media.PlaybackSourceRendition {
@@ -275,22 +292,51 @@ func (ts moqTracks) publish(ctx context.Context, broadcast *official.BroadcastPr
 		return fmt.Errorf("segment is not MUXL: %w", err)
 	}
 	for name, data := range tracks {
-		t, fragments, err := ts.track(ctx, broadcast, name, data, nil)
-		if err != nil {
+		if err := ts.publishTrack(ctx, broadcast, name, data, group); err != nil {
 			return err
 		}
-		g, err := group(t.CMAFProducer)
-		if err != nil {
-			return fmt.Errorf("track %s group: %w", name, err)
+	}
+	return nil
+}
+
+// Audio continuations use the existing rendition transport namespace. The
+// canonical track id, codec header and signatures remain unchanged. Older
+// peers therefore fold these bytes into HLS instead of rejecting an audio-only
+// source batch; upgraded peers also deliver the tail to WebRTC and RTMP.
+func (ts moqTracks) publishAudioAddendum(ctx context.Context, broadcast *official.BroadcastProducer, data []byte) error {
+	tracks, err := media.MuxlTracks(ctx, data)
+	if err != nil {
+		return err
+	}
+	for name, data := range tracks {
+		id, err := strconv.ParseUint(strings.TrimPrefix(name, "audio"), 10, 32)
+		if err != nil || !strings.HasPrefix(name, "audio") || id >= uint64(media.RenditionTrackID(0)) {
+			return fmt.Errorf("invalid continuation track %s", name)
 		}
-		for _, fragment := range fragments {
-			if err := g.WriteFragment(fragment); err != nil {
-				return fmt.Errorf("track %s: %w", name, err)
-			}
+		rendition := fmt.Sprintf("audio%d", media.RenditionTrackID(int(id)))
+		if err := ts.publishTrack(ctx, broadcast, rendition, data, (*official.CMAFProducer).AppendGroup); err != nil {
+			return err
 		}
-		if err := g.Finish(); err != nil {
+	}
+	return nil
+}
+
+func (ts moqTracks) publishTrack(ctx context.Context, broadcast *official.BroadcastProducer, name string, data []byte, group func(*official.CMAFProducer) (*official.CMAFGroupProducer, error)) error {
+	track, fragments, err := ts.track(ctx, broadcast, name, data, nil)
+	if err != nil {
+		return err
+	}
+	g, err := group(track.CMAFProducer)
+	if err != nil {
+		return fmt.Errorf("track %s group: %w", name, err)
+	}
+	for _, fragment := range fragments {
+		if err := g.WriteFragment(fragment); err != nil {
 			return fmt.Errorf("track %s: %w", name, err)
 		}
+	}
+	if err := g.Finish(); err != nil {
+		return fmt.Errorf("track %s: %w", name, err)
 	}
 	return nil
 }
@@ -517,7 +563,27 @@ func (r *WebsocketReplicator) consume(ctx context.Context, broadcast *official.B
 			return nil
 		},
 		func(ctx context.Context, addendum []byte) error {
-			return r.feedRenditions(ctx, streamer, addendum)
+			err := r.feedRenditions(ctx, streamer, addendum)
+			if !errors.Is(err, media.ErrAudioSourceMissing) {
+				return err
+			}
+			source := r.bus.SubscribeSegment(ctx, streamer, "source")
+			defer r.bus.UnsubscribeSegment(context.Background(), streamer, "source", source)
+			waiting, cancel := context.WithTimeout(ctx, 15*time.Second)
+			defer cancel()
+			for {
+				// Retry after subscribing so an admission racing the subscription is
+				// observed either in the canonical buffer or in the source channel.
+				err = r.feedRenditions(waiting, streamer, addendum)
+				if !errors.Is(err, media.ErrAudioSourceMissing) {
+					return err
+				}
+				select {
+				case <-source.C:
+				case <-waiting.Done():
+					return fmt.Errorf("audio continuation source: %w", waiting.Err())
+				}
+			}
 		})
 }
 

@@ -2,6 +2,7 @@ package director
 
 import (
 	"context"
+	"errors"
 
 	"stream.place/streamplace/pkg/access"
 	"stream.place/streamplace/pkg/log"
@@ -92,11 +93,17 @@ func (ss *StreamSession) s3Upload(ctx context.Context, notif *media.NewSegmentNo
 	if ss.s3Uploader == nil {
 		return
 	}
-	ss.Go(ctx, func() error {
-		// notif.Muxl is the bare canonical segment; it concatenates directly
-		// (the S3 uploader synthesizes one init and prepends it per object).
-		return ss.s3Uploader.AddSegment(ctx, notif.Muxl, notif.Segment.StartTime)
-	})
+	// Preserve notification order without allowing slow storage to hold the
+	// director. Backpressure ends this recording at its accepted FIFO prefix.
+	var err error
+	if notif.AudioOnly {
+		err = ss.s3Uploader.TryAddAudioAddendum(ctx, notif.Muxl, notif.Segment.StartTime)
+	} else {
+		err = ss.s3Uploader.TryAddSegment(ctx, notif.Muxl, notif.Segment.StartTime)
+	}
+	if err != nil && !errors.Is(err, s3.ErrUploaderClosed) && !errors.Is(err, context.Canceled) {
+		log.Error(ctx, "live recording stopped", "error", err)
+	}
 }
 
 // s3Cutover completes the current live-recording object so it's immediately
@@ -108,9 +115,9 @@ func (ss *StreamSession) s3Cutover(ctx context.Context) {
 	if ss.s3Uploader == nil {
 		return
 	}
-	ss.Go(ctx, func() error {
-		return ss.s3Uploader.Cutover(ctx)
-	})
+	if err := ss.s3Uploader.TryCutover(ctx); err != nil && !errors.Is(err, s3.ErrUploaderClosed) && !errors.Is(err, context.Canceled) {
+		log.Error(ctx, "live recording stopped", "error", err)
+	}
 }
 
 func (ss *StreamSession) s3Close(ctx context.Context) {

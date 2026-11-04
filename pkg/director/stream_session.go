@@ -225,6 +225,59 @@ func (ss *StreamSession) NewSegment(ctx context.Context, notif *media.NewSegment
 			return err
 		}
 	}
+	if notif.AudioOnly {
+		// The source row is created only after bitrate admission, in arrival
+		// order. Enqueue recording here so a later source cannot overtake its
+		// audio while playback is still waiting for an earlier packetizer.
+		if ss.localDB == nil || notif.Segment.ID == "" {
+			return fmt.Errorf("audio continuation source was not admitted")
+		}
+		admittedSource, err := ss.localDB.GetSegment(notif.Segment.ID)
+		if err != nil {
+			return fmt.Errorf("read audio continuation source admission: %w", err)
+		}
+		if admittedSource == nil || admittedSource.RepoDID != notif.Segment.RepoDID {
+			return fmt.Errorf("audio continuation source was not admitted")
+		}
+		published := notif.Metadata.Published && admittedSource.Published
+		if notif.Local && published {
+			ss.s3Upload(ctx, notif)
+		}
+		tn := ss.sourceLane.turn()
+		var videoTurn *turn
+		if notif.Local && ss.cli.TranscoderURL != "" {
+			videoTurn = ss.renditions.turn()
+		}
+		ss.Go(ctx, func() error {
+			defer tn.release()
+			if videoTurn != nil {
+				defer videoTurn.release()
+			}
+			if !tn.wait(ctx) {
+				return fmt.Errorf("audio continuation lost its publication turn")
+			}
+			if videoTurn != nil && !videoTurn.wait(ctx) {
+				return fmt.Errorf("audio continuation lost its video rendition turn")
+			}
+			if err := ss.mm.CheckPublisherContext(ctx); err != nil {
+				return err
+			}
+			// Validation precedes the director's bitrate admission. Only the
+			// exact source that reached its publication turn can release audio.
+			source := ss.bus.SubscribeSegmentBuf(ctx, notif.Segment.RepoDID, "source", 1)
+			defer ss.bus.UnsubscribeSegment(ctx, notif.Segment.RepoDID, "source", source)
+			var admitted *bus.Seg
+			select {
+			case admitted = <-source.C:
+			default:
+			}
+			if admitted == nil || notif.Segment.ID == "" || admitted.Filepath != notif.Segment.ID {
+				return fmt.Errorf("audio continuation source was not admitted")
+			}
+			return ss.mm.PublishAudioAddendum(ctx, notif.Segment.RepoDID, notif.Muxl, notif.Segment.ID, notif.Segment.StartTime, published && admitted.Published)
+		})
+		return nil
+	}
 	go func() {
 		select {
 		case <-ss.ctx.Done():

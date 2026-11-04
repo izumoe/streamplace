@@ -3,7 +3,6 @@ package media
 import (
 	"bytes"
 	"context"
-	"io"
 	"os"
 	"path/filepath"
 	"runtime/debug"
@@ -73,11 +72,9 @@ func TestValidatedAudioCompletionTarget(t *testing.T) {
 func TestAudioTranscodePipelineReleasesQueues(t *testing.T) {
 	withNoGSTLeaks(t, func() {
 		for _, target := range []string{"aac", "opus"} {
-			for _, codec := range []string{"avc1", "av01", ""} {
-				pipeline, err := buildAudioTranscodePipeline(target, codec)
-				require.NoError(t, err)
-				require.Equal(t, gst.StateChangeSuccess, pipeline.BlockSetState(gst.StateNull, gst.ClockTimeNone))
-			}
+			pipeline, err := buildAudioTranscodePipeline(target)
+			require.NoError(t, err)
+			require.Equal(t, gst.StateChangeSuccess, pipeline.BlockSetState(gst.StateNull, gst.ClockTimeNone))
 		}
 	})
 }
@@ -97,8 +94,8 @@ func TestStreamTranscoderAACSource(t *testing.T) {
 		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
 		var completed [][]byte
-		tr := mm.newStreamTranscoder(ctx, "opus", ms.Cert, keyPEM, func(_ any, seg []byte) {
-			completed = append(completed, seg)
+		tr := mm.newStreamTranscoder(ctx, "opus", ms.Cert, keyPEM, func(_ any, seg []byte, audioOnly bool) {
+			appendAudioCompletion(&completed, seg, audioOnly)
 		})
 		for i, seg := range segs {
 			require.NoError(t, tr.Feed(seg, i))
@@ -121,7 +118,7 @@ func BenchmarkAudioTranscodePipeline(b *testing.B) {
 		b.Run(target, func(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
-				pipeline, err := buildAudioTranscodePipeline(target, "avc1")
+				pipeline, err := buildAudioTranscodePipeline(target)
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -152,7 +149,7 @@ func audioCodecsOf(t *testing.T, ctx context.Context, seg []byte) []string {
 
 func TestStreamTranscoderCloseWithoutInput(t *testing.T) {
 	mm := &MediaManager{cli: &config.CLI{}}
-	tr := mm.newStreamTranscoder(t.Context(), "aac", nil, nil, func(any, []byte) {
+	tr := mm.newStreamTranscoder(t.Context(), "aac", nil, nil, func(_ any, _ []byte, _ bool) {
 		t.Error("an empty stream must not produce a completion")
 	})
 	require.NoError(t, tr.Close())
@@ -160,73 +157,43 @@ func TestStreamTranscoderCloseWithoutInput(t *testing.T) {
 	require.ErrorContains(t, tr.Feed(nil, nil), "closed")
 }
 
-func TestAudioTranscodeTimestampProbeReleasesBuffersBeforeGC(t *testing.T) {
+func TestAudioTranscodeOutputReleasesBuffersBeforeGC(t *testing.T) {
 	previousGC := debug.SetGCPercent(-1)
 	t.Cleanup(func() { debug.SetGCPercent(previousGC) })
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	input, err := os.ReadFile(getFixture("av1-aac-frag.mp4"))
 	require.NoError(t, err)
-	// AV1 isolates the timestamp probe from the separate H264 IDR probe.
-	pipeline, err := buildAudioTranscodePipeline("opus", "av01")
+	pipeline, err := buildAudioTranscodePipeline("opus")
 	require.NoError(t, err)
 	defer pipeline.BlockSetState(gst.StateNull, gst.ClockTimeNone)
-	vout := pipeline.GetByName("vout")
-	index := 0
-	vout.GetStaticPad("sink").AddProbe(gst.PadProbeTypeBuffer, func(_ gst.Pad, info *gst.PadProbeInfo) gst.PadProbeReturn {
+	held := make(chan *gst.Buffer, 4)
+	pipeline.GetByName("sink").GetStaticPad("sink").AddProbe(gst.PadProbeTypeBuffer, func(_ gst.Pad, info *gst.PadProbeInfo) gst.PadProbeReturn {
 		buffer := info.GetBuffer()
-		if buffer == nil {
-			return gst.PadProbeOK
-		}
-		defer gst.UnsafeBufferUnref(buffer)
-		switch index {
-		case 0:
-			buffer.SetPTS(0)
-		case 1:
-			buffer.SetPTS(gst.ClockTimeNone)
-			buffer.SetDTS(0)
-			buffer.SetDuration(gst.ClockTimeNone)
-		case 2:
-			buffer.SetPTS(gst.ClockTimeNone)
-			buffer.SetDTS(gst.ClockTimeNone)
-			buffer.SetDuration(0)
-		case 3:
-			buffer.SetPTS(0)
-		}
-		index++
-		return gst.PadProbeOK
-	})
-	heldCh := make(chan *gst.Buffer, 4)
-	vout.GetStaticPad("src").AddProbe(gst.PadProbeTypeBuffer, func(_ gst.Pad, info *gst.PadProbeInfo) gst.PadProbeReturn {
-		buffer := info.GetBuffer()
-		if len(heldCh) < cap(heldCh) {
-			heldCh <- buffer
-		} else if buffer != nil {
-			gst.UnsafeBufferUnref(buffer)
-		}
-		return gst.PadProbeOK
-	})
-	pipeline.GetByName("src").(app.AppSrc).SetCallbacks(&app.AppSrcCallbacks{NeedData: gstpipeline.ReaderNeedDataIncremental(ctx, bytes.NewReader(input))})
-	pipeline.GetByName("sink").(app.AppSink).SetCallbacks(&app.AppSinkCallbacks{NewSample: gstpipeline.WriterNewSample(ctx, io.Discard)})
-	require.NotEqual(t, gst.StateChangeFailure, pipeline.SetState(gst.StatePlaying))
-	require.NoError(t, gstpipeline.HandleBusMessages(ctx, pipeline))
-	require.Equal(t, gst.StateChangeSuccess, pipeline.BlockSetState(gst.StateNull, gst.ClockTimeNone))
-	defer func() {
-		for len(heldCh) > 0 {
-			if buffer := <-heldCh; buffer != nil {
+		if buffer != nil {
+			select {
+			case held <- buffer:
+			default:
 				gst.UnsafeBufferUnref(buffer)
 			}
 		}
-	}()
-	require.Len(t, heldCh, 4)
-	for i := range 4 {
-		buffer := <-heldCh
-		require.NotNil(t, buffer)
-		defer gst.UnsafeBufferUnref(buffer)
-		require.Equal(t, gst.ClockTime(i)*gst.ClockTime(time.Millisecond), buffer.PTS(), "missing and regressive timestamps must advance without changing the first timestamp")
-		if i == 1 || i == 2 {
-			require.Equal(t, gst.ClockTime(time.Millisecond), buffer.Duration())
+		return gst.PadProbeOK
+	})
+	defer func() {
+		for len(held) > 0 {
+			gst.UnsafeBufferUnref(<-held)
 		}
-		require.True(t, gst.UnsafeMiniObjectFromGlibBorrow(gst.UnsafeBufferToGlibNone(buffer)).IsWritable(), "the timestamp probe must release its reference before Go GC, frame %d", i)
+	}()
+	installAudioOutput(pipeline, func(output audioOutput) bool { return true })
+	pipeline.GetByName("src").(app.AppSrc).SetCallbacks(&app.AppSrcCallbacks{NeedData: gstpipeline.ReaderNeedDataIncremental(ctx, bytes.NewReader(input))})
+	require.NotEqual(t, gst.StateChangeFailure, pipeline.SetState(gst.StatePlaying))
+	require.NoError(t, gstpipeline.HandleBusMessages(ctx, pipeline))
+	require.Equal(t, gst.StateChangeSuccess, pipeline.BlockSetState(gst.StateNull, gst.ClockTimeNone))
+	require.Len(t, held, 4)
+	for range 4 {
+		buffer := <-held
+		writable := gst.UnsafeMiniObjectFromGlibBorrow(gst.UnsafeBufferToGlibNone(buffer)).IsWritable()
+		gst.UnsafeBufferUnref(buffer)
+		require.True(t, writable, "encoded output callbacks must release native samples before Go GC")
 	}
 }

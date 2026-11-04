@@ -171,7 +171,17 @@ func (mm *MediaManager) SegmentAndSignElem(ctx context.Context, ms MediaSigner, 
 	onSegment := func(ctx context.Context, segment []byte) error {
 		return mm.receiveSignedSegment(ctx, streamer, segment)
 	}
-	return MuxlSignSegmentElem(ctx, mm.cli, ms, videoTrackCount, onSegment)
+	elem, done, err := muxlSignSegmentElem(ctx, mm.cli, ms.SignSegmentStream, videoTrackCount, onSegment)
+	if err != nil {
+		return nil, err
+	}
+	go func() {
+		<-done
+		if err := mm.closeStreamTranscoder(ctx, streamer); err != nil {
+			log.Error(ctx, "drain completed ingest audio failed", "streamer", streamer, "error", err)
+		}
+	}()
+	return elem, nil
 }
 
 func (mm *MediaManager) receiveSignedSegment(ctx context.Context, streamer string, segment []byte) error {

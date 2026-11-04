@@ -190,9 +190,11 @@ func (mm *MediaManager) workerSegmentSink(ctx context.Context, cfg IngestWorkerC
 			}
 			earlySource = target == "aac"
 			transcoder = mm.newStreamTranscoder(context.WithoutCancel(ctx), target, cfg.NodeCertPEM, cfg.NodeKeyPEM,
-				func(_ any, completed []byte) {
+				func(_ any, completed []byte, audioOnly bool) {
 					var ferr error
-					if earlySource {
+					if audioOnly {
+						ferr = frames.AudioAddendum(completed)
+					} else if earlySource {
 						ferr = frames.CompletedSourceSegment(completed)
 					} else {
 						ferr = frames.Segment(completed)
@@ -246,9 +248,8 @@ func RunMP4IngestWorker(ctx context.Context, cfg IngestWorkerConfig, stdin io.Re
 	defer wd.stop()
 	frames = wd.wrap(frames)
 
-	// Minimal manager: the broadcaster identity the transcode completion
-	// (finishTranscodedSegment) stamps into the node-signed AAC track, plus the
-	// destination for an optional debug recording.
+	// Minimal manager: the broadcaster identity used to sign transcoded audio,
+	// plus the destination for an optional debug recording.
 	mm := &MediaManager{cli: cfg.workerCLI()}
 	onSegment, flush := mm.workerSegmentSink(ctx, cfg, frames)
 

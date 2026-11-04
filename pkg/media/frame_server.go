@@ -35,6 +35,7 @@ type FrameWriter interface {
 	Segment(seg []byte) error
 	SourceSegment(seg []byte) error
 	CompletedSourceSegment(seg []byte) error
+	AudioAddendum(seg []byte) error
 	End() error
 	Error(msg string) error
 }
@@ -266,4 +267,9 @@ func serveFrameSocket(ctx context.Context, ln net.Listener, s *frameServer, mani
 			log.Log(ctx, "ingest worker: main detached from frame socket")
 		}(conn)
 	}
+}
+
+func (s *frameServer) AudioAddendum(seg []byte) error {
+	s.push(ingestframe.AudioAddendum, seg)
+	return nil
 }

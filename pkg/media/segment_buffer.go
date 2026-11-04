@@ -23,9 +23,12 @@ type BufferedSegment struct {
 	// Local is set for a segment ingested by this node rather than replicated
 	// to it. A node sees every segment of a stream it ingests, so a run of
 	// local segments has no gaps; replication can drop some.
-	Local   bool
-	Data    []byte // bare canonical .m4s bytes; never modified once buffered
-	addedAt time.Time
+	Local               bool
+	Data                []byte // bare canonical .m4s bytes; never modified once buffered
+	addedAt             time.Time
+	publisherGeneration uint64
+	sourceLabel         string
+	hlsReady            <-chan struct{}
 }
 
 // segmentBuffer is a stream's time-bounded run of recent segments. All
@@ -42,19 +45,33 @@ type segmentBuffer struct {
 // are copied since the caller reuses its buffer. Expired buffers are evicted
 // here and by the node cache cleaner, so ending the last stream does not
 // keep its bytes alive indefinitely.
-func (mm *MediaManager) bufferSegment(did string, start time.Time, published, local bool, segment []byte) {
-	now := time.Now()
+func (mm *MediaManager) bufferSegment(did string, start time.Time, published, local bool, segment []byte, generation uint64, label string) {
 	mm.segBuffersMut.Lock()
 	defer mm.segBuffersMut.Unlock()
+	mm.bufferSegmentLocked(did, start, published, local, segment, generation, label, nil)
+}
+
+// Caller holds segBuffersMut through the source's subscriber notification.
+// The previous source's readiness keeps asynchronous HLS feeds in source order.
+func (mm *MediaManager) bufferSegmentLocked(did string, start time.Time, published, local bool, segment []byte, generation uint64, label string, hlsReady <-chan struct{}) <-chan struct{} {
+	now := time.Now()
 	b := mm.segmentBufferLocked(did)
+	var previous <-chan struct{}
+	if len(b.segs) > 0 {
+		previous = b.segs[len(b.segs)-1].hlsReady
+	}
 	b.segs = append(b.segs, BufferedSegment{
-		Start:     start,
-		Published: published,
-		Local:     local,
-		Data:      append([]byte(nil), segment...),
-		addedAt:   now,
+		Start:               start,
+		Published:           published,
+		Local:               local,
+		Data:                append([]byte(nil), segment...),
+		addedAt:             now,
+		publisherGeneration: generation,
+		sourceLabel:         label,
+		hlsReady:            hlsReady,
 	})
 	mm.evictSegmentBuffersLocked(now)
+	return previous
 }
 
 func (mm *MediaManager) evictSegmentBuffersLocked(now time.Time) {

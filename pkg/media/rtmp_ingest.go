@@ -55,6 +55,11 @@ func (mm *MediaManager) RTMPIngest(ctx context.Context, session *RTMPSession) er
 	if err != nil {
 		return err
 	}
+	defer func() {
+		if err := mm.closeStreamTranscoder(ctx, session.MediaSigner.Streamer()); err != nil {
+			log.Error(ctx, "drain RTMP audio failed", "error", err)
+		}
+	}()
 	return mm.rtmpIngestSession(ctx, session, func(ctx context.Context, segment []byte) error {
 		return mm.receiveSignedSegment(ctx, session.MediaSigner.Streamer(), segment)
 	})

@@ -29,6 +29,7 @@
 package livehls
 
 import (
+	"bytes"
 	"fmt"
 	"math"
 	"sort"
@@ -155,6 +156,30 @@ func NewWriter(opts ...Option) *Writer {
 		opt(w)
 	}
 	return w
+}
+
+// Clone creates an independent window over the same immutable completed media.
+// Open fragments are copied because Observe can append to their backing arrays.
+func (w *Writer) Clone() *Writer {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	clone := &Writer{
+		tracks: make(map[string]*Track, len(w.tracks)),
+		order:  append([]string(nil), w.order...),
+		window: w.window, minDur: w.minDur, minFrag: w.minFrag,
+		retention: w.retention, finished: w.finished, now: w.now,
+	}
+	for id, track := range w.tracks {
+		copied := *track
+		copied.Segments = append([]Segment(nil), track.Segments...)
+		for i := range copied.Segments {
+			if copied.Segments[i].open {
+				copied.Segments[i].data = bytes.Clone(copied.Segments[i].data)
+			}
+		}
+		clone.tracks[id] = &copied
+	}
+	return clone
 }
 
 // Observe folds one muxl event into the window. An "init" event supplies the
@@ -290,6 +315,14 @@ func (w *Writer) advertisedRange(t *Track) (start, end int) {
 	return start, end
 }
 
+// Flush makes partial fragments fetchable without ending the live playlist.
+// More media can be observed afterward, including a publisher reconnect.
+func (w *Writer) Flush() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.flushLocked()
+}
+
 // Finalize marks the stream complete; subsequent media playlists carry
 // EXT-X-ENDLIST and the VOD playlist type. A fragment still open is closed
 // as it is — the tail of the stream, however short, is worth serving.
@@ -297,6 +330,10 @@ func (w *Writer) Finalize() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.finished = true
+	w.flushLocked()
+}
+
+func (w *Writer) flushLocked() {
 	for _, t := range w.tracks {
 		if n := len(t.Segments); n > 0 {
 			t.Segments[n-1].open = false
@@ -351,7 +388,7 @@ func (w *Writer) Track(trackID string) *Track {
 }
 
 // InitSegment returns the per-track init (ftyp+moov) bytes — the EXT-X-MAP
-// target — or nil if unknown.
+// target — or nil if unknown. Returned bytes are shared and must not be modified.
 func (w *Writer) InitSegment(trackID string) []byte {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -364,7 +401,7 @@ func (w *Writer) InitSegment(trackID string) []byte {
 // SegmentData returns the bytes of the segment with media-sequence seq for
 // trackID, or nil if it's unknown, still being assembled, or has aged out.
 // Segments that have left the playlist but not aged out are still served
-// (see WithWindow).
+// (see WithWindow). Returned bytes are shared and must not be modified.
 func (w *Writer) SegmentData(trackID string, seq uint64) []byte {
 	w.mu.Lock()
 	defer w.mu.Unlock()

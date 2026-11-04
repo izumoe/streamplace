@@ -3,6 +3,7 @@ package livehls
 import (
 	"bytes"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -196,6 +197,164 @@ func TestMinFragmentJoinsTinySegments(t *testing.T) {
 	}
 	if got := string(w.SegmentData("1", 2)); got != "x" {
 		t.Errorf("closed tail fragment served, got %q", got)
+	}
+}
+
+func TestFlushPublishesPartialFragmentsWithoutEndingLivePlaylist(t *testing.T) {
+	w := NewWriter(WithWindow(12), WithMinFragment(500*time.Millisecond))
+	w.Flush() // an empty stream has nothing to drain
+	if err := w.Observe(initEvent()); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		video, audio := []byte{byte('v' + i)}, []byte{byte('a' + i)}
+		ev := segEvent(video, audio)
+		ev.Durations = map[string]uint64{"1": 2700, "2": 1440} // 30ms, below the fragment target
+		if err := w.Observe(ev); err != nil {
+			t.Fatal(err)
+		}
+		for _, track := range []string{"1", "2"} {
+			if got := len(w.Track(track).Segments); got != i {
+				t.Fatalf("track %s: the open fragment must stay hidden before flush, got %d", track, got)
+			}
+			if w.SegmentData(track, uint64(i)) != nil {
+				t.Fatalf("track %s: the open fragment must not be served", track)
+			}
+		}
+		w.Flush()
+		w.Flush() // repeated drains neither duplicate nor renumber media
+		for track, want := range map[string][]byte{"1": video, "2": audio} {
+			segments := w.Track(track).Segments
+			if len(segments) != i+1 || segments[i].Seq != uint64(i) {
+				t.Fatalf("track %s: flush must advertise exactly one more fragment: %+v", track, segments)
+			}
+			if got := w.SegmentData(track, uint64(i)); !bytes.Equal(got, want) {
+				t.Fatalf("track %s: signed bytes changed: got %q, want %q", track, got, want)
+			}
+			playlist := w.MediaPlaylist(track, "init", segURI)
+			if !strings.Contains(playlist, segURI(uint64(i))) || strings.Contains(playlist, "#EXT-X-ENDLIST") || strings.Contains(playlist, "#EXT-X-PLAYLIST-TYPE:VOD") {
+				t.Fatalf("flush must leave a live, reusable playlist:\n%s", playlist)
+			}
+		}
+	}
+	w.Finalize()
+	w.Flush()
+	if playlist := w.MediaPlaylist("1", "init", segURI); !strings.Contains(playlist, "#EXT-X-ENDLIST") {
+		t.Fatalf("flush must not undo explicit finalization:\n%s", playlist)
+	}
+}
+
+func TestCloneKeepsPrivateContinuationSeparateFromPublicReaders(t *testing.T) {
+	public := NewWriter(WithWindow(12), WithMinFragment(500*time.Millisecond))
+	if err := public.Observe(initEvent()); err != nil {
+		t.Fatal(err)
+	}
+	if err := public.Observe(segEvent([]byte("video"), []byte("audio"))); err != nil {
+		t.Fatal(err)
+	}
+	partial := func(data string) *muxl.MuxlEvent {
+		ev := segEvent([]byte(data), []byte(data))
+		ev.Durations = map[string]uint64{"1": 2700, "2": 1440}
+		return ev
+	}
+	if err := public.Observe(partial("pub:")); err != nil {
+		t.Fatal(err)
+	}
+	private := public.Clone()
+	if !reflect.DeepEqual(public.TrackIDs(), private.TrackIDs()) {
+		t.Fatal("clone lost track catalog order")
+	}
+	for _, track := range public.TrackIDs() {
+		if !reflect.DeepEqual(public.Track(track), private.Track(track)) {
+			t.Fatalf("track %s: clone lost catalog, initialization, or segment state", track)
+		}
+		original, copied := public.SegmentData(track, 0), private.SegmentData(track, 0)
+		if &original[0] != &copied[0] {
+			t.Fatalf("track %s: closed encoded history must be shared read-only", track)
+		}
+		original, copied = public.InitSegment(track), private.InitSegment(track)
+		if &original[0] != &copied[0] {
+			t.Fatalf("track %s: unchanged initialization must be shared read-only", track)
+		}
+	}
+	// Both branches append inside the existing open fragment. Sharing its
+	// backing storage would let one overwrite the other's newly appended bytes.
+	if err := private.Observe(partial("x")); err != nil {
+		t.Fatal(err)
+	}
+	if err := public.Observe(partial("y")); err != nil {
+		t.Fatal(err)
+	}
+	private.Flush()
+	if got := len(public.Track("1").Segments); got != 1 {
+		t.Fatal("flushing the clone exposed the public writer's open fragment")
+	}
+	public.Flush()
+	for _, track := range public.TrackIDs() {
+		if got := string(public.SegmentData(track, 1)); got != "pub:y" {
+			t.Fatalf("track %s: public writer contains private continuation %q", track, got)
+		}
+		if got := string(private.SegmentData(track, 1)); got != "pub:x" {
+			t.Fatalf("track %s: clone's continuation was overwritten: %q", track, got)
+		}
+	}
+	changed := initEvent()
+	changed.TrackInits["1"] = []byte("PRIVATE-INIT")
+	video := changed.Catalog.Video.Renditions["v"]
+	video.CodedWidth = 640
+	changed.Catalog.Video.Renditions["v"] = video
+	if err := private.Observe(changed); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(public.InitSegment("1")); got != "VINIT" || public.Track("1").Width != 1280 {
+		t.Fatal("clone changed the public catalog or initialization")
+	}
+	if err := private.Observe(segEvent([]byte("next-video"), []byte("next-audio"))); err != nil {
+		t.Fatal(err)
+	}
+	if segments := private.Track("1").Segments; len(segments) != 3 || segments[2].Seq != 2 {
+		t.Fatal("clone lost its next media sequence")
+	}
+	private.Finalize()
+	if playlist := public.MediaPlaylist("1", "init", segURI); strings.Contains(playlist, "#EXT-X-ENDLIST") {
+		t.Fatal("finalizing the clone ended the public live writer")
+	}
+	public.Finalize()
+	if playlist := public.Clone().MediaPlaylist("1", "init", segURI); !strings.Contains(playlist, "#EXT-X-ENDLIST") {
+		t.Fatal("clone must preserve an explicitly finalized writer's state")
+	}
+}
+
+func TestCloneRetainsLiveWindowBounds(t *testing.T) {
+	clock := time.Unix(1700000000, 0)
+	public := NewWriter(WithWindow(2), WithMinDuration(3*time.Second), WithMinFragment(500*time.Millisecond), WithRetention(30*time.Second))
+	public.now = func() time.Time { return clock }
+	if err := public.Observe(initEvent()); err != nil {
+		t.Fatal(err)
+	}
+	for range 3 {
+		if err := public.Observe(segEvent([]byte("v"), []byte("a"))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	private := public.Clone()
+	if err := private.Observe(segEvent([]byte("next-v"), []byte("next-a"))); err != nil {
+		t.Fatal(err)
+	}
+	if segments := private.Track("1").Segments; len(segments) != 3 || segments[0].Seq != 1 {
+		t.Fatal("clone must retain the configured count window and minimum media duration")
+	}
+	partial := segEvent([]byte("tail-v"), []byte("tail-a"))
+	partial.Durations = map[string]uint64{"1": 2700, "2": 1440}
+	if err := private.Observe(partial); err != nil {
+		t.Fatal(err)
+	}
+	if segments := private.Track("1").Segments; len(segments) != 3 || segments[2].Seq != 3 {
+		t.Fatal("clone must retain the minimum fragment target")
+	}
+	clock = clock.Add(31 * time.Second)
+	if !public.Empty() || !private.Empty() {
+		t.Fatal("both branches must expire media using the same retention and clock")
 	}
 }
 

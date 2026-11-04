@@ -376,7 +376,11 @@ func (s *Server) handlePlaceStreamLiveSubscribeSegments(c echo.Context) error {
 				log.Debug(ctx, "got segment", "file", file.Filepath)
 				// Ship the bare canonical MUXL segment; the receiver
 				// re-validates it via ValidateMP4 (which accepts bare .m4s).
-				err := ws.WriteMessage(websocket.BinaryMessage, file.Muxl)
+				data := file.Muxl
+				if file.AudioOnly {
+					data = media.FrameRenditions(data)
+				}
+				err := ws.WriteMessage(websocket.BinaryMessage, data)
 				if err != nil {
 					log.Error(ctx, "could not write message", "error", err)
 					cancel()

@@ -16,9 +16,9 @@ func TestMediaCacheExpiryWithoutActivity(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		mm := &MediaManager{}
 		defer startMediaCacheExpiry(mm)()
-		mm.bufferSegment("did:clip", time.Now(), true, true, []byte("clip"))
+		mm.bufferSegment("did:clip", time.Now(), true, true, []byte("clip"), 0, "")
 		mm.RetainSegments("did:recorded", 12*time.Minute)
-		mm.bufferSegment("did:recorded", time.Now(), true, true, []byte("recorded"))
+		mm.bufferSegment("did:recorded", time.Now(), true, true, []byte("recorded"), 0, "")
 
 		time.Sleep(segmentBufferWindow - time.Second)
 		synctest.Wait()
@@ -91,7 +91,7 @@ func TestMediaCacheExpiryCancellation(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		mm := &MediaManager{}
 		stop := startMediaCacheExpiry(mm)
-		mm.bufferSegment("did:clip", time.Now(), true, true, []byte("clip"))
+		mm.bufferSegment("did:clip", time.Now(), true, true, []byte("clip"), 0, "")
 		stop()
 
 		time.Sleep(segmentBufferWindow + time.Minute)

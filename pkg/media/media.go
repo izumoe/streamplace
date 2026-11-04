@@ -85,7 +85,7 @@ type MediaManager struct {
 
 	// Per-stream continuous audio transcoders, keyed by repoDID. A single-codec
 	// stream's segments are fed here in order; each completed dual-codec segment
-	// is distributed asynchronously (~1 GoP later). See transcode_stream.go.
+	// is distributed asynchronously at its input boundary. See transcode_stream.go.
 	transcoders map[string]*streamTranscoder
 	// renditionVideoTID remembers, per rendition name, the track id a
 	// transcoder's MP4s carry their video under (see canonicalRenditionTrack).
@@ -131,6 +131,7 @@ type NewSegmentNotification struct {
 	// PlaybackPublished means the worker's source phase owns playback, so codec
 	// completion must not publish the same GoP to viewers again.
 	PlaybackPublished bool
+	AudioOnly         bool // independently signed continuation of an admitted audio track
 }
 
 func RunSelfTest(ctx context.Context) error {

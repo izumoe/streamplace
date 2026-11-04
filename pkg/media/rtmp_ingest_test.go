@@ -556,9 +556,9 @@ func TestRTMPMultitrackCompletionAndExtraction(t *testing.T) {
 		cert, key := nodeSignerForTest(t)
 		var mu sync.Mutex
 		var completed [][]byte
-		encoder := mm.newStreamTranscoder(ctx, "opus", cert, key, func(_ any, segment []byte) {
+		encoder := mm.newStreamTranscoder(ctx, "opus", cert, key, func(_ any, segment []byte, audioOnly bool) {
 			mu.Lock()
-			completed = append(completed, segment)
+			appendAudioCompletion(&completed, segment, audioOnly)
 			mu.Unlock()
 		})
 		for i, source := range sources {

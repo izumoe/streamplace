@@ -61,6 +61,9 @@ func (mm *MediaManager) lockLiveWindow(did string, create bool) *liveWindowState
 		mm.liveWindowsMut.Lock()
 		state := mm.liveWindows[did]
 		if state == nil && create {
+			if mm.liveWindows == nil {
+				mm.liveWindows = map[string]*liveWindowState{}
+			}
 			state = &liveWindowState{}
 			state.mu.Lock()
 			mm.liveWindows[did] = state
@@ -134,6 +137,12 @@ func (mm *MediaManager) feedLiveWindowEvents(ctx context.Context, did string, ev
 	// in the window is the stream going back to preview, and does flip it.
 	state := mm.lockLiveWindow(did, true)
 	defer state.mu.Unlock()
+	mm.feedLiveWindowEventsLocked(ctx, state, did, events, start, published)
+}
+
+// Caller holds state.mu, including when a rendition's HLS and WebRTC feeds
+// share a publication turn with an independently arriving audio continuation.
+func (mm *MediaManager) feedLiveWindowEventsLocked(ctx context.Context, state *liveWindowState, did string, events []*muxl.MuxlEvent, start time.Time, published bool) {
 	if err := mm.CheckPublisherContext(ctx); err != nil {
 		return
 	}
