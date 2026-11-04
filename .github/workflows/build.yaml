@@ -54,14 +54,14 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     env:
-      BUILD_CACHE_DIR: ${{ github.workspace }}/../.streamplace-cache
+      BUILD_CACHE_DIR: ${{ github.workspace }}/.build/ci-cache
       CACHE_PATHS: |
-        ${{ github.workspace }}/../.streamplace-cache/sccache
-        ${{ github.workspace }}/../.streamplace-cache/go-mod
-        ${{ github.workspace }}/../.streamplace-cache/go-build
-        ${{ github.workspace }}/../.streamplace-cache/cargo/registry
-        ${{ github.workspace }}/../.streamplace-cache/cargo/git
-        ${{ github.workspace }}/../.streamplace-cache/pnpm
+        ${{ github.workspace }}/.build/ci-cache/sccache
+        ${{ github.workspace }}/.build/ci-cache/go-mod
+        ${{ github.workspace }}/.build/ci-cache/go-build
+        ${{ github.workspace }}/.build/ci-cache/cargo/registry
+        ${{ github.workspace }}/.build/ci-cache/cargo/git
+        ${{ github.workspace }}/.build/ci-cache/pnpm
     steps:
       - name: Maximize build space
         run: |
@@ -163,16 +163,16 @@ jobs:
     name: android packages
     runs-on: ubuntu-latest
     env:
-      BUILD_CACHE_DIR: ${{ github.workspace }}/../.streamplace-cache
+      BUILD_CACHE_DIR: ${{ github.workspace }}/.build/ci-cache
       CACHE_PATHS: |
-        ${{ github.workspace }}/../.streamplace-cache/sccache
-        ${{ github.workspace }}/../.streamplace-cache/go-mod
-        ${{ github.workspace }}/../.streamplace-cache/go-build
-        ${{ github.workspace }}/../.streamplace-cache/cargo/registry
-        ${{ github.workspace }}/../.streamplace-cache/cargo/git
-        ${{ github.workspace }}/../.streamplace-cache/pnpm
-        ${{ github.workspace }}/../.streamplace-cache/gradle/wrapper
-        ${{ github.workspace }}/../.streamplace-cache/gradle/caches/modules-2
+        ${{ github.workspace }}/.build/ci-cache/sccache
+        ${{ github.workspace }}/.build/ci-cache/go-mod
+        ${{ github.workspace }}/.build/ci-cache/go-build
+        ${{ github.workspace }}/.build/ci-cache/cargo/registry
+        ${{ github.workspace }}/.build/ci-cache/cargo/git
+        ${{ github.workspace }}/.build/ci-cache/pnpm
+        ${{ github.workspace }}/.build/ci-cache/gradle/wrapper
+        ${{ github.workspace }}/.build/ci-cache/gradle/caches/modules-2
     steps:
       - name: Maximize build space
         run: |
@@ -464,22 +464,22 @@ jobs:
             cmd: make
             xcode-version: "16.4"
     env:
-      BUILD_CACHE_DIR: ${{ github.workspace }}/../.streamplace-cache
+      BUILD_CACHE_DIR: ${{ github.workspace }}/.build/ci-cache
       CACHE_PATHS: |
-        ${{ github.workspace }}/../.streamplace-cache/sccache
-        ${{ github.workspace }}/../.streamplace-cache/go-mod
-        ${{ github.workspace }}/../.streamplace-cache/go-build
-        ${{ github.workspace }}/../.streamplace-cache/cargo/registry
-        ${{ github.workspace }}/../.streamplace-cache/cargo/git
-        ${{ github.workspace }}/../.streamplace-cache/pnpm
+        ${{ github.workspace }}/.build/ci-cache/sccache
+        ${{ github.workspace }}/.build/ci-cache/go-mod
+        ${{ github.workspace }}/.build/ci-cache/go-build
+        ${{ github.workspace }}/.build/ci-cache/cargo/registry
+        ${{ github.workspace }}/.build/ci-cache/cargo/git
+        ${{ github.workspace }}/.build/ci-cache/pnpm
         ~/Library/Caches/CocoaPods
-      SCCACHE_DIR: ${{ github.workspace }}/../.streamplace-cache/sccache
+      SCCACHE_DIR: ${{ github.workspace }}/.build/ci-cache/sccache
       SCCACHE_CACHE_SIZE: 2G
       RUSTC_WRAPPER: sccache
       CARGO_INCREMENTAL: "0"
-      CARGO_HOME: ${{ github.workspace }}/../.streamplace-cache/cargo
-      GOMODCACHE: ${{ github.workspace }}/../.streamplace-cache/go-mod
-      GOCACHE: ${{ github.workspace }}/../.streamplace-cache/go-build
+      CARGO_HOME: ${{ github.workspace }}/.build/ci-cache/cargo
+      GOMODCACHE: ${{ github.workspace }}/.build/ci-cache/go-mod
+      GOCACHE: ${{ github.workspace }}/.build/ci-cache/go-build
     steps:
       - name: Check out code
         uses: actions/checkout@v4.1.7

@@ -6,7 +6,8 @@ default: streamplace
 
 # build-signable sets this so the darwin targets stop after compiling.
 SKIP_SIGN?=0
-VERSION?=$(shell go run ./pkg/config/git/git.go -v)
+# Resolve once, only when needed, so container bootstrap does not require Go.
+VERSION?=$(eval VERSION:=$(shell go run ./pkg/config/git/git.go -v))$(if $(strip $(VERSION)),$(VERSION),$(error could not determine build version))
 VERSION_NO_V=$(subst v,,$(VERSION))
 UUID?=$(shell go run ./pkg/config/uuid/uuid.go)
 BRANCH?=$(shell go run ./pkg/config/git/git.go --branch)

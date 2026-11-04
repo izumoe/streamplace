@@ -1,3 +1,8 @@
 #!/bin/sh
-# Preserve Meson's complete compiler/launcher command and target options.
-exec @COMMAND@ "$@"
+# Cargo's cc-rs adds RUSTC_WRAPPER itself. Keep the target options, but avoid
+# nesting that cache around Meson's compiler cache launcher.
+set -- @COMMAND@ "$@"
+case "${1##*/}" in
+  sccache|ccache) shift ;;
+esac
+exec "$@"
