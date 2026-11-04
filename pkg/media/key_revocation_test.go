@@ -33,6 +33,8 @@ func TestStreamKickMarshalsAsPlaceStreamError(t *testing.T) {
 func TestWatchKeyRevocationBan(t *testing.T) {
 	mm, _ := getStaticTestMediaManager(t)
 	ms := newBareSegmentSigner(t)
+	ms.StreamerName = ms.DID()
+	mm.cli.AllowedStreams = []string{ms.Streamer()}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -63,6 +65,8 @@ func TestWatchKeyRevocationBan(t *testing.T) {
 func TestWatchKeyRevocationStreamKick(t *testing.T) {
 	mm, _ := getStaticTestMediaManager(t)
 	ms := newBareSegmentSigner(t)
+	ms.StreamerName = ms.DID()
+	mm.cli.AllowedStreams = []string{ms.Streamer()}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -100,6 +104,8 @@ func TestMP4IngestIsolatedBanContained(t *testing.T) {
 
 	mm, _ := getStaticTestMediaManager(t)
 	ms := newBareSegmentSigner(t)
+	ms.StreamerName = ms.DID()
+	mm.cli.AllowedStreams = []string{ms.Streamer()}
 	wedge := makeAudioOnlyAACFMP4(t, context.Background(), 5)
 
 	// Ban the streamer once the worker is up and the watcher has subscribed.

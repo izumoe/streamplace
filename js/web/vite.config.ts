@@ -52,9 +52,11 @@ export default defineConfig(async () => {
     server: {
       port: 5173,
       strictPort: false,
+      headers: { "Document-Isolation-Policy": "isolate-and-credentialless" },
     },
     preview: {
       port: 5173,
+      headers: { "Document-Isolation-Policy": "isolate-and-credentialless" },
     },
   };
 });

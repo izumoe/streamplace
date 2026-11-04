@@ -24,6 +24,7 @@ func TestRepoProxyLoop(t *testing.T) {
 		t.Run(method, func(t *testing.T) {
 			s := &Server{cli: &config.CLI{ServerHost: "node.example", BroadcasterHost: "node.example"}}
 			e := echo.New()
+			e.Use(s.ErrorHandlingMiddleware())
 			e.Use(s.ContextPreservingMiddleware())
 			require.NoError(t, s.RegisterHandlersComatproto(e))
 
@@ -126,4 +127,51 @@ func repoTestClients(t *testing.T, upstream *httptest.Server) {
 		aqhttp.Client, http.DefaultClient = originalClient, originalDefault
 		transport.CloseIdleConnections()
 	})
+}
+
+func TestRepoProxyPreservesRecordExtensions(t *testing.T) {
+	const did = "did:plc:ho26ynsdw2ey7l56xx4owjzd"
+	record := map[string]any{
+		"$type": "place.stream.bio.page", "createdAt": "2026-11-03T00:00:00Z",
+		"futureMetadata": map[string]any{"enabled": true},
+		"layout": map[string]any{
+			"$type":             "place.stream.bio.layouts.panels",
+			"futureLayoutField": "keep",
+			"panels": []any{map[string]any{
+				"futurePanelField": "keep",
+				"blocks": []any{map[string]any{"block": map[string]any{
+					"$type": "place.stream.bio.blocks.text", "plaintext": "hello", "futureBlockField": "keep",
+				}}},
+			}},
+		},
+	}
+	var service string
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/"+did {
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": did, "service": []map[string]string{{"id": "#atproto_pds", "type": "AtprotoPersonalDataServer", "serviceEndpoint": service}}})
+			return
+		}
+		if r.URL.Path != "/xrpc/com.atproto.repo.getRecord" {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"uri": "at://" + did + "/place.stream.bio.page/self", "cid": "bafyreia7wexctcpabgs23b5tnjs6f755yp6fgb2aqtan5sktnnxtqkvwb4", "value": record})
+	}))
+	defer upstream.Close()
+	service = upstream.URL
+	repoTestClients(t, upstream)
+	server := &Server{cli: &config.CLI{ServerHost: "node.example", BroadcasterHost: "node.example"}}
+	e := echo.New()
+	e.Use(server.ContextPreservingMiddleware())
+	require.NoError(t, server.RegisterHandlersComatproto(e))
+	params := url.Values{"repo": {did}, "collection": {"place.stream.bio.page"}, "rkey": {"self"}}
+	response := httptest.NewRecorder()
+	e.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/xrpc/com.atproto.repo.getRecord?"+params.Encode(), nil))
+	require.Equal(t, http.StatusOK, response.Code)
+	var output struct {
+		Value map[string]any `json:"value"`
+	}
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &output))
+	require.Equal(t, record, output.Value, "a read used by an editor must preserve fields from other clients")
 }

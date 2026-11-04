@@ -3,6 +3,7 @@ package s3
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -82,7 +83,14 @@ type S3Uploader struct {
 	closeOnce sync.Once
 	closeErr  error
 	closed    atomic.Bool
+	enqueueMu sync.Mutex // serializes producers with closing segCh
 }
+
+// ErrUploaderClosed rejects media after explicit close or a backpressure stop.
+var ErrUploaderClosed = errors.New("s3 uploader closed")
+
+// ErrBackpressure means this recording will finish at its accepted prefix.
+var ErrBackpressure = errors.New("live recording stopped: S3 upload queue is full")
 
 // SetLivestreamURI records the livestream this stream's objects belong to. A
 // single continuous ingest can move through several place.stream.livestream
@@ -185,21 +193,21 @@ func newS3Uploader(client uploadAPI, bucket, userDID, keyPrefix string, cutoverE
 // request to complete the current object now (cutover). Both travel the same
 // channel so a cutover stays FIFO-ordered behind the segments queued before it.
 type uploadCmd struct {
-	seg     []byte    // bare canonical MUXL segment to append; nil for a cutover
-	start   time.Time // the segment's media start time
-	cutover bool      // complete the current object now (see Cutover)
+	seg       []byte    // bare canonical MUXL segment to append; nil for a cutover
+	start     time.Time // the segment's media start time
+	cutover   bool      // complete the current object now (see Cutover)
+	audioOnly bool      // continuation of the current source, not a new clip entry
 }
 
 // AddSegment feeds one bare canonical MUXL segment (uuid+moof+mdat per track)
 // that starts at start for upload. The bytes are copied, so the caller may
-// reuse its buffer. It is the caller's responsibility not to call AddSegment
-// concurrently with Close (the StreamSession guarantees this by draining its
-// goroutines before closing, see director.Start); the closed guard here is a
-// best-effort backstop that turns a late call into an error rather than a
-// send-on-closed-channel panic.
+// reuse its buffer. It waits for queue space; live playback producers should use
+// TryAddSegment so a slow storage endpoint cannot block other streams.
 func (u *S3Uploader) AddSegment(ctx context.Context, data []byte, start time.Time) error {
+	u.enqueueMu.Lock()
+	defer u.enqueueMu.Unlock()
 	if u.closed.Load() {
-		return fmt.Errorf("s3 uploader closed")
+		return ErrUploaderClosed
 	}
 	seg := append([]byte(nil), data...)
 	select {
@@ -218,6 +226,8 @@ func (u *S3Uploader) AddSegment(ctx context.Context, data []byte, start time.Tim
 // can find the completed objects right away. A no-op if there's no current
 // object, and a no-op after Close.
 func (u *S3Uploader) Cutover(ctx context.Context) error {
+	u.enqueueMu.Lock()
+	defer u.enqueueMu.Unlock()
 	if u.closed.Load() {
 		return nil
 	}
@@ -227,6 +237,55 @@ func (u *S3Uploader) Cutover(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+// TryAddSegment enqueues copied media without waiting for storage. Any rejected
+// command permanently stops this recording and drains its accepted prefix;
+// recording later segments would silently leave a gap in the object.
+func (u *S3Uploader) TryAddSegment(ctx context.Context, data []byte, start time.Time) error {
+	return u.tryEnqueue(ctx, uploadCmd{seg: data, start: start})
+}
+
+// TryAddAudioAddendum queues a signed audio continuation under its source's
+// clip index. If that source's object is no longer open, the upload loop drops
+// it rather than creating an audio-only recording. Queue rejection follows
+// TryAddSegment's permanent-stop contract.
+func (u *S3Uploader) TryAddAudioAddendum(ctx context.Context, data []byte, start time.Time) error {
+	return u.tryEnqueue(ctx, uploadCmd{seg: data, start: start, audioOnly: true})
+}
+
+// TryCutover shares the media queue so cutovers retain source/addendum order.
+// It applies the same permanent stop on rejection as TryAddSegment.
+func (u *S3Uploader) TryCutover(ctx context.Context) error {
+	return u.tryEnqueue(ctx, uploadCmd{cutover: true})
+}
+
+func (u *S3Uploader) tryEnqueue(ctx context.Context, cmd uploadCmd) error {
+	u.enqueueMu.Lock()
+	defer u.enqueueMu.Unlock()
+	if u.closed.Load() {
+		return ErrUploaderClosed
+	}
+	err := ctx.Err()
+	if err == nil && len(u.segCh) < cap(u.segCh) {
+		// Other producers and Close hold this mutex. The consumer only frees
+		// slots, so the send cannot block; rejected commands allocate no copy.
+		cmd.seg = bytes.Clone(cmd.seg)
+		u.segCh <- cmd
+		return nil
+	}
+	if err == nil {
+		err = ErrBackpressure
+	}
+	// Only this caller can transition the uploader to stopped. Closing drains
+	// the existing FIFO in one background task, never the director.
+	u.closed.Store(true)
+	go func() {
+		if err := u.Close(context.Background()); err != nil {
+			log.Error(context.Background(), "could not finish stopped live recording", "user", u.userDID, "error", err)
+		}
+	}()
+	return err
 }
 
 // Close signals that no more segments will be added, waits for all in-flight
@@ -240,8 +299,10 @@ func (u *S3Uploader) Cutover(ctx context.Context) error {
 // symmetry.
 func (u *S3Uploader) Close(ctx context.Context) error {
 	u.closeOnce.Do(func() {
+		u.enqueueMu.Lock()
 		u.closed.Store(true)
 		close(u.segCh)
+		u.enqueueMu.Unlock()
 		if uploadErr := <-u.done; uploadErr != nil {
 			u.closeErr = fmt.Errorf("error uploading: %w", uploadErr)
 		}
@@ -371,15 +432,20 @@ func (u *S3Uploader) uploadLoop(ctx context.Context) {
 		return nil
 	}
 
-	handleSegment := func(seg []byte, start time.Time) error {
+	handleSegment := func(seg []byte, start time.Time, audioOnly bool) error {
 		now := time.Now()
+		startMs := start.UnixMilli()
+		if audioOnly && (current == nil || len(current.segments) == 0 || current.segments[len(current.segments)-1].StartMs != startMs) {
+			log.Warn(ctx, "dropping audio continuation without recorded source", "user", u.userDID, "start", start)
+			return nil
+		}
 
 		// Roll over to a new object when the current one has run for cutoverEvery,
 		// or when the livestream changed (a new place.stream.livestream "chapter"
 		// record). Cutting over on the livestream change keeps each object within
 		// a single livestream so finalize can select exactly one livestream's
 		// objects without one straddling two chapters.
-		if current != nil && (now.Sub(current.started) >= u.cutoverEvery || current.livestreamURI != u.getLivestreamURI()) {
+		if !audioOnly && current != nil && (now.Sub(current.started) >= u.cutoverEvery || current.livestreamURI != u.getLivestreamURI()) {
 			if err := completeUpload(); err != nil {
 				return err
 			}
@@ -394,7 +460,11 @@ func (u *S3Uploader) uploadLoop(ctx context.Context) {
 
 		// Append segment data to buffer
 		current.buf = append(current.buf, seg...)
-		current.segments = append(current.segments, RecordedSegment{StartMs: start.UnixMilli(), Size: int64(len(seg))})
+		if audioOnly {
+			current.segments[len(current.segments)-1].Size += int64(len(seg))
+		} else {
+			current.segments = append(current.segments, RecordedSegment{StartMs: startMs, Size: int64(len(seg))})
+		}
 
 		// Flush full-size parts; a sub-part remainder stays buffered until the
 		// next segment or the object's completing flush.
@@ -454,7 +524,7 @@ func (u *S3Uploader) uploadLoop(ctx context.Context) {
 				continue
 			}
 			log.Debug(ctx, "received segment for S3 upload", "size", len(cmd.seg))
-			if err := handleSegment(cmd.seg, cmd.start); err != nil {
+			if err := handleSegment(cmd.seg, cmd.start, cmd.audioOnly); err != nil {
 				// The triggering segment is dropped along with the object: it may
 				// already be partially flushed into it, so it can't be salvaged.
 				abandonCurrent(fmt.Errorf("error handling segment: %w", err))

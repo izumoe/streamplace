@@ -28,9 +28,9 @@ func TestAV1AudioCompletionPreservesSignedVideo(t *testing.T) {
 	mm := &MediaManager{cli: &config.CLI{BroadcasterHost: "test.example.com"}}
 	var mu sync.Mutex
 	var completed [][]byte
-	encoder := mm.newStreamTranscoder(ctx, "opus", cert, key, func(_ any, segment []byte) {
+	encoder := mm.newStreamTranscoder(ctx, "opus", cert, key, func(_ any, segment []byte, audioOnly bool) {
 		mu.Lock()
-		completed = append(completed, segment)
+		appendAudioCompletion(&completed, segment, audioOnly)
 		mu.Unlock()
 	})
 	for _, segment := range segments {
@@ -109,8 +109,8 @@ func TestAudioCompletionKeepsSourceTimeline(t *testing.T) {
 	cert, key := nodeSignerForTest(t)
 	mm := &MediaManager{cli: &config.CLI{BroadcasterHost: "test.example.com"}}
 	var completed [][]byte
-	encoder := mm.newStreamTranscoder(ctx, "opus", cert, key, func(_ any, segment []byte) {
-		completed = append(completed, segment)
+	encoder := mm.newStreamTranscoder(ctx, "opus", cert, key, func(_ any, segment []byte, audioOnly bool) {
+		appendAudioCompletion(&completed, segment, audioOnly)
 	})
 	for _, segment := range segments {
 		_, err := ValidateMP4Media(ctx, segment)

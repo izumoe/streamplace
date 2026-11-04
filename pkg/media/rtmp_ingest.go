@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -50,7 +51,15 @@ type RTMPSession struct {
 }
 
 func (mm *MediaManager) RTMPIngest(ctx context.Context, session *RTMPSession) error {
-	ctx = withIngestSession(ctx, mm.nextIngestSession())
+	ctx, err := mm.admitPublisher(ctx, session.MediaSigner.Streamer())
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := mm.closeStreamTranscoder(ctx, session.MediaSigner.Streamer()); err != nil {
+			log.Error(ctx, "drain RTMP audio failed", "error", err)
+		}
+	}()
 	return mm.rtmpIngestSession(ctx, session, func(ctx context.Context, segment []byte) error {
 		return mm.receiveSignedSegment(ctx, session.MediaSigner.Streamer(), segment)
 	})
@@ -120,11 +129,31 @@ func newRTMPDirectPipeline(session *RTMPSession, signer gst.Element) (gst.Pipeli
 		var parser, output string
 		switch codec := video.Track.Codec.(type) {
 		case *codecs.H264:
-			if len(codec.SPS) == 0 || len(codec.PPS) == 0 {
-				return nil, nil, fmt.Errorf("H264 video %d has no SPS/PPS", i)
+			if len(codec.SPS) < 4 || len(codec.SPS) > math.MaxUint16 || len(codec.PPS) == 0 || len(codec.PPS) > math.MaxUint16 {
+				return nil, nil, fmt.Errorf("H264 video %d has invalid SPS/PPS", i)
 			}
+			avcc := &mp4.AVCDecoderConfiguration{
+				ConfigurationVersion:       1,
+				Profile:                    codec.SPS[1],
+				ProfileCompatibility:       codec.SPS[2],
+				Level:                      codec.SPS[3],
+				Reserved:                   0b111111,
+				LengthSizeMinusOne:         3,
+				Reserved2:                  0b111,
+				NumOfSequenceParameterSets: 1,
+				SequenceParameterSets:      []mp4.AVCParameterSet{{Length: uint16(len(codec.SPS)), NALUnit: codec.SPS}},
+				NumOfPictureParameterSets:  1,
+				PictureParameterSets:       []mp4.AVCParameterSet{{Length: uint16(len(codec.PPS)), NALUnit: codec.PPS}},
+			}
+			avcc.SetType(mp4.BoxTypeAvcC())
+			var config bytes.Buffer
+			if _, err := mp4.Marshal(&config, avcc, mp4.Context{}); err != nil {
+				return nil, nil, fmt.Errorf("H264 video %d configuration: %w", i, err)
+			}
+			// Preserve RTMP access-unit boundaries, including SEI after the picture.
+			// Annex B reparsing can split that metadata into an untimed extra buffer.
 			parser, output = "h264parse", "video/x-h264,stream-format=avc,alignment=au"
-			caps = append(caps, "video/x-h264,stream-format=byte-stream,alignment=au")
+			caps = append(caps, fmt.Sprintf("%s,codec_data=(buffer)%x", output, config.Bytes()))
 		case *codecs.AV1:
 			var config mp4.Av1C
 			if _, err := mp4.Unmarshal(bytes.NewReader(video.AV1Config), uint64(len(video.AV1Config)), &config, mp4.Context{}); err != nil || len(config.ConfigOBUs) == 0 {
@@ -193,8 +222,92 @@ func runRTMPDirectPipeline(ctx context.Context, pipeline gst.Pipeline, session *
 	return err
 }
 
+// AV1 sync samples need their sequence header in-band, even when it is also
+// present in av1C. Cache the configuration so later GoPs can start a decoder
+// without changing the encoded frame payload or parsing configuration per frame.
+type rtmpAV1Config struct {
+	headers                   av1.Bitstream
+	reducedStillPictureHeader bool
+}
+
+func newRTMPAV1Config(description []byte) (*rtmpAV1Config, error) {
+	var config mp4.Av1C
+	if _, err := mp4.Unmarshal(bytes.NewReader(description), uint64(len(description)), &config, mp4.Context{}); err != nil {
+		return nil, err
+	}
+	var headers av1.Bitstream
+	if err := headers.Unmarshal(config.ConfigOBUs); err != nil {
+		return nil, err
+	}
+	if len(headers) == 0 || av1.OBUType(headers[0][0]>>3) != av1.OBUTypeSequenceHeader {
+		return nil, fmt.Errorf("AV1 configuration has no sequence header")
+	}
+	var sequence av1.SequenceHeader
+	if err := sequence.Unmarshal(headers[0]); err != nil {
+		return nil, err
+	}
+	return &rtmpAV1Config{headers: headers, reducedStillPictureHeader: sequence.ReducedStillPictureHeader}, nil
+}
+
+func (config *rtmpAV1Config) marshal(units [][]byte, first bool) ([]byte, error) {
+	hasHeader, keyframe := false, false
+	for _, unit := range units {
+		var header av1.OBUHeader
+		if err := header.Unmarshal(unit); err != nil {
+			return nil, err
+		}
+		switch header.Type {
+		case av1.OBUTypeSequenceHeader:
+			hasHeader = true
+			if !bytes.Equal(config.headers[0], unit) {
+				var sequence av1.SequenceHeader
+				if err := sequence.Unmarshal(unit); err != nil {
+					return nil, err
+				}
+				config.headers[0] = bytes.Clone(unit)
+				config.reducedStillPictureHeader = sequence.ReducedStillPictureHeader
+			}
+		case 3, 6: // OBU_FRAME_HEADER, OBU_FRAME.
+			payload := unit[1:]
+			if header.HasSize {
+				var size av1.LEB128
+				n, err := size.Unmarshal(payload)
+				if err != nil {
+					return nil, err
+				}
+				payload = payload[n:]
+				if uint64(len(payload)) != uint64(size) {
+					return nil, fmt.Errorf("invalid AV1 frame size")
+				}
+			}
+			if len(payload) == 0 {
+				return nil, fmt.Errorf("empty AV1 frame header")
+			}
+			// In an ordinary frame header, show_existing_frame is followed by the
+			// two-bit frame_type. Reduced still-picture headers imply a key frame.
+			keyframe = keyframe || config.reducedStillPictureHeader || payload[0]&0xe0 == 0
+		}
+	}
+	if !hasHeader && (first || keyframe) {
+		prefixed := make(av1.Bitstream, 0, len(config.headers)+len(units))
+		prefixed = append(prefixed, config.headers...)
+		units = append(prefixed, units...)
+	}
+	return av1.Bitstream(units).Marshal()
+}
+
 func feedRTMPPackets(ctx context.Context, session *RTMPSession, sources []app.AppSrc) error {
 	started := make([]bool, len(session.VideoTracks))
+	av1Configs := make([]*rtmpAV1Config, len(session.VideoTracks))
+	for id, track := range session.VideoTracks {
+		if _, ok := track.Track.Codec.(*codecs.AV1); ok {
+			config, err := newRTMPAV1Config(track.AV1Config)
+			if err != nil {
+				return fmt.Errorf("AV1 track %d configuration: %w", id, err)
+			}
+			av1Configs[id] = config
+		}
+	}
 	pending := make([][][]byte, len(session.VideoTracks))
 	for {
 		var source app.AppSrc
@@ -217,7 +330,7 @@ func feedRTMPPackets(ctx context.Context, session *RTMPSession, sources []app.Ap
 				}
 				track := session.VideoTracks[packet.TrackID]
 				units := packet.AU
-				switch codec := track.Track.Codec.(type) {
+				switch track.Track.Codec.(type) {
 				case *codecs.H264:
 					hasPicture := false
 					for _, unit := range units {
@@ -245,26 +358,16 @@ func feedRTMPPackets(ctx context.Context, session *RTMPSession, sources []app.Ap
 						units = append(pending[packet.TrackID], units...)
 						pending[packet.TrackID] = nil
 					}
-					if !started[packet.TrackID] {
-						units = append([][]byte{codec.SPS, codec.PPS}, units...)
-					}
 					var err error
-					data, err = h264.AnnexB(units).Marshal()
+					data, err = h264.AVCC(units).Marshal()
 					if err != nil {
 						return fmt.Errorf("H264 access unit: %w", err)
 					}
 				case *codecs.AV1:
 					var err error
-					data, err = av1.Bitstream(units).Marshal()
+					data, err = av1Configs[packet.TrackID].marshal(units, !started[packet.TrackID])
 					if err != nil {
 						return fmt.Errorf("AV1 temporal unit: %w", err)
-					}
-					if !started[packet.TrackID] {
-						var config mp4.Av1C
-						if _, err := mp4.Unmarshal(bytes.NewReader(track.AV1Config), uint64(len(track.AV1Config)), &config, mp4.Context{}); err != nil {
-							return err
-						}
-						data = append(append([]byte(nil), config.ConfigOBUs...), data...)
 					}
 				}
 				started[packet.TrackID] = true

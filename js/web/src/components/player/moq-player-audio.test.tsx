@@ -3,17 +3,29 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { MoQPlayer } from "./moq-player";
+import type { PlayerStats } from "./player";
 
 const fixture = vi.hoisted(() => ({
   player: undefined as unknown,
   audio: true as boolean | "empty",
+  batchDurationMs: 1000,
   resolve: undefined as ((support: AudioDecoderSupport) => void) | undefined,
 }));
 
 type Playback = {
+  sync: Watch.Sync;
+  renderer: {
+    out: {
+      timestamp: Watch.Signals.Signal<Watch.Net.Time.Milli | undefined>;
+      visible: Watch.Signals.Signal<boolean>;
+    };
+  };
   audio: {
     source: Watch.Audio.Source;
-    out: { timestamp: Watch.Signals.Signal<Watch.Net.Time.Micro | undefined> };
+    out: {
+      timestamp: Watch.Signals.Signal<Watch.Net.Time.Milli | undefined>;
+      stalled: Watch.Signals.Signal<boolean>;
+    };
   };
 };
 
@@ -39,7 +51,8 @@ vi.mock("@moq/watch", async (original) => {
         supported: sdk.Audio.Decoder.supported,
       }),
       out: {
-        timestamp: new Signal<Watch.Net.Time.Micro | undefined>(undefined),
+        timestamp: new Signal<Watch.Net.Time.Milli | undefined>(undefined),
+        stalled: new Signal(false),
       },
     };
     video = {
@@ -62,7 +75,7 @@ vi.mock("@moq/watch", async (original) => {
       fixture.player = this;
       this.broadcast.out.catalog.set(
         sdk.Hang.Catalog.RootSchema.parse({
-          streamplace: { batchDurationMs: 1000 },
+          streamplace: { batchDurationMs: fixture.batchDurationMs },
           ...(fixture.audio && {
             audio: {
               renditions:
@@ -106,7 +119,8 @@ vi.mock("@moq/watch", async (original) => {
 
 let container: HTMLDivElement;
 let root: Root;
-let unavailable = vi.fn<() => void>();
+let unavailable = vi.fn<(reason?: string, error?: unknown) => void>();
+let stats: PlayerStats | undefined;
 
 beforeEach(async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -130,13 +144,15 @@ beforeEach(async () => {
       moq: { url: "https://node.example", name: "playback/alice" },
     }),
   );
+  stats = undefined;
   fixture.player = undefined;
   fixture.resolve = undefined;
   fixture.audio = true;
+  fixture.batchDurationMs = 1000;
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
-  unavailable = vi.fn<() => void>();
+  unavailable = vi.fn<(reason?: string, error?: unknown) => void>();
   await import("@moq/watch");
 });
 
@@ -148,13 +164,13 @@ afterEach(async () => {
   vi.useRealTimers();
 });
 
-async function render(muted = false) {
+async function render(muted = false, paused = false) {
   await act(async () =>
     root.render(
       <MoQPlayer
         canvasRef={{ current: document.createElement("canvas") }}
         src="https://node.example/xrpc/place.stream.playback.getLivePlaylist?streamer=alice"
-        paused={false}
+        paused={paused}
         muted={muted}
         volume={1}
         onUnavailable={unavailable}
@@ -162,7 +178,9 @@ async function render(muted = false) {
         onBufferingChange={() => {}}
         onQualitiesChange={() => {}}
         onCurrentQualityChange={() => {}}
-        onStatsChange={() => {}}
+        onStatsChange={(value) => {
+          stats = value;
+        }}
       />,
     ),
   );
@@ -230,3 +248,118 @@ it.each(["muted audio", "video only", "empty audio catalog"])(
     expect(unavailable).not.toHaveBeenCalled();
   },
 );
+
+it("reports MoQ receiver timing from the real sync clock, without inventing broadcaster latency", async () => {
+  vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+  vi.spyOn(performance, "now").mockReturnValue(10_000);
+  const sdk = await import("@moq/watch");
+  await render();
+  const player = fixture.player as Playback;
+  await act(async () => {
+    player.sync.received(sdk.Net.Time.Milli(6000));
+    player.renderer.out.timestamp.set(sdk.Net.Time.Milli(4000));
+    player.audio.out.timestamp.set(sdk.Net.Time.Milli(3900));
+    await vi.advanceTimersByTimeAsync(1000);
+  });
+  expect(stats).toMatchObject({
+    liveEdgeDelay: 2,
+    playbackDelayMs: 1300,
+    publicationBatchMs: 1000,
+    avSyncMs: 100,
+  });
+  await act(async () => {
+    player.audio.out.timestamp.set(sdk.Net.Time.Milli(4100));
+    await vi.advanceTimersByTimeAsync(1000);
+  });
+  expect(stats?.avSyncMs).toBe(-100);
+  await act(async () => {
+    player.renderer.out.timestamp.set(sdk.Net.Time.Milli(0));
+    player.audio.out.timestamp.set(sdk.Net.Time.Milli(0));
+    await vi.advanceTimersByTimeAsync(1000);
+  });
+  expect(stats?.avSyncMs).toBe(0);
+  await act(async () => {
+    player.renderer.out.timestamp.set(undefined);
+    await vi.advanceTimersByTimeAsync(1000);
+  });
+  expect(stats?.liveEdgeDelay).toBeUndefined();
+  expect(stats?.avSyncMs).toBeUndefined();
+});
+
+it.each(["muted", "paused", "stalled"])(
+  "does not report stream position as A/V skew when audio is %s",
+  async (state) => {
+    vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+    const sdk = await import("@moq/watch");
+    await render(state === "muted", state === "paused");
+    const player = fixture.player as Playback;
+    await act(async () => {
+      player.audio.out.stalled.set(state === "stalled");
+      player.audio.out.timestamp.set(sdk.Net.Time.Milli(0));
+      player.renderer.out.timestamp.set(sdk.Net.Time.Milli(528_870));
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    expect(stats?.avSyncMs).toBeUndefined();
+  },
+);
+
+it("allows the requested playout buffer before declaring first-frame startup stalled", async () => {
+  fixture.audio = false;
+  vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+  const sdk = await import("@moq/watch");
+  await render(true);
+  const player = fixture.player as Playback;
+  await act(async () => {
+    player.renderer.out.visible.set(true);
+    await vi.advanceTimersByTimeAsync(3000);
+  });
+  expect(player.sync.out.delay.peek()).toBe(1300);
+  expect(unavailable).not.toHaveBeenCalled();
+  await act(async () => {
+    player.renderer.out.timestamp.set(sdk.Net.Time.Milli(0));
+    await vi.advanceTimersByTimeAsync(1000);
+  });
+  expect(unavailable).not.toHaveBeenCalled();
+});
+
+it.each([
+  [1000, 4000],
+  [9000, 10_000],
+])(
+  "bounds first-frame startup for a %i ms publication batch",
+  async (batch, deadline) => {
+    fixture.audio = false;
+    fixture.batchDurationMs = batch;
+    vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+    await render(true);
+    await act(async () => {
+      (fixture.player as Playback).renderer.out.visible.set(true);
+      await vi.advanceTimersByTimeAsync(deadline - 1);
+    });
+    expect(unavailable).not.toHaveBeenCalled();
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+    expect(unavailable).toHaveBeenCalledOnce();
+    expect(unavailable).toHaveBeenCalledWith(
+      "first frame timed out",
+      undefined,
+    );
+  },
+);
+
+it("keeps the ten-second stall allowance after the first rendered frame disappears", async () => {
+  fixture.audio = false;
+  vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+  const sdk = await import("@moq/watch");
+  await render(true);
+  const player = fixture.player as Playback;
+  await act(async () => {
+    player.renderer.out.visible.set(true);
+    player.renderer.out.timestamp.set(sdk.Net.Time.Milli(0));
+    await vi.advanceTimersByTimeAsync(1000);
+    player.renderer.out.timestamp.set(undefined);
+    await vi.advanceTimersByTimeAsync(9999);
+  });
+  expect(unavailable).not.toHaveBeenCalled();
+  await act(async () => vi.advanceTimersByTimeAsync(1));
+  expect(unavailable).toHaveBeenCalledOnce();
+});

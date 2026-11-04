@@ -201,9 +201,7 @@ test("Enhanced RTMP Auto downshifts and recovers through a bandwidth-limited QUI
     copy.height = 90;
     const context = copy.getContext("2d", { willReadFrequently: true })!;
     setInterval(() => {
-      const stats = document.querySelector(
-        '[role="dialog"][aria-label="Stats for Nerds"]',
-      );
+      const stats = document.querySelector("[data-player-diagnostics]");
       if (stats?.textContent)
         window.ertmpAbrStats!.push({ at: Date.now(), text: stats.textContent });
       const surface = document.querySelector<HTMLCanvasElement>(
@@ -422,8 +420,10 @@ test("Enhanced RTMP Auto downshifts and recovers through a bandwidth-limited QUI
       .getByRole("menuitemcheckbox", { name: "Stats for Nerds" })
       .click();
     await page.keyboard.press("Escape");
-    await expect(stats).toContainText("Video bitrate estimate");
-    await expect(stats).toContainText("Bandwidth estimate");
+    await expect(stats.locator('[data-stat="renditionBitrate"]')).toBeVisible();
+    await expect(
+      stats.locator('[data-stat="availableBandwidth"]'),
+    ).toBeVisible();
     await expectPlaying("green");
     const restrictedBitrate = 1_000_000;
     shaper.limit(restrictedBitrate);

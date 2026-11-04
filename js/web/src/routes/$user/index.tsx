@@ -1,3 +1,4 @@
+import { BioViewer } from "@/components/bio/bio-viewer";
 import { ChatSidebar } from "@/components/stream/chat-sidebar";
 import {
   activityLabel,
@@ -18,6 +19,7 @@ import {
 import { useFullscreen } from "@/contexts/fullscreen-context";
 import { useActorLookup } from "@/hooks/actor-lookup";
 import useAvatars from "@/hooks/use-avatars";
+import { useBio } from "@/hooks/use-bio";
 import { useLivenessState } from "@/hooks/use-liveness-state";
 import { useLivestreamStore } from "@/hooks/use-livestream-store";
 import { useStreamAvatar } from "@/hooks/use-stream-avatar";
@@ -114,7 +116,7 @@ function StreamPage() {
 
   return (
     <StreamNotifications store={store}>
-      <StreamBody store={store} user={user} />
+      <StreamBody store={store} user={user} did={actor.actor.did} />
     </StreamNotifications>
   );
 }
@@ -149,7 +151,17 @@ function CreatorState({
   );
 }
 
-function StreamBody({ store, user }: { store: LivestreamStore; user: string }) {
+function StreamBody({
+  store,
+  user,
+  did,
+}: {
+  store: LivestreamStore;
+  user: string;
+  did: string;
+}) {
+  const { t } = useTranslation("common");
+  const bio = useBio(did);
   const navigate = useNavigate();
   const liveness = useLivenessState(store);
   const avatar = useStreamAvatar(store);
@@ -275,7 +287,9 @@ function StreamBody({ store, user }: { store: LivestreamStore; user: string }) {
           )}
 
           {/* Stacked layout details */}
-          <div className="wide:hidden flex min-h-0 flex-1 flex-col">
+          <div
+            className={`wide:hidden flex min-h-0 flex-col ${chatOpen ? "flex-1" : ""}`}
+          >
             <MobileStreamBar
               store={store}
               user={user}
@@ -294,6 +308,22 @@ function StreamBody({ store, user }: { store: LivestreamStore; user: string }) {
               <ChatSidebar store={store} avatar={avatar} />
             </div>
           </div>
+          {!theatre && (bio.data || bio.isError) && (
+            <section
+              aria-label={t("profile")}
+              className={`px-6 pb-6 ${chatOpen ? "wide:block hidden" : ""}`}
+            >
+              {bio.isError ? (
+                <p role="alert" className="text-muted-foreground text-sm">
+                  {t("profile-load-failed", {
+                    defaultValue: "Could not load profile.",
+                  })}
+                </p>
+              ) : bio.data ? (
+                <BioViewer bio={bio.data} did={did} />
+              ) : null}
+            </section>
+          )}
         </div>
 
         {/* Sidebar layout chat */}

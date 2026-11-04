@@ -16,6 +16,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/errgroup"
+	"stream.place/streamplace/pkg/access"
 	"stream.place/streamplace/pkg/aqtime"
 	"stream.place/streamplace/pkg/atproto"
 	"stream.place/streamplace/pkg/bus"
@@ -76,10 +77,10 @@ func (mm *MediaManager) validateMP4(ctx context.Context, input io.Reader, local 
 
 	// Complete the segment to carry both AAC and Opus. A single-codec segment is
 	// fed to the stream's continuous transcoder, which distributes the completed
-	// dual-codec segment asynchronously (~1 GoP later, gapless). Everything else
+	// dual-codec segment asynchronously at its input boundary. Everything else
 	// — already dual-codec, no audio, audio-only, an exotic codec, or no node
 	// signer — is distributed as-is, immediately.
-	if target, need := mm.audioCompletionTarget(ctx, buf); need {
+	if target, need := audioCompletionTargetFromMedia(vs.mediaData); need {
 		if cert, keyPEM, serr := mm.transcodeSigner(); serr == nil {
 			return mm.feedStreamTranscoder(ctx, vs, buf, target, cert, keyPEM)
 		} else {
@@ -94,13 +95,14 @@ func (mm *MediaManager) validateMP4(ctx context.Context, input io.Reader, local 
 // later (and over the COMPLETED dual-codec bytes) when codec completion is
 // async — the metadata still comes from the source.
 type validatedSegment struct {
-	meta              *SegmentMetadata
-	mediaData         *localdb.SegmentMediaData
-	label             string
-	repoDID           string
-	signingKeyDID     string
-	local             bool
-	playbackPublished bool
+	meta                *SegmentMetadata
+	mediaData           *localdb.SegmentMediaData
+	label               string
+	repoDID             string
+	signingKeyDID       string
+	local               bool
+	playbackPublished   bool
+	publisherGeneration uint64
 }
 
 // Source and completed frames each pass the normal validation gates. They do
@@ -143,6 +145,9 @@ func (mm *MediaManager) consumeSourcePhase(ctx context.Context, segment []byte, 
 		log.Debug(ctx, "source has no compatible WebRTC packets", "error", err)
 	} else {
 		seg.PacketizedData = packet
+	}
+	if err := mm.CheckPublisherGeneration(vs.repoDID, vs.publisherGeneration); err != nil {
+		return nil, err
 	}
 	mm.bus.PublishSegment(ctx, vs.repoDID, PlaybackSourceRendition, seg)
 	if seg.PacketizedData != nil {
@@ -221,8 +226,23 @@ func (mm *MediaManager) validateSource(ctx context.Context, buf []byte, local bo
 		signingKeyDID = signingKey.DID
 	}
 
-	if err := mm.cli.StreamIsAllowed(repoDID); err != nil {
-		return nil, nil, fmt.Errorf("got valid segment, but user %s is not allowed: %w", repoDID, err)
+	var generation uint64
+	if local {
+		var err error
+		generation, err = mm.checkPublisherContext(ctx, repoDID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("got valid segment, but user %s is not allowed: %w", repoDID, err)
+		}
+	} else {
+		var allowed bool
+		if mm.Access != nil {
+			allowed = mm.Access.Check(repoDID, access.Syndicate).Allowed
+		} else {
+			allowed = mm.cli.ShouldSyndicate(repoDID)
+		}
+		if !allowed {
+			return nil, nil, fmt.Errorf("node does not syndicate %s", repoDID)
+		}
 	}
 
 	// Defense in depth: a banned streamer's ingest worker is torn down
@@ -248,12 +268,13 @@ func (mm *MediaManager) validateSource(ctx context.Context, buf []byte, local bo
 	}
 
 	return &validatedSegment{
-		meta:          meta,
-		mediaData:     valid.MediaData,
-		label:         label,
-		repoDID:       repoDID,
-		signingKeyDID: signingKeyDID,
-		local:         local,
+		meta:                meta,
+		mediaData:           valid.MediaData,
+		label:               label,
+		repoDID:             repoDID,
+		signingKeyDID:       signingKeyDID,
+		local:               local,
+		publisherGeneration: generation,
 	}, valid.Playable, nil
 }
 
@@ -282,22 +303,12 @@ func (mm *MediaManager) streamerIsBanned(repoDID string) (bool, error) {
 // source presentation, or nil when codec completion changed the segment.
 func (mm *MediaManager) distributeSegment(ctx context.Context, vs *validatedSegment, seg, playable []byte) error {
 	meta := vs.meta
-
-	// Hold the canonical segment in the stream's in-memory buffer, the recent
-	// part of the stream that clips (and moderation reports) draw on.
-	mm.bufferSegment(vs.repoDID, meta.StartTime.Time(), meta.Published, vs.local, seg)
-
-	// Fold the validated segment into the streamer's live-HLS window, off the
-	// critical path. This runs for every segment — locally signed or replicated
-	// from another node — so any node that validates a stream's segments can
-	// serve its live HLS. WithoutCancel keeps the feed alive past this request.
-	// Pre-live segments are folded in too; the handlers gate them on a
-	// playback token (see feedLiveWindow).
-	go mm.feedLiveWindow(context.WithoutCancel(ctx), vs.repoDID, seg, meta.StartTime.Time(), meta.Published)
-	if !vs.local {
-		// A replicated stream's renditions arrive separately; keep this
-		// segment's audio to pair them with (see PublishRenditionsForPlayback).
-		mm.rememberSourceAudio(ctx, vs.repoDID, seg)
+	if vs.local {
+		var err error
+		ctx, err = mm.PublisherContext(ctx, vs.repoDID, vs.publisherGeneration)
+		if err != nil {
+			return err
+		}
 	}
 
 	// Segments are no longer written to disk, but a Segment DB row is still kept
@@ -348,15 +359,51 @@ func (mm *MediaManager) distributeSegment(ctx context.Context, vs *validatedSegm
 		}
 		playable = flat.Bytes()
 	}
+	if vs.local {
+		if err := mm.CheckPublisherGeneration(vs.repoDID, vs.publisherGeneration); err != nil {
+			return err
+		}
+	}
+
+	feedCtx := context.WithoutCancel(ctx)
+	var events []*muxl.MuxlEvent
+	var feedErr error
+	if !vs.local {
+		events, feedErr = unwrapMuxlEvents(feedCtx, seg)
+		if feedErr != nil {
+			log.Error(ctx, "live-hls: window feed failed", "streamer", vs.repoDID, "error", feedErr)
+		} else {
+			// Renditions arrive independently of replicated sources. Their audio must
+			// be available before any source subscriber starts distribution.
+			mm.rememberSourceAudio(vs.repoDID, vs.label, events)
+		}
+	}
+	hlsReady := make(chan struct{})
+	mm.segBuffersMut.Lock()
+	previousHLS := mm.bufferSegmentLocked(vs.repoDID, meta.StartTime.Time(), meta.Published, vs.local, seg, vs.publisherGeneration, vs.label, hlsReady)
 
 	mm.notifySubscribers(ctx, &NewSegmentNotification{
-		Segment:           dbSeg,
-		Data:              playable,
-		Muxl:              seg,
-		Metadata:          meta,
-		Local:             vs.local,
-		PlaybackPublished: vs.playbackPublished,
+		Segment:             dbSeg,
+		Data:                playable,
+		Muxl:                seg,
+		Metadata:            meta,
+		Local:               vs.local,
+		PublisherGeneration: vs.publisherGeneration,
+		PlaybackPublished:   vs.playbackPublished,
 	})
+	mm.segBuffersMut.Unlock()
+	go func() {
+		defer close(hlsReady)
+		if previousHLS != nil {
+			<-previousHLS
+		}
+		if vs.local {
+			mm.feedLiveWindow(feedCtx, vs.repoDID, seg, meta.StartTime.Time(), meta.Published)
+		} else if feedErr == nil {
+			mm.feedLiveWindowEvents(feedCtx, vs.repoDID, events, meta.StartTime.Time(), meta.Published)
+		}
+	}()
+
 	aqt := aqtime.FromTime(meta.StartTime.Time())
 	log.Log(ctx, "successfully ingested segment", "user", vs.repoDID, "signingKey", vs.signingKeyDID, "timestamp", aqt.FileSafeString(), "segmentID", vs.label)
 	return nil
@@ -494,40 +541,26 @@ func ValidateMP4MediaC2PA(ctx context.Context, buf []byte) (*ValidationResult, e
 		return nil, fmt.Errorf("muxl verify failed: %w", err)
 	}
 
-	var doc struct {
-		Segments []segmentValidation `json:"segments"`
-	}
-	_, unmarshalSpan := tracer.Start(ctx, "ValidateMP4Media.UnmarshalManifest", trace.WithAttributes(
-		attribute.Int("json_bytes", len(out)),
-	))
-	err = json.Unmarshal([]byte(out), &doc)
-	unmarshalSpan.End()
+	segments, err := parseVerifiedSegments([]byte(out))
 	if err != nil {
-		return nil, fmt.Errorf("failed to unmarshal verify output: %w", err)
+		return nil, err
 	}
-	if len(doc.Segments) == 0 {
-		return nil, fmt.Errorf("no signed canonical segments found in input")
-	}
+	return metadataFromVerifiedSegments(ctx, segments)
+}
 
-	// Every track's segment must validate — a tampered audio track fails the
-	// whole GoP, not just the primary one.
-	for _, seg := range doc.Segments {
-		if am := seg.ValidationResults.ActiveManifest; am != nil && len(am.Failure) > 0 {
-			bs, _ := json.Marshal(am.Failure)
-			return nil, fmt.Errorf("track %d active manifest has failures: %s", seg.TrackID, string(bs))
-		}
-		if seg.ValidationState == "Invalid" {
-			return nil, fmt.Errorf("track %d canonical segment failed c2pa validation", seg.TrackID)
-		}
+func metadataFromVerifiedSegments(ctx context.Context, segments []segmentValidation) (*ValidationResult, error) {
+	tracer := otel.Tracer("signer")
+	if len(segments) == 0 {
+		return nil, fmt.Errorf("no verified segments")
 	}
 
 	// Track order can change during replication. The lowest track's first
 	// asset keeps the deduplication identity stable; source tracks precede
 	// node-signed addenda.
-	primary := &doc.Segments[0]
-	for i := range doc.Segments {
-		if doc.Segments[i].TrackID < primary.TrackID {
-			primary = &doc.Segments[i]
+	primary := &segments[0]
+	for i := range segments {
+		if segments[i].TrackID < primary.TrackID {
+			primary = &segments[i]
 		}
 	}
 
@@ -540,7 +573,7 @@ func ValidateMP4MediaC2PA(ctx context.Context, buf []byte) (*ValidationResult, e
 
 	certKeys := map[string]string{primary.Cert: pub.DIDKey()}
 	trackKeys := make(map[uint32]string)
-	for _, segment := range doc.Segments {
+	for _, segment := range segments {
 		key, ok := certKeys[segment.Cert]
 		if !ok {
 			trackPub, err := signers.ParseES256KCert([]byte(segment.Cert))
@@ -563,10 +596,15 @@ func ValidateMP4MediaC2PA(ctx context.Context, buf []byte) (*ValidationResult, e
 	if err != nil {
 		return nil, err
 	}
+	restricted, err := audioPublicationRestricted(segments)
+	if err != nil {
+		return nil, err
+	}
+	meta.Published = meta.Published && !restricted
 	// A batch spanning a source policy change stays private. Node-signed
 	// addenda have independent metadata and cannot change source policy.
-	for i := range doc.Segments {
-		segment := &doc.Segments[i]
+	for i := range segments {
+		segment := &segments[i]
 		if segment == primary || segment.Cert != primary.Cert {
 			continue
 		}
@@ -591,4 +629,54 @@ func ValidateMP4MediaC2PA(ctx context.Context, buf []byte) (*ValidationResult, e
 		Cert:             primary.Cert,
 		trackSigningKeys: trackKeys,
 	}, nil
+}
+
+func parseVerifiedSegments(out []byte) ([]segmentValidation, error) {
+	var doc struct {
+		Segments []segmentValidation `json:"segments"`
+	}
+	err := json.Unmarshal(out, &doc)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshal verify output: %w", err)
+	}
+	if len(doc.Segments) == 0 {
+		return nil, fmt.Errorf("no signed canonical segments found in input")
+	}
+
+	// Every track's segment must validate — a tampered audio track fails the
+	// whole GoP, not just the primary one.
+	for _, seg := range doc.Segments {
+		if am := seg.ValidationResults.ActiveManifest; am != nil && len(am.Failure) > 0 {
+			bs, _ := json.Marshal(am.Failure)
+			return nil, fmt.Errorf("track %d active manifest has failures: %s", seg.TrackID, string(bs))
+		}
+		if seg.ValidationState == "Invalid" {
+			return nil, fmt.Errorf("track %d canonical segment failed c2pa validation", seg.TrackID)
+		}
+	}
+
+	return doc.Segments, nil
+}
+
+// An audio derivative may lower publication across a codec-history boundary.
+// It cannot raise the source's visibility or replace its validation gates.
+func audioPublicationRestricted(segments []segmentValidation) (bool, error) {
+	restricted := false
+	for _, segment := range segments {
+		for _, assertion := range segment.Manifest.Assertions {
+			if assertion.Label != audioPublicationAssertion {
+				continue
+			}
+			data, ok := assertion.Data.(map[string]any)
+			if !ok {
+				return false, fmt.Errorf("invalid audio publication assertion")
+			}
+			published, ok := data["published"].(bool)
+			if !ok {
+				return false, fmt.Errorf("audio publication assertion has no published boolean")
+			}
+			restricted = restricted || !published
+		}
+	}
+	return restricted, nil
 }

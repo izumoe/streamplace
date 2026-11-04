@@ -1,0 +1,273 @@
+--- a/subprojects/gst-plugins-bad/ext/codec2json/gsth2642json.c
++++ b/subprojects/gst-plugins-bad/ext/codec2json/gsth2642json.c
+@@ -56,8 +56,16 @@
+   guint nal_length_size;
+ 
+   gboolean use_avc;
++  gboolean b_frames_only;
++  gboolean has_b_frames;
+ 
+   JsonObject *json;
++};
++
++enum
++{
++  PROP_0,
++  PROP_B_FRAMES_ONLY
+ };
+ 
+ static GstStaticPadTemplate sink_factory = GST_STATIC_PAD_TEMPLATE ("sink",
+@@ -134,6 +142,9 @@
+     ret = GST_FLOW_ERROR;
+     goto error;
+   }
++
++  if (self->b_frames_only)
++    goto error;
+ 
+   sps = json_object_new ();
+ 
+@@ -451,6 +462,9 @@
+     goto error;
+   }
+ 
++  if (self->b_frames_only)
++    goto error;
++
+   pps = json_object_new ();
+ 
+   json_object_set_boolean_member (pps, "entropy coding mode flag",
+@@ -579,6 +593,11 @@
+     return GST_FLOW_ERROR;
+   }
+ 
++  if (self->b_frames_only) {
++    self->has_b_frames |= GST_H264_IS_B_SLICE (&slice);
++    return GST_FLOW_OK;
++  }
++
+   pps = slice.pps;
+   sps = pps->sequence;
+ 
+@@ -874,66 +893,76 @@
+   GstH2642json *self = GST_H264_2_JSON (object);
+   JsonObject *json = self->json;
+   GstBuffer *out_buf;
+-  gchar *json_string;
+-  guint length;
++  const gchar *json_string;
++  gchar *full_json = NULL;
++  guint offset = 0;
+   GstH264NalUnit nalu;
+   GstH264ParserResult pres;
+-  GstMapInfo in_map, out_map;
+-  GstFlowReturn ret = GST_FLOW_OK;
++  GstMapInfo in_map;
++  GstFlowReturn ret;
+ 
+   if (!gst_buffer_map (in_buf, &in_map, GST_MAP_READ)) {
+-    GST_ERROR_OBJECT (self, "Cannot map buffer");
++    gst_buffer_unref (in_buf);
+     return GST_FLOW_ERROR;
+   }
+ 
+-  if (self->use_avc) {
+-    pres = gst_h264_parser_identify_nalu_avc (self->parser,
+-        in_map.data, 0, in_map.size, self->nal_length_size, &nalu);
+-
+-    while (pres == GST_H264_PARSER_OK && ret == GST_FLOW_OK) {
+-      ret = gst_h264_2_json_decode_nal (self, &nalu);
+-
++  self->has_b_frames = FALSE;
++  if (in_map.size == 0 || in_map.size > G_MAXUINT)
++    goto invalid;
++  if (!self->use_avc && in_map.size >= 3 &&
++      in_map.data[in_map.size - 3] == 0 &&
++      in_map.data[in_map.size - 2] == 0 &&
++      in_map.data[in_map.size - 1] == 1)
++    goto invalid;
++
++  while (offset < in_map.size) {
++    if (self->use_avc) {
+       pres = gst_h264_parser_identify_nalu_avc (self->parser,
+-          in_map.data, nalu.offset + nalu.size, in_map.size,
+-          self->nal_length_size, &nalu);
+-    }
+-  } else {
+-    pres = gst_h264_parser_identify_nalu (self->parser,
+-        in_map.data, 0, in_map.size, &nalu);
+-
+-    if (pres == GST_H264_PARSER_NO_NAL_END)
+-      pres = GST_H264_PARSER_OK;
+-
+-    while (pres == GST_H264_PARSER_OK && ret == GST_FLOW_OK) {
+-      ret = gst_h264_2_json_decode_nal (self, &nalu);
+-
++          in_map.data, offset, in_map.size, self->nal_length_size, &nalu);
++    } else {
+       pres = gst_h264_parser_identify_nalu (self->parser,
+-          in_map.data, nalu.offset + nalu.size, in_map.size, &nalu);
+-
++          in_map.data, offset, in_map.size, &nalu);
+       if (pres == GST_H264_PARSER_NO_NAL_END)
+         pres = GST_H264_PARSER_OK;
+-    }
+-  }
+-
+-  json_string = get_string_from_json_object (json);
+-  length = strlen (json_string);
+-  out_buf = gst_buffer_new_allocate (NULL, length, NULL);
+-  gst_buffer_map (out_buf, &out_map, GST_MAP_WRITE);
+-  if (length)
+-    memcpy (&out_map.data[0], json_string, length);
+-  gst_buffer_unmap (out_buf, &out_map);
+-
+-  g_free (json_string);
+-
++      if (pres != GST_H264_PARSER_OK && offset > 0) {
++        guint tail = offset;
++        while (tail < in_map.size && in_map.data[tail] == 0)
++          tail++;
++        if (tail == in_map.size)
++          break;
++      }
++    }
++    if (pres != GST_H264_PARSER_OK || nalu.size == 0 ||
++        nalu.offset + nalu.size <= offset)
++      goto invalid;
++    if (gst_h264_2_json_decode_nal (self, &nalu) != GST_FLOW_OK)
++      goto invalid;
++    offset = nalu.offset + nalu.size;
++  }
++
++  if (self->b_frames_only) {
++    json_string = self->has_b_frames ?
++        "{\"has-b-frames\":true}" : "{\"has-b-frames\":false}";
++  } else {
++    full_json = get_string_from_json_object (json);
++    json_string = full_json;
++  }
++  out_buf = gst_buffer_new_memdup (json_string, strlen (json_string));
++  g_free (full_json);
+   gst_buffer_copy_into (out_buf, in_buf,
+       GST_BUFFER_COPY_FLAGS | GST_BUFFER_COPY_TIMESTAMPS |
+       GST_BUFFER_COPY_METADATA, 0, -1);
+   ret = gst_pad_push (self->srcpad, out_buf);
+-
+   gst_buffer_unmap (in_buf, &in_map);
+   gst_buffer_unref (in_buf);
+-
+   return ret;
++
++invalid:
++  GST_ELEMENT_ERROR (self, STREAM, DECODE,
++      ("Failed to parse H.264 metadata"), ("NAL offset %u", offset));
++  gst_buffer_unmap (in_buf, &in_map);
++  gst_buffer_unref (in_buf);
++  return GST_FLOW_ERROR;
+ }
+ 
+ static GstFlowReturn
+@@ -984,7 +1013,7 @@
+   return ret;
+ }
+ 
+-static void
++static gboolean
+ gst_h264_2_json_get_codec_data (GstH2642json * self, GstCaps * caps)
+ {
+   if (caps && gst_caps_get_size (caps) > 0) {
+@@ -997,16 +1026,19 @@
+       GstBuffer *codec_data = gst_value_get_buffer (h);
+       GstMapInfo map;
+ 
+-      gst_buffer_map (codec_data, &map, GST_MAP_READ);
+-      if (gst_h264_2_json_parse_codec_data (self, map.data,
+-              map.size) != GST_FLOW_OK) {
+-        /* keep going without error.
+-         * Probably inband SPS/PPS might be valid data */
+-        GST_WARNING_OBJECT (self, "Failed to handle codec data");
+-      }
++      if (!gst_buffer_map (codec_data, &map, GST_MAP_READ))
++        return FALSE;
++      GstFlowReturn ret = gst_h264_2_json_parse_codec_data (self, map.data,
++          map.size);
+       gst_buffer_unmap (codec_data, &map);
+-    }
+-  }
++      if (ret != GST_FLOW_OK) {
++        GST_ELEMENT_ERROR (self, STREAM, DECODE,
++            ("Invalid H.264 codec data"), (NULL));
++        return FALSE;
++      }
++    }
++  }
++  return TRUE;
+ }
+ 
+ static void
+@@ -1040,7 +1072,10 @@
+ 
+   gst_h264_2_json_use_avc (self, caps);
+ 
+-  gst_h264_2_json_get_codec_data (self, caps);
++  if (!gst_h264_2_json_get_codec_data (self, caps)) {
++    gst_event_unref (event);
++    return FALSE;
++  }
+ 
+   return gst_pad_push_event (self->srcpad, event);
+ }
+@@ -1070,6 +1105,38 @@
+ }
+ 
+ static void
++gst_h264_2_json_set_property (GObject * object, guint prop_id,
++    const GValue * value, GParamSpec * pspec)
++{
++  GstH2642json *self = GST_H264_2_JSON (object);
++
++  switch (prop_id) {
++    case PROP_B_FRAMES_ONLY:
++      self->b_frames_only = g_value_get_boolean (value);
++      break;
++    default:
++      G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
++      break;
++  }
++}
++
++static void
++gst_h264_2_json_get_property (GObject * object, guint prop_id,
++    GValue * value, GParamSpec * pspec)
++{
++  GstH2642json *self = GST_H264_2_JSON (object);
++
++  switch (prop_id) {
++    case PROP_B_FRAMES_ONLY:
++      g_value_set_boolean (value, self->b_frames_only);
++      break;
++    default:
++      G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
++      break;
++  }
++}
++
++static void
+ gst_h264_2_json_class_init (GstH2642jsonClass * klass)
+ {
+   GObjectClass *gobject_class;
+@@ -1079,6 +1146,13 @@
+   gstelement_class = (GstElementClass *) klass;
+ 
+   gobject_class->finalize = gst_h264_2_json_finalize;
++  gobject_class->set_property = gst_h264_2_json_set_property;
++  gobject_class->get_property = gst_h264_2_json_get_property;
++  g_object_class_install_property (gobject_class, PROP_B_FRAMES_ONLY,
++      g_param_spec_boolean ("b-frames-only", "B-frames only",
++          "Validate all headers and report only whether a buffer has B slices",
++          FALSE, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS |
++          GST_PARAM_MUTABLE_READY));
+ 
+   gst_element_class_add_static_pad_template (gstelement_class, &src_factory);
+   gst_element_class_add_static_pad_template (gstelement_class, &sink_factory);

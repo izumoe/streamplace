@@ -349,7 +349,6 @@ func (m *LocalDatabase) GetSegment(id string) (*Segment, error) {
 	var seg Segment
 
 	err := m.DB.Model(&Segment{}).
-		Preload("Repo").
 		Where("id = ?", id).
 		First(&seg).Error
 

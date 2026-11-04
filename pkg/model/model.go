@@ -93,8 +93,8 @@ type Model interface {
 	DeleteBlock(ctx context.Context, rkey string) error
 
 	CreateChatMessage(ctx context.Context, message *ChatMessage) error
-	MostRecentChatMessages(repoDID string, since time.Time) ([]placestream.ChatDefs_MessageView, error)
-	GetChatMessage(uri string) (*ChatMessage, error)
+	MostRecentChatMessages(ctx context.Context, repoDID string, since time.Time) ([]placestream.ChatDefs_MessageView, error)
+	GetChatMessage(ctx context.Context, uri string) (*ChatMessage, error)
 	DeleteChatMessage(ctx context.Context, uri string, deletedAt *time.Time) error
 
 	CreateGate(ctx context.Context, gate *Gate) error
@@ -191,6 +191,10 @@ type Model interface {
 	DeleteVodGate(ctx context.Context, rkey string) error
 	GetVodGate(ctx context.Context, rkey string) (*VodGate, error)
 	GetUserVodGates(ctx context.Context, userDID string) ([]*VodGate, error)
+	CreateBioPage(ctx context.Context, page *BioPage) error
+	DeleteBioPage(ctx context.Context, repoDID, repoRev string) error
+	GetBioPage(ctx context.Context, repoDID string) (*BioPage, error)
+	HasIndexedBioPage(ctx context.Context, repoDID string) (bool, error)
 }
 
 // DO NOT UPDATE THIS UNLESS A BREAKING CHANGE IS MADE
@@ -302,6 +306,7 @@ func MakeDBConns(dbURL string, conns int) (Model, error) {
 		Block{},
 		ChatMessage{},
 		ChatProfile{},
+		BioPage{},
 		Gate{},
 		PinnedRecord{},
 		ServerSettings{},

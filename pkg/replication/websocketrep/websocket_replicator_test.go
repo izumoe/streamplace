@@ -125,7 +125,7 @@ func TestOriginViewForRow(t *testing.T) {
 
 // The advertised MoQ URL is this host on the listener's port, carrying the
 // self-signed certificate's hash for peers to pin, and nothing without a
-// listener.
+// listener or relay.
 func TestMyMoqURL(t *testing.T) {
 	cert, err := moq.NewSelfSignedCert()
 	require.NoError(t, err)
@@ -137,4 +137,16 @@ func TestMyMoqURL(t *testing.T) {
 
 	r = &WebsocketReplicator{cli: &config.CLI{ServerHost: "me.example"}, moqCert: cert}
 	require.Equal(t, "", r.getMyMoqURL())
+}
+
+func TestMyMoqURLUsesRelayWithoutListenerCertificate(t *testing.T) {
+	cert, err := moq.NewSelfSignedCert()
+	require.NoError(t, err)
+	for _, addr := range []string{"", ":38444"} {
+		r := &WebsocketReplicator{cli: &config.CLI{
+			ServerHost: "node.example", MoqAddr: addr,
+			MoqRelayURL: "https://relay.example/anon/node", MoqURL: "moqt://private.example:38444",
+		}, moqCert: cert}
+		require.Equal(t, "https://relay.example/anon/node", r.getMyMoqURL())
+	}
 }

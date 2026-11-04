@@ -1,4 +1,5 @@
 import { useDashboardStore } from "@/components/dashboard/dashboard-store-context";
+import { ERTMPSetup } from "@/components/dashboard/ertmp-setup";
 import { ModeratorsManager } from "@/components/dashboard/moderators";
 import { Admonition } from "@/components/ui/admonition";
 import { Button } from "@/components/ui/button";
@@ -21,7 +22,16 @@ import { useStore } from "@/lib/store";
 import { useKeyRecords } from "@/lib/store/hooks";
 import { cn } from "@/lib/utils";
 import { createFileRoute } from "@tanstack/react-router";
-import { Clipboard, Key, Loader2, Shield, Tags, Trash2, X } from "lucide-react";
+import {
+  Clipboard,
+  Key,
+  Layers,
+  Loader2,
+  Shield,
+  Tags,
+  Trash2,
+  X,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
@@ -40,6 +50,7 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { to: "/dashboard/stream#stream-key", icon: Key, labelKey: "stream-key" },
+  { to: "/dashboard/stream#ertmp", icon: Layers, labelKey: "ertmp-title" },
   { to: "/dashboard/stream#metadata", icon: Tags, labelKey: "metadata" },
   { to: "/dashboard/stream#moderation", icon: Shield, labelKey: "moderation" },
 ];
@@ -55,7 +66,7 @@ const linkClass = cn(
   "lg:border-b-0 lg:[&.active]:border-0",
 );
 
-export function StreamSettingsPage() {
+function StreamSettingsPage() {
   const { t } = useTranslation("common");
 
   return (
@@ -71,7 +82,7 @@ export function StreamSettingsPage() {
           <div className="pointer-events-none absolute top-0 right-0 bottom-0 z-10 w-5 bg-linear-to-l from-(--color-bg) to-transparent" />
 
           <nav
-            className="-mx-5 flex scrollbar-none gap-0.5 overflow-x-auto px-5"
+            className="-mx-4 flex scrollbar-none gap-0.5 overflow-x-auto px-4"
             style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
           >
             {NAV_ITEMS.map((item) => {
@@ -109,6 +120,9 @@ export function StreamSettingsPage() {
       <div className="mt-0.75 w-full min-w-0 flex-1 space-y-10 md:w-screen md:max-w-md xl:max-w-xl">
         <section id="stream-key" className="scroll-mt-20">
           <StreamKeySection />
+        </section>
+        <section id="ertmp" className="scroll-mt-20">
+          <ERTMPSetup />
         </section>
         <section id="metadata" className="scroll-mt-20">
           <MetadataSection />

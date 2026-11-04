@@ -10,6 +10,7 @@ import (
 
 	"stream.place/streamplace/pkg/livehls"
 	"stream.place/streamplace/pkg/log"
+	"stream.place/streamplace/pkg/muxl"
 )
 
 // liveWindowSize is how many recent segments per track the in-memory live-HLS
@@ -60,6 +61,9 @@ func (mm *MediaManager) lockLiveWindow(did string, create bool) *liveWindowState
 		mm.liveWindowsMut.Lock()
 		state := mm.liveWindows[did]
 		if state == nil && create {
+			if mm.liveWindows == nil {
+				mm.liveWindows = map[string]*liveWindowState{}
+			}
 			state = &liveWindowState{}
 			state.mu.Lock()
 			mm.liveWindows[did] = state
@@ -91,7 +95,7 @@ func (mm *MediaManager) GetLiveWindow(did string) (*livehls.Writer, bool) {
 		return nil, false
 	}
 	defer state.mu.Unlock()
-	if state.writer.Empty() {
+	if state.writer == nil || state.writer.Empty() {
 		mm.liveWindowsMut.Lock()
 		delete(mm.liveWindows, did)
 		mm.liveWindowsMut.Unlock()
@@ -119,6 +123,10 @@ func (mm *MediaManager) feedLiveWindow(ctx context.Context, did string, segment 
 		log.Error(ctx, "live-hls: window feed failed", "streamer", did, "error", err)
 		return
 	}
+	mm.feedLiveWindowEvents(ctx, did, events, start, published)
+}
+
+func (mm *MediaManager) feedLiveWindowEvents(ctx context.Context, did string, events []*muxl.MuxlEvent, start time.Time, published bool) {
 	// Segments are fed from concurrent goroutines, so the window's state
 	// change and the choice of writer happen under one lock: a preview
 	// segment that picked its writer after the stream went public would
@@ -129,6 +137,15 @@ func (mm *MediaManager) feedLiveWindow(ctx context.Context, did string, segment 
 	// in the window is the stream going back to preview, and does flip it.
 	state := mm.lockLiveWindow(did, true)
 	defer state.mu.Unlock()
+	mm.feedLiveWindowEventsLocked(ctx, state, did, events, start, published)
+}
+
+// Caller holds state.mu, including when a rendition's HLS and WebRTC feeds
+// share a publication turn with an independently arriving audio continuation.
+func (mm *MediaManager) feedLiveWindowEventsLocked(ctx context.Context, state *liveWindowState, did string, events []*muxl.MuxlEvent, start time.Time, published bool) {
+	if err := mm.CheckPublisherContext(ctx); err != nil {
+		return
+	}
 	if !published && state.published && start.Before(state.latest) {
 		log.Debug(ctx, "dropping pre-live segment that arrived after the stream went public", "did", did, "start", start)
 		return
@@ -153,12 +170,15 @@ func (mm *MediaManager) feedLiveWindow(ctx context.Context, did string, segment 
 // own media sequence, so an addendum arriving a beat after its source
 // segment (the transcoder's round trip) is fine. start is the source
 // segment's start time (zero when unknown): a pre-live addendum that lands
-// after the stream went public is dropped like its source would be.
-func (mm *MediaManager) FeedLiveRenditions(ctx context.Context, did string, addendum []byte, start time.Time, published bool) {
+// after the stream went public is dropped like its source would be. An admission
+// invalidated while the feed waited returns an error so callers also withhold
+// the rendition from other delivery paths.
+func (mm *MediaManager) FeedLiveRenditions(ctx context.Context, did string, addendum []byte, start time.Time, published bool) error {
 	if len(addendum) == 0 {
-		return
+		return nil
 	}
 	mm.feedLiveWindow(ctx, did, addendum, start, published)
+	return mm.CheckPublisherContext(ctx)
 }
 
 // LiveRenditionNames lists the transcoded renditions the streamer's live

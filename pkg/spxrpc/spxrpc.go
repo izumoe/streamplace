@@ -2,21 +2,21 @@ package spxrpc
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/bluesky-social/indigo/atproto/identity"
+	"github.com/bluesky-social/indigo/xrpc"
 	"github.com/labstack/echo/v4"
 	"github.com/patrickmn/go-cache"
 	"github.com/slok/go-http-metrics/middleware"
 	echomiddleware "github.com/slok/go-http-metrics/middleware/echo"
 	"github.com/streamplace/oatproxy/pkg/oatproxy"
+	"stream.place/streamplace/pkg/accessctl"
 	"stream.place/streamplace/pkg/aqhttp"
 	"stream.place/streamplace/pkg/atproto"
 	"stream.place/streamplace/pkg/blob"
@@ -33,6 +33,7 @@ import (
 )
 
 type Server struct {
+	Access          *accessctl.Controller
 	e               *echo.Echo
 	cli             *config.CLI
 	model           model.Model
@@ -202,49 +203,11 @@ func makeUnauthenticatedRequest(ctx context.Context, service, method string, par
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	u, err := url.Parse(fmt.Sprintf("%s/xrpc/%s", service, method))
-	if err != nil {
-		return fmt.Errorf("failed to parse URL: %w", err)
+	client := xrpc.Client{
+		Host: service, Client: &aqhttp.Client, UserAgent: &aqhttp.UserAgent,
+		Headers: map[string]string{repoProxyHeader: "true"},
 	}
-
-	// add query parameters
-	query := u.Query()
-	for k, v := range params {
-		query.Set(k, fmt.Sprintf("%v", v))
-	}
-	u.RawQuery = query.Encode()
-
-	log.Debug(ctx, "making unauthenticated request", "url", u.String())
-
-	req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
-	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
-	req.Header.Set(repoProxyHeader, "true")
-
-	resp, err := aqhttp.Client.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to make request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusLoopDetected {
-		return echo.NewHTTPError(http.StatusLoopDetected, "repository proxy loop detected")
-	}
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("upstream request failed with status %d", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("failed to read response body: %w", err)
-	}
-
-	if err := json.Unmarshal(body, out); err != nil {
-		return fmt.Errorf("failed to unmarshal response: %w", err)
-	}
-
-	return nil
+	return client.Do(ctx, xrpc.Query, "", method, params, nil, out)
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -268,6 +231,17 @@ func (s *Server) ErrorHandlingMiddleware() echo.MiddlewareFunc {
 					if err != nil {
 						return err
 					}
+				}
+			}
+			var upstream *xrpc.Error
+			_, isHTTPError := err.(*echo.HTTPError)
+			if !isHTTPError && errors.As(err, &upstream) {
+				var payload *xrpc.XRPCError
+				if errors.As(err, &payload) {
+					// Echo flattens error values to strings; the struct keeps the XRPC fields.
+					err = echo.NewHTTPError(upstream.StatusCode, *payload).SetInternal(err)
+				} else {
+					err = echo.NewHTTPError(upstream.StatusCode, err.Error()).SetInternal(err)
 				}
 			}
 			httpError, ok := err.(*echo.HTTPError)

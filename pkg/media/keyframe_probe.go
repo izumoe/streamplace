@@ -68,13 +68,18 @@ func installIDRKeyframeProbe(ctx context.Context, pad gst.Pad, streamer string) 
 	}
 	pad.AddProbe(gst.PadProbeTypeBuffer, func(_ gst.Pad, info *gst.PadProbeInfo) gst.PadProbeReturn {
 		buf := info.GetBuffer()
-		if buf == nil || buf.HasFlags(gst.BufferFlagDeltaUnit) {
+		if buf == nil {
+			return gst.PadProbeOK
+		}
+		if buf.HasFlags(gst.BufferFlagDeltaUnit) {
+			gst.UnsafeBufferUnref(buf)
 			return gst.PadProbeOK
 		}
 		m, ok := buf.Map(gst.MapRead)
 		if !ok {
 			return gst.PadProbeOK
 		}
+		defer gst.UnsafeBufferUnref(buf)
 		idr := auHasIDR(m.Data())
 		m.Unmap()
 		if !idr {

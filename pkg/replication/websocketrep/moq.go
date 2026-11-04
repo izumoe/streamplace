@@ -49,9 +49,41 @@ var moqLivenessInterval = time.Second
 // node's ACME one still on its way, asks for it again.
 var moqTLSRetry = 5 * time.Second
 
-// serveMoQ runs the node's Media over QUIC listener on --moq-addr: every
-// stream live on this node's bus, for the peers that pull it.
+// serveMoQ shares the same on-demand broadcasts between the local listener
+// and an outbound relay. Neither path re-encodes or re-signs media.
 func (r *WebsocketReplicator) serveMoQ(ctx context.Context) error {
+	origin := official.NewOriginProducer()
+	requests, err := origin.Dynamic("", official.Route{})
+	if err != nil {
+		return err
+	}
+	defer requests.Cancel()
+	g, gctx := errgroup.WithContext(ctx)
+	if r.cli.MoqAddr != "" {
+		g.Go(func() error { return r.listenMoQ(gctx, origin) })
+	}
+	if r.cli.MoqRelayURL != "" {
+		g.Go(func() error { return r.publishMoQRelay(gctx, origin) })
+	}
+	g.Go(func() error {
+		var wg sync.WaitGroup
+		defer wg.Wait()
+		for req, err := range requests.Requests(gctx) {
+			if err != nil {
+				return err
+			}
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				r.serveBroadcast(gctx, req)
+			}()
+		}
+		return nil
+	})
+	return g.Wait()
+}
+
+func (r *WebsocketReplicator) listenMoQ(ctx context.Context, origin *official.OriginProducer) error {
 	if r.MoqTLS == nil {
 		return fmt.Errorf("moq listener has no TLS files")
 	}
@@ -67,12 +99,6 @@ func (r *WebsocketReplicator) serveMoQ(ctx context.Context) error {
 		case <-time.After(moqTLSRetry):
 		}
 	}
-	origin := official.NewOriginProducer()
-	requests, err := origin.Dynamic("", official.Route{})
-	if err != nil {
-		return err
-	}
-	defer requests.Cancel()
 	// Go's ":port" means every interface, which the transport only takes
 	// spelled out; its "[::]" socket is dual-stack.
 	bind := r.cli.MoqAddr
@@ -93,22 +119,36 @@ func (r *WebsocketReplicator) serveMoQ(ctx context.Context) error {
 		return nil
 	})
 	g.Go(func() error { return srv.Serve(gctx) })
-	g.Go(func() error {
-		var wg sync.WaitGroup
-		defer wg.Wait()
-		for req, err := range requests.Requests(gctx) {
-			if err != nil {
-				return err
-			}
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				r.serveBroadcast(gctx, req)
-			}()
-		}
-		return nil
-	})
 	return g.Wait()
+}
+
+// publishMoQRelay keeps the outbound route available across relay restarts.
+// Failed initial connections use the same bounded backoff as origin pulls.
+func (r *WebsocketReplicator) publishMoQRelay(ctx context.Context, origin *official.OriginProducer) error {
+	delay := pullBackoffMin
+	for {
+		client, err := r.dialMoq(ctx, r.cli.MoqRelayURL,
+			official.WithPublishOrigin(origin),
+			official.WithReconnect(true),
+			official.WithBackoff(official.Backoff{Timeout: official.RetryForever}),
+		)
+		if err == nil {
+			log.Log(ctx, "moq relay connected")
+			delay = pullBackoffMin
+			err = client.Session().Closed(ctx)
+			_ = client.Close()
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		log.Warn(ctx, "moq relay disconnected; retrying", "error", err, "backoff", delay)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(delay):
+		}
+		delay = min(delay*2, pullBackoffMax)
+	}
 }
 
 // serveBroadcast answers a request for a streamer's broadcast: a
@@ -172,12 +212,28 @@ func (r *WebsocketReplicator) serveTracks(ctx context.Context, streamer, sourceC
 	// how a peer puts the segment back together (see consumeSource).
 	var sequence uint64
 	var batchDuration time.Duration
+	var sourceID string
 	for {
 		var err error
 		select {
 		case <-ctx.Done():
 			return
 		case seg := <-source.C:
+			if seg.AudioOnly {
+				if !seg.Published || sequence == 0 || seg.Filepath == "" || seg.Filepath != sourceID {
+					continue
+				}
+				if sourceChannel == media.PlaybackSourceRendition {
+					err = tracks.publishPlayback(ctx, broadcast, seg.Muxl)
+				} else {
+					err = tracks.publishAudioAddendum(ctx, broadcast, seg.Muxl)
+				}
+				if err != nil {
+					log.Warn(ctx, "moq: could not publish audio continuation", "error", err)
+					return
+				}
+				continue
+			}
 			if !seg.Published {
 				if sourceChannel == media.PlaybackSourceRendition {
 					if err := tracks.finishGroups(); err != nil {
@@ -201,6 +257,7 @@ func (r *WebsocketReplicator) serveTracks(ctx context.Context, streamer, sourceC
 					return
 				}
 			}
+			sourceID = seg.Filepath
 			n := sequence
 			sequence++
 			if sourceChannel == media.PlaybackSourceRendition {
@@ -275,22 +332,51 @@ func (ts moqTracks) publish(ctx context.Context, broadcast *official.BroadcastPr
 		return fmt.Errorf("segment is not MUXL: %w", err)
 	}
 	for name, data := range tracks {
-		t, fragments, err := ts.track(ctx, broadcast, name, data, nil)
-		if err != nil {
+		if err := ts.publishTrack(ctx, broadcast, name, data, group); err != nil {
 			return err
 		}
-		g, err := group(t.CMAFProducer)
-		if err != nil {
-			return fmt.Errorf("track %s group: %w", name, err)
+	}
+	return nil
+}
+
+// Audio continuations use the existing rendition transport namespace. The
+// canonical track id, codec header and signatures remain unchanged. Older
+// peers therefore fold these bytes into HLS instead of rejecting an audio-only
+// source batch; upgraded peers also deliver the tail to WebRTC and RTMP.
+func (ts moqTracks) publishAudioAddendum(ctx context.Context, broadcast *official.BroadcastProducer, data []byte) error {
+	tracks, err := media.MuxlTracks(ctx, data)
+	if err != nil {
+		return err
+	}
+	for name, data := range tracks {
+		id, err := strconv.ParseUint(strings.TrimPrefix(name, "audio"), 10, 32)
+		if err != nil || !strings.HasPrefix(name, "audio") || id >= uint64(media.RenditionTrackID(0)) {
+			return fmt.Errorf("invalid continuation track %s", name)
 		}
-		for _, fragment := range fragments {
-			if err := g.WriteFragment(fragment); err != nil {
-				return fmt.Errorf("track %s: %w", name, err)
-			}
+		rendition := fmt.Sprintf("audio%d", media.RenditionTrackID(int(id)))
+		if err := ts.publishTrack(ctx, broadcast, rendition, data, (*official.CMAFProducer).AppendGroup); err != nil {
+			return err
 		}
-		if err := g.Finish(); err != nil {
+	}
+	return nil
+}
+
+func (ts moqTracks) publishTrack(ctx context.Context, broadcast *official.BroadcastProducer, name string, data []byte, group func(*official.CMAFProducer) (*official.CMAFGroupProducer, error)) error {
+	track, fragments, err := ts.track(ctx, broadcast, name, data, nil)
+	if err != nil {
+		return err
+	}
+	g, err := group(track.CMAFProducer)
+	if err != nil {
+		return fmt.Errorf("track %s group: %w", name, err)
+	}
+	for _, fragment := range fragments {
+		if err := g.WriteFragment(fragment); err != nil {
 			return fmt.Errorf("track %s: %w", name, err)
 		}
+	}
+	if err := g.Finish(); err != nil {
+		return fmt.Errorf("track %s: %w", name, err)
 	}
 	return nil
 }
@@ -456,7 +542,7 @@ func cmafFragments(track []byte) (fragments [][]byte, catalog []byte, err error)
 
 // dialMoq opens a session to a moqt:// URL, pinning the certificate its
 // certhash parameter names when it has one.
-func (r *WebsocketReplicator) dialMoq(ctx context.Context, rawURL string) (*official.Client, error) {
+func (r *WebsocketReplicator) dialMoq(ctx context.Context, rawURL string, options ...official.ClientOption) (*official.Client, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, fmt.Errorf("could not parse moq URL: %w", err)
@@ -480,7 +566,7 @@ func (r *WebsocketReplicator) dialMoq(ctx context.Context, rawURL string) (*offi
 	}
 	dialCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	client, err := official.Dial(dialCtx, u.String(), opts...)
+	client, err := official.Dial(dialCtx, u.String(), append(opts, options...)...)
 	if err != nil {
 		spmetrics.ReplicationConnectErrorsTotal.Inc()
 		return nil, fmt.Errorf("%w (%s): %w", errMoqUnreachable, rawURL, err)
@@ -517,7 +603,27 @@ func (r *WebsocketReplicator) consume(ctx context.Context, broadcast *official.B
 			return nil
 		},
 		func(ctx context.Context, addendum []byte) error {
-			return r.feedRenditions(ctx, streamer, addendum)
+			err := r.feedRenditions(ctx, streamer, addendum)
+			if !errors.Is(err, media.ErrAudioSourceMissing) {
+				return err
+			}
+			source := r.bus.SubscribeSegment(ctx, streamer, "source")
+			defer r.bus.UnsubscribeSegment(context.Background(), streamer, "source", source)
+			waiting, cancel := context.WithTimeout(ctx, 15*time.Second)
+			defer cancel()
+			for {
+				// Retry after subscribing so an admission racing the subscription is
+				// observed either in the canonical buffer or in the source channel.
+				err = r.feedRenditions(waiting, streamer, addendum)
+				if !errors.Is(err, media.ErrAudioSourceMissing) {
+					return err
+				}
+				select {
+				case <-source.C:
+				case <-waiting.Done():
+					return fmt.Errorf("audio continuation source: %w", waiting.Err())
+				}
+			}
 		})
 }
 

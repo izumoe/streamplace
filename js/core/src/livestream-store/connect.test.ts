@@ -277,3 +277,129 @@ describe("connectLivestreamWebsocket", () => {
     expect(onDisconnect).toHaveBeenCalledTimes(2);
   });
 });
+
+it("drops stale chat on reconnect so restrictions missed offline cannot survive hydration", async () => {
+  const store = makeLivestreamStore();
+  const connection = connectLivestreamWebsocket(
+    store,
+    "wss://example.com/socket",
+  );
+  const ws = FakeWebSocket.instances[0];
+  ws.onmessage!({
+    data: JSON.stringify({
+      $type: "place.stream.chat.defs#messageView",
+      uri: "at://did:plc:author/place.stream.chat.message/1",
+      cid: "cid",
+      author: { did: "did:plc:author", handle: "author.test" },
+      record: {
+        $type: "place.stream.chat.message",
+        text: "cached before ban",
+        streamer: "did:plc:streamer",
+        createdAt: "2026-11-02T12:00:00Z",
+      },
+      indexedAt: "2026-11-02T12:00:00Z",
+    }),
+  });
+  await vi.advanceTimersByTimeAsync(1);
+  const message = store.getState().chat[0];
+  store.setState({
+    replyToMessage: message,
+    chatDraft: "unfinished reply",
+    pinnedComment: { message } as NonNullable<
+      ReturnType<typeof store.getState>["pinnedComment"]
+    >,
+  });
+  ws.onclose!();
+  expect(store.getState().chat).toEqual([]);
+  expect(store.getState().chatIndex).toEqual({});
+  expect(store.getState().authors).toEqual({});
+  expect(store.getState().replyToMessage).toBeNull();
+  expect(store.getState().pinnedComment).toBeNull();
+  expect(store.getState().chatDraft).toBe("unfinished reply");
+  connection.disconnect();
+});
+
+it("clears cached chat on deliberate disconnect and on a new connection with the same store", async () => {
+  const store = makeLivestreamStore();
+  const connection = connectLivestreamWebsocket(
+    store,
+    "wss://example.com/socket",
+  );
+  FakeWebSocket.instances[0].onmessage!({
+    data: JSON.stringify({
+      $type: "place.stream.chat.defs#messageView",
+      uri: "at://did:plc:author/place.stream.chat.message/1",
+      cid: "cid",
+      author: { did: "did:plc:author", handle: "author.test" },
+      record: {
+        $type: "place.stream.chat.message",
+        text: "cached before ban",
+        streamer: "did:plc:streamer",
+        createdAt: "2026-11-02T12:00:00Z",
+      },
+      indexedAt: "2026-11-02T12:00:00Z",
+    }),
+  });
+  FakeWebSocket.instances[0].onmessage!({
+    data: JSON.stringify({
+      $type: "place.stream.segment",
+      id: "live-segment",
+      signingKey: "did:key:source",
+      creator: "did:plc:streamer",
+      startTime: "2026-11-02T12:00:00Z",
+      duration: 1_000_000_000,
+    }),
+  });
+  FakeWebSocket.instances[0].onmessage!({
+    data: JSON.stringify({
+      $type: "place.stream.livestream#livestreamView",
+      uri: "at://did:plc:streamer/place.stream.livestream/1",
+      cid: "live-cid",
+      author: { did: "did:plc:streamer", handle: "streamer.test" },
+      record: {
+        $type: "place.stream.livestream",
+        title: "live",
+        createdAt: "2026-11-02T12:00:00Z",
+      },
+      indexedAt: "2026-11-02T12:00:00Z",
+    }),
+  });
+  await vi.advanceTimersByTimeAsync(1);
+  const before = store.getState();
+  expect(before.segment).not.toBeNull();
+  expect(before.livestream).not.toBeNull();
+  const message = before.chat.find(
+    (entry) => entry.author.did === "did:plc:author",
+  )!;
+  const cached = {
+    chat: before.chat,
+    chatIndex: before.chatIndex,
+    authors: before.authors,
+    replyToMessage: message,
+    pinnedComment: { message } as NonNullable<typeof before.pinnedComment>,
+  };
+  store.setState({ ...cached, chatDraft: "keep my reply" });
+  connection.disconnect();
+  expect(store.getState().chat).toEqual([]);
+  expect(store.getState().chatIndex).toEqual({});
+  expect(store.getState().authors).toEqual({});
+  expect(store.getState().pinnedComment).toBeNull();
+  expect(store.getState().replyToMessage).toBeNull();
+  expect(store.getState().chatDraft).toBe("keep my reply");
+  expect(store.getState().segment).toBe(before.segment);
+  expect(store.getState().livestream).toBe(before.livestream);
+  // A newly attached connection must also handle a store with older hydrated chat.
+  store.setState(cached);
+  const attached = connectLivestreamWebsocket(
+    store,
+    "wss://example.com/socket",
+  );
+  expect(store.getState().chat).toEqual([]);
+  expect(store.getState().chatIndex).toEqual({});
+  expect(store.getState().pinnedComment).toBeNull();
+  expect(store.getState().replyToMessage).toBeNull();
+  expect(store.getState().chatDraft).toBe("keep my reply");
+  expect(store.getState().segment).toBe(before.segment);
+  expect(store.getState().livestream).toBe(before.livestream);
+  attached.disconnect();
+});

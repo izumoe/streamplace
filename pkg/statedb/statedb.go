@@ -16,6 +16,7 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/plugin/prometheus"
+	"stream.place/streamplace/pkg/access"
 	"stream.place/streamplace/pkg/config"
 	"stream.place/streamplace/pkg/log"
 	"stream.place/streamplace/pkg/model"
@@ -30,12 +31,13 @@ const (
 )
 
 type StatefulDB struct {
-	DB    *gorm.DB
-	CLI   *config.CLI
-	Type  DBType
-	locks *NamedLocks
-	noter notificationpkg.Notifier
-	model model.Model
+	Access access.Checker
+	DB     *gorm.DB
+	CLI    *config.CLI
+	Type   DBType
+	locks  *NamedLocks
+	noter  notificationpkg.Notifier
+	model  model.Model
 	// pokeQueue is used to wake up the queue processor when a new task is enqueued
 	pokeQueue chan struct{}
 	// pgLockConn is used to hold a connection to the database for locking
@@ -69,6 +71,7 @@ type StatefulDB struct {
 
 // list tables here so we can migrate them
 var StatefulDBModels = []any{
+	AccessEntry{}, AccessRevision{}, AccessPublisherEpoch{},
 	oatproxy.OAuthSession{},
 	Notification{},
 	Config{},

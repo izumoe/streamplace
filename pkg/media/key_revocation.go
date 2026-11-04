@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/go-gst/go-gst/pkg/gst"
+	"stream.place/streamplace/pkg/access"
 	"stream.place/streamplace/pkg/atproto"
 	"stream.place/streamplace/pkg/comatproto"
 	"stream.place/streamplace/pkg/model"
@@ -46,10 +47,24 @@ func NewStreamKick(code, message string) *StreamKick {
 func (mm *MediaManager) watchKeyRevocation(ctx context.Context, streamer, did string, onRevoked func(reason string)) {
 	sub := mm.bus.Subscribe(streamer)
 	defer mm.bus.Unsubscribe(streamer, sub)
+	changes := mm.bus.Subscribe(access.Topic)
+	defer mm.bus.Unsubscribe(access.Topic, changes)
+	generation, err := mm.checkPublisherContext(ctx, streamer)
+	if err != nil {
+		onRevoked(err.Error())
+		return
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case msg := <-changes:
+			if _, ok := msg.(access.Change); ok {
+				if err := mm.CheckPublisherGeneration(streamer, generation); err != nil {
+					onRevoked(err.Error())
+					return
+				}
+			}
 		case msg := <-sub:
 			switch v := msg.(type) {
 			case *model.SigningKey:

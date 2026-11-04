@@ -51,7 +51,7 @@ var (
 	engineErr  error
 
 	memMu      sync.Mutex
-	memInitial = uint64(50 * 1024 * 1024)
+	memInitial = uint64(16 * 1024 * 1024)
 	memMax     = uint64(1024 * 1024 * 1024)
 )
 

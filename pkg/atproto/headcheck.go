@@ -90,6 +90,10 @@ func (atsync *ATProtoSynchronizer) sweepCheck(ctx context.Context, progress *swe
 		return false
 	}
 	if rev == repo.Version {
+		if err := atsync.SyncBioPage(ctx, step.DID); err != nil {
+			log.Warn(ctx, "failed to index bio coverage", "did", step.DID, "err", err)
+			return false
+		}
 		return !repo.BackfillDone
 	}
 

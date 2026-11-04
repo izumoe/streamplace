@@ -133,7 +133,7 @@ func (ss *StreamSession) Start(ctx context.Context, notif *media.NewSegmentNotif
 	// alone: a node that merely syndicates this stream must not also write
 	// it to S3, or every node records the same stream and they fight over
 	// the finalize. Taken up on the first local segment; see startLocalRole.
-	if notif.Local {
+	if notif.Local && ss.mm.CheckPublisherGeneration(notif.Segment.RepoDID, notif.PublisherGeneration) == nil {
 		ss.startLocalRole(ctx, notif.Segment.RepoDID)
 	}
 
@@ -163,17 +163,19 @@ func (ss *StreamSession) Start(ctx context.Context, notif *media.NewSegmentNotif
 			// send can race the uploader's channel close. s3Close then flushes
 			// the final object on the uploader's own (still-live) context.
 			err := ss.g.Wait()
-			ss.s3Close(ctx)
-			return err
-		case <-timer.C:
-			log.Log(ctx, "stream session timeout, shutting down", "timeout", ss.cli.StreamSessionTimeout)
-			spmetrics.StreamSessions.WithLabelValues(notif.Segment.RepoDID).Dec()
+			// Pending playback work can publish after cancellation. Expire
+			// its caches only after it can no longer refill them.
 			for _, r := range allRenditions {
 				ss.bus.EndSession(ctx, spseg.Creator, r.Name)
 			}
 			ss.bus.EndSession(ctx, spseg.Creator, media.PlaybackSourceRendition)
 			ss.bus.EndSession(ctx, spseg.Creator, media.WebRTCSourceRendition)
 			ss.bus.EndSession(ctx, spseg.Creator, media.RTMPSourceRendition)
+			ss.s3Close(ctx)
+			return err
+		case <-timer.C:
+			log.Log(ctx, "stream session timeout, shutting down", "timeout", ss.cli.StreamSessionTimeout)
+			spmetrics.StreamSessions.WithLabelValues(notif.Segment.RepoDID).Dec()
 			// Signal background workers to stop
 			if notif.Local {
 				ss.Go(ctx, func() error {
@@ -216,6 +218,66 @@ func (ss *StreamSession) Go(ctx context.Context, f func() error) {
 
 func (ss *StreamSession) NewSegment(ctx context.Context, notif *media.NewSegmentNotification) error {
 	<-ss.started
+	if notif.Local {
+		var err error
+		ctx, err = ss.mm.PublisherContext(ctx, notif.Segment.RepoDID, notif.PublisherGeneration)
+		if err != nil {
+			return err
+		}
+	}
+	if notif.AudioOnly {
+		// The source row is created only after bitrate admission, in arrival
+		// order. Enqueue recording here so a later source cannot overtake its
+		// audio while playback is still waiting for an earlier packetizer.
+		if ss.localDB == nil || notif.Segment.ID == "" {
+			return fmt.Errorf("audio continuation source was not admitted")
+		}
+		admittedSource, err := ss.localDB.GetSegment(notif.Segment.ID)
+		if err != nil {
+			return fmt.Errorf("read audio continuation source admission: %w", err)
+		}
+		if admittedSource == nil || admittedSource.RepoDID != notif.Segment.RepoDID {
+			return fmt.Errorf("audio continuation source was not admitted")
+		}
+		published := notif.Metadata.Published && admittedSource.Published
+		if notif.Local && published {
+			ss.s3Upload(ctx, notif)
+		}
+		tn := ss.sourceLane.turn()
+		var videoTurn *turn
+		if notif.Local && ss.cli.TranscoderURL != "" {
+			videoTurn = ss.renditions.turn()
+		}
+		ss.Go(ctx, func() error {
+			defer tn.release()
+			if videoTurn != nil {
+				defer videoTurn.release()
+			}
+			if !tn.wait(ctx) {
+				return fmt.Errorf("audio continuation lost its publication turn")
+			}
+			if videoTurn != nil && !videoTurn.wait(ctx) {
+				return fmt.Errorf("audio continuation lost its video rendition turn")
+			}
+			if err := ss.mm.CheckPublisherContext(ctx); err != nil {
+				return err
+			}
+			// Validation precedes the director's bitrate admission. Only the
+			// exact source that reached its publication turn can release audio.
+			source := ss.bus.SubscribeSegmentBuf(ctx, notif.Segment.RepoDID, "source", 1)
+			defer ss.bus.UnsubscribeSegment(ctx, notif.Segment.RepoDID, "source", source)
+			var admitted *bus.Seg
+			select {
+			case admitted = <-source.C:
+			default:
+			}
+			if admitted == nil || notif.Segment.ID == "" || admitted.Filepath != notif.Segment.ID {
+				return fmt.Errorf("audio continuation source was not admitted")
+			}
+			return ss.mm.PublishAudioAddendum(ctx, notif.Segment.RepoDID, notif.Muxl, notif.Segment.ID, notif.Segment.StartTime, published && admitted.Published)
+		})
+		return nil
+	}
 	go func() {
 		select {
 		case <-ss.ctx.Done():
@@ -993,12 +1055,17 @@ func (ss *StreamSession) Transcode(ctx context.Context, spseg *placestream.Segme
 		log.Warn(ctx, "rendition abandoned by later segments, not published", "rendition", "all")
 		return nil
 	}
+	if err := ss.mm.CheckPublisherContext(ctx); err != nil {
+		return err
+	}
 	if addendum != nil {
 		// Into the live window (HLS variants), and to the peers pulling
 		// this stream (see subscribeSegments). Only the websocket
 		// replicator carries rendition addenda; a peer syndicating over
 		// Iroh receives the source track alone and no renditions.
-		ss.mm.FeedLiveRenditions(context.WithoutCancel(ctx), spseg.Creator, addendum, notif.Metadata.StartTime.Time(), notif.Metadata.Published)
+		if err := ss.mm.FeedLiveRenditions(context.WithoutCancel(ctx), spseg.Creator, addendum, notif.Metadata.StartTime.Time(), notif.Metadata.Published); err != nil {
+			return err
+		}
 		ss.bus.PublishSegment(ctx, spseg.Creator, media.RenditionsChannel, &bus.Seg{
 			Muxl:      addendum,
 			Published: notif.Metadata.Published,
@@ -1041,6 +1108,9 @@ func (ss *StreamSession) AddPlaybackSegment(ctx context.Context, spseg *placestr
 
 func (ss *StreamSession) AddToWebRTC(ctx context.Context, spseg *placestream.Segment, rendition string, seg *bus.Seg, tn *turn) error {
 	defer tn.release()
+	if err := ss.mm.CheckPublisherContext(ctx); err != nil {
+		return err
+	}
 	compatible := len(spseg.Video) == 0
 	for _, video := range spseg.Video {
 		compatible = compatible || video.Codec == "" || video.Codec == "h264" || strings.HasPrefix(video.Codec, "avc1")
@@ -1061,6 +1131,9 @@ func (ss *StreamSession) AddToWebRTC(ctx context.Context, spseg *placestream.Seg
 	if !tn.wait(ctx) {
 		log.Warn(ctx, "segment abandoned by later segments, not published", "rendition", rendition)
 		return nil
+	}
+	if err := ss.mm.CheckPublisherContext(ctx); err != nil {
+		return err
 	}
 	ss.bus.PublishSegment(ctx, spseg.Creator, rendition, seg)
 	if rendition == "source" {

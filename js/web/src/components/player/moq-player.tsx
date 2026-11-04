@@ -2,6 +2,7 @@ import type * as Watch from "@moq/watch";
 import { useEffect, useImperativeHandle, useRef, type RefObject } from "react";
 import { useTranslation } from "react-i18next";
 import {
+  getMoqBatchDuration,
   getMoqPlaybackFloor,
   getMoqPlaybackSource,
   STALL_TIMEOUT_MS,
@@ -15,7 +16,7 @@ type MoQPlayerProps = {
   paused: boolean;
   muted: boolean;
   volume: number;
-  onUnavailable: () => void;
+  onUnavailable: (reason?: string, error?: unknown) => void;
   onPlaying: () => void;
   onBufferingChange: (buffering: boolean) => void;
   onQualitiesChange: (qualities: QualityOption[]) => void;
@@ -23,6 +24,8 @@ type MoQPlayerProps = {
   onStatsChange: (stats: PlayerStats) => void;
   ref?: RefObject<PlayerBackendHandle | null>;
 };
+
+const FIRST_FRAME_TIMEOUT_MS = 2000;
 
 type Controls = {
   paused: Watch.Signals.Signal<boolean>;
@@ -70,6 +73,7 @@ export function MoQPlayer(props: MoQPlayerProps) {
     let effects: Watch.Signals.Effect | undefined;
     let lastVideoProgress = Date.now();
     let lastAudioProgress = lastVideoProgress;
+    let videoStarted = false;
     let videoTimestamp: number | undefined;
     let audioTimestamp: number | undefined;
 
@@ -84,18 +88,19 @@ export function MoQPlayer(props: MoQPlayerProps) {
       renditionsRef.current = [];
     }
 
-    function unavailable() {
+    function unavailable(reason?: string, error?: unknown) {
       if (stopped) return;
       close();
-      propsRef.current.onUnavailable();
+      propsRef.current.onUnavailable(reason, error);
     }
 
-    // One clock covers both a hung startup and a decoder that stops advancing.
+    // First-frame startup includes the SDK's intentional playout delay.
     const watchdog = setInterval(() => {
       const now = Date.now();
       const state = propsRef.current;
       const video = player?.renderer.out.timestamp.peek();
       const audio = player?.audio.out.timestamp.peek();
+      if (video !== undefined) videoStarted = true;
       const audioRenditions =
         player?.audio.source.out.catalog.peek()?.renditions;
       if (
@@ -116,11 +121,23 @@ export function MoQPlayer(props: MoQPlayerProps) {
       }
       videoTimestamp = video;
       audioTimestamp = audio;
+      const videoTimeout = videoStarted
+        ? STALL_TIMEOUT_MS
+        : Math.min(
+            STALL_TIMEOUT_MS,
+            FIRST_FRAME_TIMEOUT_MS + (player?.sync.out.delay.peek() ?? 0),
+          );
       if (
-        now - lastVideoProgress >= STALL_TIMEOUT_MS ||
+        now - lastVideoProgress >= videoTimeout ||
         now - lastAudioProgress >= STALL_TIMEOUT_MS
       ) {
-        unavailable();
+        unavailable(
+          now - lastVideoProgress >= videoTimeout
+            ? videoStarted
+              ? "video stalled"
+              : "first frame timed out"
+            : "audio stalled",
+        );
         return;
       }
       if (!player) return;
@@ -130,6 +147,8 @@ export function MoQPlayer(props: MoQPlayerProps) {
       const display = player.video.out.display.peek();
       const bufferedEnd = player.video.out.buffered.peek().at(-1)?.end;
       const target = controlsRef.current?.target.peek();
+      const reference = player.sync.out.reference.peek();
+      const catalog = player.broadcast.out.catalog.peek();
       state.onStatsChange({
         width: display?.width ?? 0,
         height: display?.height ?? 0,
@@ -139,6 +158,22 @@ export function MoQPlayer(props: MoQPlayerProps) {
           bufferedEnd === undefined || video === undefined
             ? 0
             : Math.max(0, bufferedEnd - video) / 1000,
+        // The sync reference is anchored to received media, not the source's wall clock.
+        liveEdgeDelay:
+          reference === undefined || video === undefined
+            ? undefined
+            : Math.max(0, performance.now() - reference - video) / 1000,
+        playbackDelayMs: player.sync.out.delay.peek(),
+        publicationBatchMs: catalog && getMoqBatchDuration(catalog),
+        roundTripTimeMs: connection?.probe.peek()?.rtt,
+        avSyncMs:
+          video === undefined ||
+          audio === undefined ||
+          state.muted ||
+          state.paused ||
+          player.audio.out.stalled.peek()
+            ? undefined
+            : video - audio,
         totalFrames: frames,
         renditionBitrate: config?.bitrate,
         availableBandwidth: connection?.probe.peek()?.estimatedRecvRate,
@@ -199,7 +234,8 @@ export function MoQPlayer(props: MoQPlayerProps) {
             return;
           }
           const floor = getMoqPlaybackFloor(catalog, publicationJitter.peek());
-          if (floor === undefined) return unavailable();
+          if (floor === undefined)
+            return unavailable("invalid publication timing");
           const requiredDelay = Watch.Net.Time.Milli(floor);
           publicationJitter.set(requiredDelay);
           // Signals propagate asynchronously; wait for the SDK to size its buffer.
@@ -228,7 +264,11 @@ export function MoQPlayer(props: MoQPlayerProps) {
           const stalled = effect.get(currentPlayer.video.out.stalled);
           const error = effect.get(currentConnection.error);
           const unsupported = effect.get(currentPlayer.video.source.out.error);
-          if ((error || unsupported) && !paused) return unavailable();
+          if ((error || unsupported) && !paused)
+            return unavailable(
+              "connection or video source failed",
+              error || unsupported,
+            );
           if (paused || stalled) waitingToPlay = true;
           propsRef.current.onBufferingChange(!paused && stalled);
         });
@@ -259,8 +299,8 @@ export function MoQPlayer(props: MoQPlayerProps) {
             target?.name ? renditionsRef.current.indexOf(target.name) : -1,
           );
         });
-      } catch {
-        if (!stopped) unavailable();
+      } catch (error) {
+        if (!stopped) unavailable("startup failed", error);
       }
     }
     void start();

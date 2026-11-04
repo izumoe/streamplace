@@ -15,7 +15,7 @@ import { useStore } from "./lib/store";
 import { routeTree } from "./routeTree.gen";
 import "./styles.css";
 
-const SENTRY_DSN = import.meta.env["VITE_SENTRY_DSN"] as string | undefined;
+const SENTRY_DSN = import.meta.env.VITE_SENTRY_DSN as string | undefined;
 if (SENTRY_DSN) {
   Sentry.init({
     dsn: SENTRY_DSN,

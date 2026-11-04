@@ -79,6 +79,40 @@ connection negotiates its protocol version through ALPN.
 | `--moq-addr` | `SP_MOQ_ADDR` | `:38443`                                         | UDP listen address; an empty value disables the listener |
 | `--moq-url`  | `SP_MOQ_URL`  | Derived from `--server-host` and the listen port | Public `moqt://` URL advertised to subscribers           |
 
+`--moq-relay-url` (`SP_MOQ_RELAY_URL`) instead opens an outbound connection
+and advertises that relay in the existing `moqURL` field. Use it when the origin
+is behind an HTTP tunnel or cannot receive public UDP. It shares the local
+listener's on-demand broadcasts, preserving the signed source bytes and playback
+catalogs without re-encoding. The websocket replicator must be enabled and
+`--disable-syndication` must be off.
+
+For a local macOS node using the public test relay:
+
+```sh
+SP_MOQ_RELAY_URL=https://cdn.moq.dev/anon/your-unique-node-name \
+  ./build-darwin-arm64/streamplace --moq-addr=""
+```
+
+Choose a unique namespace beneath `/anon/`. Media served there is public.
+The relay URL is advertised to viewers, so credentials and query parameters
+are rejected; this option does not provide authenticated relay publishing.
+An empty `--moq-addr` disables only the inbound listener; relay publishing and
+RTMP ingest still work. Keep a nonempty address to serve direct clients too.
+When a relay is configured it takes precedence over `--moq-url` for discovery;
+the origin listener's certificate fingerprint is not attached to the relay URL.
+Relay connections retry after failure and reconnect without stopping ingest.
+
+To exercise synthetic signed-media delivery through a public relay explicitly:
+
+```sh
+SP_MOQ_RELAY_TEST=https://cdn.moq.dev/anon/your-unique-test-name \
+  go test -count=1 ./pkg/replication/websocketrep -run '^TestMoqPublicRelay$'
+```
+
+Use the native Go build environment described below for this test, as for other
+media package tests. Without `SP_MOQ_RELAY_TEST`, it is skipped; normal tests use
+a real loopback QUIC relay.
+
 Make the advertised host and UDP port reachable from subscribers. An HTTPS
 reverse proxy alone does not carry the MoQ connection. The MoQ listener
 terminates TLS itself, including when the node's HTTP server sits behind a proxy.
@@ -108,7 +142,9 @@ moq --connect moqt://host:38443 --connect-tls-fingerprint <certhash> \
 
 The DOM app's low-latency mode tries MoQ when the browser has a secure context,
 WebTransport, WebCodecs and Web Audio. If discovery or playback fails, it falls
-back to WebRTC, then HLS. Standard mode and VOD use HLS. An explicit `webrtc://`
+back to WebRTC, then HLS. Visible, unpaused MoQ startup gets two seconds to
+render its first frame; established playback keeps a ten-second stall allowance.
+Standard mode and VOD use HLS. An explicit `webrtc://`
 source selects WebRTC directly.
 
 The player asks the configured node for
@@ -307,6 +343,42 @@ the canvas sampling interval.
 
 ## Profiling server memory
 
+MUXL starts each isolated WASM operation with 16 MiB of backing capacity and
+grows geometrically up to the existing 1 GiB ceiling. Compilation is shared
+within each process. `SP_MUXL_INITIAL_MEMORY_MB` and `SP_MUXL_MAX_MEMORY_MB`
+override these values. A smaller initial allocation can reduce allocation churn,
+but signing large inputs may need extra growth and copying. Measure processing
+time alongside memory before changing it.
+
+The Linux memory-sizing tests reuse the real signing, validation, completion
+and multitrack tests. Run each setting in a fresh process, selecting only this
+test so another test cannot initialize the singleton engine first. Inside the
+configured builder:
+
+```sh
+export CGO_LDFLAGS="-L$PWD/build-linux-amd64/rust/streamplace-native -lmoq_ffi -Wl,-Bstatic -lstdc++ -Wl,-Bdynamic -lm"
+STREAMPLACE_IGNORE_LEAKS=1 STREAMPLACE_TEST_MUXL_INITIAL_MB=16 \
+  go test -count=1 -run '^TestMuxlMemory$' ./pkg/media
+```
+
+With `STREAMPLACE_BENCH_DIR` pointing to the prepared ten-second 1080p AAC/Opus
+fixtures used by `BenchmarkForkUpstream`, compare allocations and timings:
+
+```sh
+for mb in 50 32 16 8; do
+  STREAMPLACE_IGNORE_LEAKS=1 STREAMPLACE_TEST_MUXL_INITIAL_MB="$mb" \
+    go test -run '^$' -bench '^BenchmarkMuxlMemory$' \
+      -benchtime=3x -count=3 ./pkg/media
+done
+```
+
+`BenchmarkAudioCompletionInspection` compares catalog unwrapping with reuse of
+validated codec metadata. `TestMuxlMemoryCold` wraps the existing fresh-process
+benchmark; select its operation with `STREAMPLACE_BENCH_CASE` and
+`STREAMPLACE_BENCH_CODEC`. Alternate settings across repeated runs. Allocated
+bytes are allocation churn, not live heap or RSS savings; use the lifecycle
+test below to measure resident memory and teardown separately.
+
 Standalone FFI broadcasts drive their own native cache clock. The existing
 30-second idle policy reclaims old, unread groups while protecting a live
 track's newest group. Activity is dated on collection passes, so expiry is
@@ -370,6 +442,40 @@ the tested binary and native libraries for symbol resolution. Profiling adds
 CPU and memory overhead. Heaptrack's remaining allocations at process exit
 include live caches and globals; its reported "leaked" total alone does not
 establish a leak. It also does not account for every mapping or Go's heap.
+
+## Thumbnail decoder memory
+
+Thumbnail software decoders use at most four threads, limited further by the
+available CPU count. Automatic frame threading creates per-thread workspaces
+and decodes ahead of the one frame the thumbnail needs. Four threads keep
+parallel decoding for large frames; a single thread slowed 4k AV1 in testing.
+The setting is confined to thumbnail pipelines. Hardware decoder selection and
+other media pipelines retain their defaults.
+
+The gst-libav packaging patch exposes `max-threads` for FFmpeg decoders with
+`AV_CODEC_CAP_OTHER_THREADS`, including libdav1d. It leaves the default at zero
+(automatic), and does not advertise unsupported frame/slice threading modes.
+Rebuild GStreamer when adopting this patch; rebuilding Go alone is insufficient.
+
+Inside the configured builder, generate the opt-in H264/AV1 resolution matrix
+and run real live/VOD JPEG/PNG decoding, including the GStreamer leak checks:
+
+```sh
+env LD_LIBRARY_PATH= bash test/thumbnail/generate.sh .build/thumbnail-fixtures
+export STREAMPLACE_THUMBNAIL_FIXTURES_DIR="$PWD/.build/thumbnail-fixtures"
+export CGO_LDFLAGS="-L$PWD/build-linux-amd64/rust/streamplace-native -lmoq_ffi -Wl,-Bstatic -lstdc++ -Wl,-Bdynamic -lm"
+go test -count=1 -run '^TestThumbnail(DecoderThreads|CodecsAndFormats|DecodeErrors|ResolutionMatrix)$' ./pkg/media
+STREAMPLACE_IGNORE_LEAKS=1 go test -run '^$' \
+  -bench '^BenchmarkThumbnailDecode$' -benchtime=10x -count=3 ./pkg/media
+```
+
+The generator refuses to overwrite fixtures. The matrix covers 360p, 720p,
+1080p and 4k, with H264 B-frames and a visible border to check image content.
+Compare identical native libraries and alternate baseline/candidate runs without
+profiling during timing. Go benchmark allocation counts exclude native decoder
+workspaces; use native allocation profiles and the lifecycle test above for
+memory evidence. This matrix does not establish hardware performance or
+long-running playback stability.
 
 ## Maintaining the browser SDK patch
 

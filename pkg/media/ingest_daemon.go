@@ -84,7 +84,7 @@ func SpawnIngestWorkerDetached(cfg IngestWorkerConfig, media *os.File) (*os.Proc
 	// hold this worker's process handle, kill it by PID if needed. Best-effort:
 	// without it the worker still runs, just without restart-surviving ban
 	// enforcement.
-	if err := writeWorkerMeta(cfg.SocketPath, workerMeta{StreamerDID: cfg.StreamerDID, PID: cmd.Process.Pid}); err != nil {
+	if err := writeWorkerMeta(cfg.SocketPath, workerMeta{StreamerDID: cfg.StreamerDID, PID: cmd.Process.Pid, PublisherGeneration: cfg.PublisherGeneration}); err != nil {
 		log.Warn(context.Background(), "ingest worker: write resume metadata failed", "socket", cfg.SocketPath, "error", err)
 	}
 	return cmd.Process, nil
@@ -93,8 +93,9 @@ func SpawnIngestWorkerDetached(cfg IngestWorkerConfig, media *os.File) (*os.Proc
 // workerMeta is the resume sidecar written next to a detached worker's socket:
 // enough for a restarting main to enforce bans on a worker it didn't spawn.
 type workerMeta struct {
-	StreamerDID string `json:"streamer_did"`
-	PID         int    `json:"pid"`
+	StreamerDID         string  `json:"streamer_did"`
+	PID                 int     `json:"pid"`
+	PublisherGeneration *uint64 `json:"publisher_generation,omitempty"`
 }
 
 func workerMetaPath(socketPath string) string {
@@ -138,6 +139,9 @@ func (mm *MediaManager) ConsumeWorkerSocket(ctx context.Context, socketPath, str
 	connectedOnce := false
 	giveUp := time.Now().Add(workerConnectGrace)
 	for {
+		if err := mm.CheckPublisherContext(ctx); err != nil {
+			return err
+		}
 		conn, err := net.Dial("unix", socketPath)
 		if err != nil {
 			if !connectedOnce {
@@ -257,6 +261,10 @@ func (mm *MediaManager) ingestWorkerSocketDir() (string, error) {
 // and the restarted main rediscovers the socket (DiscoverWorkerSockets) and
 // drains it.
 func (mm *MediaManager) MP4IngestDetached(ctx context.Context, conn net.Conn, prebuf []byte, chunked bool, ms MediaSigner) error {
+	ctx, err := mm.admitPublisher(ctx, ms.Streamer())
+	if err != nil {
+		return err
+	}
 	cfg, err := mm.buildWorkerConfig(ctx, ms)
 	if err != nil {
 		return err
@@ -363,6 +371,10 @@ func readWHIPAnswer(fr *ingestframe.Reader) (string, error) {
 // detached, both the session and its buffered output survive a main restart (the
 // restarted main reconnects via discovery).
 func (mm *MediaManager) WHIPIngestDetached(ctx context.Context, offerSDP string, ms MediaSigner) (string, error) {
+	ctx, err := mm.admitPublisher(ctx, ms.Streamer())
+	if err != nil {
+		return "", err
+	}
 	cfg, err := mm.buildWorkerConfig(ctx, ms)
 	if err != nil {
 		return "", err
@@ -458,9 +470,23 @@ func (mm *MediaManager) ResumeDetachedWorkers(ctx context.Context) {
 		if merr == nil && meta.StreamerDID != "" {
 			streamer = meta.StreamerDID
 		}
+		workerCtx := ctx
+		if mm.Access != nil || meta.PublisherGeneration != nil {
+			if merr != nil {
+				log.Warn(ctx, "refusing worker without publisher admission metadata", "socket", sock)
+				continue
+			}
+			var err error
+			workerCtx, err = mm.resumePublisher(ctx, meta)
+			if err != nil {
+				log.Warn(ctx, "refusing worker after publisher access changed", "streamer", streamer, "error", err)
+				killWorkerPID(ctx, meta.PID, streamer)
+				continue
+			}
+		}
 		log.Log(ctx, "resuming detached ingest worker", "socket", sock, "streamer", streamer)
 		go func() {
-			wctx, wcancel := context.WithCancel(ctx)
+			wctx, wcancel := context.WithCancel(workerCtx)
 			defer wcancel()
 			// Re-arm ban enforcement for a worker we didn't spawn. We have no process
 			// handle, so kill by the PID in the sidecar (guarded against PID reuse).
@@ -478,7 +504,7 @@ func (mm *MediaManager) ResumeDetachedWorkers(ctx context.Context) {
 				start := time.Now().UnixMilli()
 				manifestSource = func() ([]byte, error) { return mm.streamerManifest(ctx, meta.StreamerDID, start) }
 			}
-			cerr := mm.ConsumeWorkerSocket(wctx, sock, streamer, mm.validateSegment(ctx), manifestSource)
+			cerr := mm.ConsumeWorkerSocket(wctx, sock, streamer, mm.validateSegment(wctx), manifestSource)
 			if cerr != nil {
 				log.Error(ctx, "resumed ingest worker ended", "socket", sock, "error", cerr)
 			}

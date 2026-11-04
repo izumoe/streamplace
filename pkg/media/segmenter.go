@@ -158,7 +158,10 @@ func (mm *MediaManager) SegmentAndSignElem(ctx context.Context, ms MediaSigner, 
 	// new live session (RTMP/WHIP (re)connect) restarts the media timeline; the
 	// per-DID continuous transcoder keys on this epoch and rebuilds rather than
 	// feeding the restarted timeline into the previous session's encoder.
-	ctx = withIngestSession(ctx, mm.nextIngestSession())
+	ctx, err := mm.admitPublisher(ctx, streamer)
+	if err != nil {
+		return nil, err
+	}
 
 	// muxl path: stream the fMP4 through the per-segment signer. Each GoP
 	// arrives as a bare canonical .m4s, which ValidateMP4 verifies, archives
@@ -168,7 +171,17 @@ func (mm *MediaManager) SegmentAndSignElem(ctx context.Context, ms MediaSigner, 
 	onSegment := func(ctx context.Context, segment []byte) error {
 		return mm.receiveSignedSegment(ctx, streamer, segment)
 	}
-	return MuxlSignSegmentElem(ctx, mm.cli, ms, videoTrackCount, onSegment)
+	elem, done, err := muxlSignSegmentElem(ctx, mm.cli, ms.SignSegmentStream, videoTrackCount, onSegment)
+	if err != nil {
+		return nil, err
+	}
+	go func() {
+		<-done
+		if err := mm.closeStreamTranscoder(ctx, streamer); err != nil {
+			log.Error(ctx, "drain completed ingest audio failed", "streamer", streamer, "error", err)
+		}
+	}()
+	return elem, nil
 }
 
 func (mm *MediaManager) receiveSignedSegment(ctx context.Context, streamer string, segment []byte) error {
@@ -182,7 +195,7 @@ func (mm *MediaManager) receiveSignedSegment(ctx context.Context, streamer strin
 		spmetrics.SegmentDeliveryDuration.WithLabelValues(streamer).
 			Observe(float64(time.Since(startTime).Milliseconds()))
 	}()
-	if err := mm.ValidateMP4(ctx, bytes.NewReader(segment), true); err != nil {
+	if err := mm.validateMP4(ctx, bytes.NewReader(segment), true, streamer); err != nil {
 		span.SetAttributes(attribute.String("error", "validate"))
 		mm.cli.DumpDebugSegment(ctx, "just-signed-segment.m4s", bytes.NewReader(segment))
 		return fmt.Errorf("error validating signed segment: %w", err)

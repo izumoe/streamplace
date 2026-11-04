@@ -21,7 +21,6 @@ import (
 	"stream.place/streamplace/pkg/media"
 	"stream.place/streamplace/pkg/model"
 	"stream.place/streamplace/pkg/moq"
-	"stream.place/streamplace/pkg/muxl"
 	"stream.place/streamplace/pkg/placestream"
 	"stream.place/streamplace/pkg/spmetrics"
 	"stream.place/streamplace/pkg/statedb"
@@ -116,12 +115,13 @@ func (r *WebsocketReplicator) Start(ctx context.Context, cli *config.CLI) error 
 			return nil
 		})
 	}
-	if cli.MoqAddr != "" {
+	if cli.MoqAddr != "" || cli.MoqRelayURL != "" {
 		r.group.Go(func() error {
 			return r.serveMoQ(ctx)
 		})
 	}
-	return r.startBusSubscribe(ctx)
+	r.group.Go(func() error { return r.startBusSubscribe(ctx) })
+	return r.group.Wait()
 }
 
 // pollOrigins learns about origins from the station's shared statedb rather
@@ -351,19 +351,10 @@ func (r *WebsocketReplicator) openMoq(ctx context.Context, origin *placestream.B
 // feedRenditions folds a rendition addendum the origin minted into this
 // node's live window and playback bus, once its signatures check out.
 func (r *WebsocketReplicator) feedRenditions(ctx context.Context, streamer string, addendum []byte) error {
-	// Rendition tracks the origin minted for this stream: checked (every
-	// track is a signed transcoded asset) and folded into our live window
-	// as HLS variants. Not a segment, so not validated or archived as one.
-	if _, err := muxl.RunMuxlVerify(context.Background(), bytes.NewReader(addendum)); err != nil {
-		return fmt.Errorf("rendition addendum failed verification: %w", err)
-	}
-	// Only public streams are syndicated, so the ordering check that
-	// wants the start time does not apply here.
-	r.mm.FeedLiveRenditions(context.WithoutCancel(ctx), streamer, addendum, time.Time{}, true)
-	// And onto this node's bus for WebRTC viewers who pick a rendition here.
-	r.mm.PublishRenditionsForPlayback(context.WithoutCancel(ctx), streamer, addendum, true)
-	return nil
+	return r.mm.ReceiveRenditions(ctx, streamer, addendum)
 }
+
+const sourceAddendaLimit = 8
 
 // openWebsocket dials the origin and feeds its segments through validation
 // until the connection ends; it always returns an error saying why.
@@ -392,6 +383,8 @@ func (r *WebsocketReplicator) openWebsocket(ctx context.Context, origin *placest
 	log.Log(ctx, "syndication: connected to origin", "origin", *origin.WebsocketURL)
 	spmetrics.ReplicationOutboundOpen.WithLabelValues(origin.Streamer).Inc()
 	defer spmetrics.ReplicationOutboundOpen.WithLabelValues(origin.Streamer).Dec()
+	var pending [][]byte
+	pendingBytes := 0
 	for {
 		typ, msg, err := conn.ReadMessage()
 		if err != nil {
@@ -405,7 +398,15 @@ func (r *WebsocketReplicator) openWebsocket(ctx context.Context, origin *placest
 		log.Debug(ctx, "received message", "type", typ, "length", len(msg))
 		if addendum, ok := media.UnframeRenditions(msg); ok {
 			if err := r.feedRenditions(ctx, origin.Streamer, addendum); err != nil {
-				log.Warn(ctx, "syndication: rendition addendum dropped", "error", err)
+				if errors.Is(err, media.ErrAudioSourceMissing) {
+					if len(pending) >= sourceAddendaLimit || pendingBytes+len(addendum) > moqMaxGroupBytes {
+						return fmt.Errorf("too many audio addenda ahead of their source")
+					}
+					pending = append(pending, addendum)
+					pendingBytes += len(addendum)
+				} else {
+					log.Warn(ctx, "syndication: rendition addendum dropped", "error", err)
+				}
 			}
 			continue
 		}
@@ -413,6 +414,20 @@ func (r *WebsocketReplicator) openWebsocket(ctx context.Context, origin *placest
 		if err != nil {
 			return fmt.Errorf("could not validate segment: %w", err)
 		}
+		remaining := pending[:0]
+		pendingBytes = 0
+		for _, addendum := range pending {
+			if err := r.feedRenditions(ctx, origin.Streamer, addendum); err != nil {
+				if errors.Is(err, media.ErrAudioSourceMissing) {
+					remaining = append(remaining, addendum)
+					pendingBytes += len(addendum)
+				} else {
+					log.Warn(ctx, "syndication: audio addendum dropped", "error", err)
+				}
+			}
+		}
+		clear(pending[len(remaining):])
+		pending = remaining
 	}
 }
 
@@ -462,6 +477,9 @@ func (r *WebsocketReplicator) BuildOriginRecord(origin *placestream.BroadcastOri
 // --moq-url override or this host on --moq-addr's port, carrying the
 // self-signed certificate's hash for the peer to pin; "" with no listener.
 func (r *WebsocketReplicator) getMyMoqURL() string {
+	if r.cli.MoqRelayURL != "" {
+		return r.cli.MoqRelayURL
+	}
 	if r.cli.MoqAddr == "" {
 		return ""
 	}

@@ -8,6 +8,7 @@ import (
 	"github.com/bluesky-social/indigo/atproto/atcrypto"
 	"github.com/decred/dcrd/dcrec/secp256k1"
 	"github.com/mr-tron/base58"
+	"stream.place/streamplace/pkg/access"
 	"stream.place/streamplace/pkg/atproto"
 	"stream.place/streamplace/pkg/log"
 	"stream.place/streamplace/pkg/media"
@@ -55,7 +56,7 @@ func (a *StreamplaceAPI) MakeMediaSigner(ctx context.Context, keyStr string) (me
 		if err != nil {
 			return nil, fmt.Errorf("could not resolve streamplace key: %w", err)
 		}
-		err = a.CLI.StreamIsAllowed(repo.DID)
+		err = a.publisherAllowed(repo.DID)
 		if err != nil {
 			return nil, fmt.Errorf("user is not allowed to stream: %w", err)
 		}
@@ -72,7 +73,7 @@ func (a *StreamplaceAPI) MakeMediaSigner(ctx context.Context, keyStr string) (me
 			return nil, fmt.Errorf("invalid authorization key (not valid secp256k1): %w", err)
 		}
 		did = atkey.DIDKey()
-		err = a.CLI.StreamIsAllowed(did)
+		err = a.publisherAllowed(did)
 		if err != nil {
 			return nil, fmt.Errorf("user is not allowed to stream: %w", err)
 		}
@@ -90,6 +91,17 @@ func (a *StreamplaceAPI) MakeMediaSigner(ctx context.Context, keyStr string) (me
 	}
 
 	return mediaSigner, nil
+}
+
+func (a *StreamplaceAPI) publisherAllowed(did string) error {
+	if a.Access != nil {
+		decision := a.Access.Check(did, access.Streamer)
+		if !decision.Allowed {
+			return fmt.Errorf("publisher access denied: %s", decision.Reason)
+		}
+		return nil
+	}
+	return a.CLI.StreamIsAllowed(did)
 }
 
 func (a *StreamplaceAPI) checkBanned(ctx context.Context, did string) error {

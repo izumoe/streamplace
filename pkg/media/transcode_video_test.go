@@ -135,7 +135,7 @@ func TestMintVideoRenditions(t *testing.T) {
 	const did = "did:test:streamer"
 	t0 := time.Now()
 	mm.feedLiveWindow(ctx, did, src, t0, true)
-	mm.FeedLiveRenditions(ctx, did, addendum, t0, true)
+	require.NoError(t, mm.FeedLiveRenditions(ctx, did, addendum, t0, true))
 	w, _ := mm.GetLiveWindow(did)
 	require.NotNil(t, w)
 	master := w.MasterPlaylist(func(tid string) string { return tid + ".m3u8" })
@@ -157,7 +157,7 @@ func TestMintVideoRenditions(t *testing.T) {
 	// layout is remembered) and lands on the same track ids.
 	again, err := mm.mintVideoRenditions(ctx, src, []RenditionInput{{Name: "160p", MP4: r360}, {Name: "80p", MP4: r160}}, cert, keyPEM)
 	require.NoError(t, err)
-	mm.FeedLiveRenditions(ctx, did, again, t0, true)
+	require.NoError(t, mm.FeedLiveRenditions(ctx, did, again, t0, true))
 	require.Len(t, w.Track("100").Segments, 4)
 
 	// A broken rendition is skipped, the rest still mint.

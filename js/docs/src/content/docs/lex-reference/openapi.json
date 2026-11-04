@@ -4699,6 +4699,62 @@
         }
       }
     },
+    "/xrpc/place.stream.bio.getPage": {
+      "get": {
+        "summary": "Get a user's bio page.",
+        "operationId": "place.stream.bio.getPage",
+        "tags": ["place.stream.bio"],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/place.stream.bio.page"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["error", "message"],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "oneOf": [
+                        {
+                          "const": "BioNotFound"
+                        }
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "repo",
+            "in": "query",
+            "required": true,
+            "description": "The DID of the user whose bio to fetch.",
+            "schema": {
+              "type": "string",
+              "description": "The DID of the user whose bio to fetch.",
+              "format": "at-identifier"
+            }
+          }
+        ]
+      }
+    },
     "/xrpc/place.stream.badge.getIssuedBadges": {
       "get": {
         "summary": "Returns badges issued to the authenticated user, organized by display slot. Also indicates which badges are currently selected in the user's chat profile.",
@@ -4785,6 +4841,309 @@
             }
           }
         ]
+      }
+    },
+    "/xrpc/place.stream.access.createGrant": {
+      "post": {
+        "summary": "Create an allowance or denial for local publishing or chat. Repeating an identical entry is idempotent; changing its metadata requires revoking that exact entry first. Requires node administrator authorization.",
+        "operationId": "place.stream.access.createGrant",
+        "tags": ["place.stream.access"],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/place.stream.access.defs_grant"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["error", "message"],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "oneOf": [
+                        {
+                          "const": "Unauthorized"
+                        },
+                        {
+                          "const": "Forbidden"
+                        },
+                        {
+                          "const": "InvalidRequest"
+                        },
+                        {
+                          "const": "Conflict"
+                        },
+                        {
+                          "const": "Unavailable"
+                        }
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "subject": {
+                    "type": "string",
+                    "format": "did"
+                  },
+                  "capability": {
+                    "type": "string",
+                    "enum": ["streamer", "chat"]
+                  },
+                  "effect": {
+                    "type": "string",
+                    "enum": ["allow", "deny"]
+                  },
+                  "reason": {
+                    "type": "string",
+                    "maxLength": 1024
+                  },
+                  "expiresAt": {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                },
+                "required": ["subject", "capability", "effect"]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/xrpc/place.stream.access.deleteGrant": {
+      "post": {
+        "summary": "Revoke one stored node-local entry by its exact ID. Does not remove another allowance or denial for the same DID. Requires node administrator authorization.",
+        "operationId": "place.stream.access.deleteGrant",
+        "tags": ["place.stream.access"],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": ["success"]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["error", "message"],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "oneOf": [
+                        {
+                          "const": "Unauthorized"
+                        },
+                        {
+                          "const": "Forbidden"
+                        },
+                        {
+                          "const": "NotFound"
+                        },
+                        {
+                          "const": "InvalidRequest"
+                        },
+                        {
+                          "const": "Unavailable"
+                        }
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  }
+                },
+                "required": ["id"]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/xrpc/place.stream.access.getStatus": {
+      "get": {
+        "summary": "Get effective capabilities on this node for the caller. Only administrators may inspect another DID. Anonymous callers can inspect their own public defaults.",
+        "operationId": "place.stream.access.getStatus",
+        "tags": ["place.stream.access"],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "revision": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "subject": {
+                      "type": "string",
+                      "format": "did"
+                    },
+                    "capabilities": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/place.stream.access.defs_decision"
+                      }
+                    }
+                  },
+                  "required": ["revision", "capabilities"]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["error", "message"],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "oneOf": [
+                        {
+                          "const": "Forbidden"
+                        },
+                        {
+                          "const": "Unavailable"
+                        }
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "subject",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "did"
+            }
+          }
+        ]
+      }
+    },
+    "/xrpc/place.stream.access.listGrants": {
+      "get": {
+        "summary": "List node-local capability entries, including immutable configuration entries. Requires node administrator authorization.",
+        "operationId": "place.stream.access.listGrants",
+        "tags": ["place.stream.access"],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "revision": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "grants": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/place.stream.access.defs_grant"
+                      }
+                    }
+                  },
+                  "required": ["revision", "grants"]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["error", "message"],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "oneOf": [
+                        {
+                          "const": "Unauthorized"
+                        },
+                        {
+                          "const": "Forbidden"
+                        },
+                        {
+                          "const": "Unavailable"
+                        }
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/xrpc/games.gamesgamesgamesgames.search": {
@@ -7902,6 +8261,9 @@
         },
         "required": ["key", "action"]
       },
+      "place.stream.bio.page": {
+        "description": "Unknown type"
+      },
       "place.stream.badge.defs_badgeView": {
         "type": "object",
         "description": "View of a badge record, with fields resolved for display. If the DID in issuer is not the current streamplace node, the signature field shall be required.",
@@ -7997,6 +8359,83 @@
           }
         },
         "required": ["issuanceUri", "badgeType", "issuer"]
+      },
+      "place.stream.access.defs_grant": {
+        "type": "object",
+        "description": "An exact node-local capability entry. Configuration entries cannot be revoked through this API.",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "authority": {
+            "type": "string",
+            "format": "did"
+          },
+          "subject": {
+            "type": "string",
+            "format": "did"
+          },
+          "capability": {
+            "type": "string",
+            "enum": ["admin", "viewer", "chat", "streamer", "syndicate", "vod"]
+          },
+          "effect": {
+            "type": "string",
+            "enum": ["allow", "deny"]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "effectiveAllowed": {
+            "type": "boolean",
+            "description": "The subject’s current effective decision, which may be denied by another entry."
+          }
+        },
+        "required": [
+          "id",
+          "authority",
+          "subject",
+          "capability",
+          "effect",
+          "reason",
+          "source",
+          "effectiveAllowed"
+        ]
+      },
+      "place.stream.access.defs_decision": {
+        "type": "object",
+        "properties": {
+          "capability": {
+            "type": "string",
+            "enum": ["admin", "viewer", "chat", "streamer", "syndicate", "vod"]
+          },
+          "mode": {
+            "type": "string",
+            "enum": ["open", "allowlist", "off"]
+          },
+          "allowed": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "enforced": {
+            "type": "boolean",
+            "description": "Whether this node implements this capability gate. Informational defaults do not imply restricted viewing support."
+          }
+        },
+        "required": ["capability", "mode", "allowed", "reason", "enforced"]
       },
       "com.atproto.sync.listRepos_repo": {
         "type": "object",

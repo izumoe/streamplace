@@ -56,6 +56,10 @@ case "$triple" in
   *) dylib_ext= ;;
 esac
 compose_args=()
+linker_key="CARGO_TARGET_$(printf '%s' "$triple" | tr '[:lower:]-' '[:upper:]_')_LINKER"
+if [[ -n "${!linker_key:-}" ]]; then
+  compose_args+=(-C "linker=${!linker_key}")
+fi
 case "$crate_type" in
   staticlib) ext=a ;;
   cdylib)

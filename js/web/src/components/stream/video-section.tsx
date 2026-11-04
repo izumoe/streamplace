@@ -158,7 +158,7 @@ export function VideoSectionInner({
 
   return (
     <div
-      className="w-full bg-black transition-[height] duration-500 ease-in-out"
+      className="w-full shrink-0 bg-black transition-[height] duration-500 ease-in-out"
       style={{
         // In theatre mode the sidebar and header are hidden
         ...(theatre

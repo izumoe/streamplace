@@ -109,7 +109,7 @@ func TestBackfillWalk(t *testing.T) {
 	require.Equal(t, head.Rev, stored.Version)
 	require.Equal(t, head.Root.String(), stored.RootCID)
 
-	messages, err := mod.MostRecentChatMessages(user.DID, time.Time{})
+	messages, err := mod.MostRecentChatMessages(ctx, user.DID, time.Time{})
 	require.NoError(t, err)
 	require.Len(t, messages, 2)
 	texts := []string{
@@ -156,7 +156,7 @@ func TestBackfillWedgeHeals(t *testing.T) {
 		if repo.Version == "" {
 			return fmt.Errorf("repo still has no version")
 		}
-		messages, err := mod.MostRecentChatMessages(user.DID, time.Time{})
+		messages, err := mod.MostRecentChatMessages(ctx, user.DID, time.Time{})
 		if err != nil {
 			return err
 		}
@@ -244,7 +244,7 @@ func TestBackfillFallsBackToGetRepo(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		messages, err := mod.MostRecentChatMessages(user.DID, time.Time{})
+		messages, err := mod.MostRecentChatMessages(ctx, user.DID, time.Time{})
 		if err != nil {
 			return err
 		}
@@ -1032,7 +1032,7 @@ func TestBackfillBroadcastsOnlyLiveChat(t *testing.T) {
 
 	_, err := atsync.SyncBlueskyRepoCached(ctx, user.DID)
 	require.NoError(t, err)
-	messages, err := mod.MostRecentChatMessages(user.DID, time.Time{})
+	messages, err := mod.MostRecentChatMessages(ctx, user.DID, time.Time{})
 	require.NoError(t, err)
 	require.Len(t, messages, 2, "the walk indexed both messages")
 
@@ -1097,4 +1097,88 @@ func TestChatCreatedAtClamped(t *testing.T) {
 		"a future-dated message is clamped to now")
 	require.True(t, byURI[pinnedURI].CreatedAt.After(before.Add(-time.Minute)),
 		"and lands at roughly the time it arrived")
+}
+
+// A snapshot must remove bios whose delete event was missed, but only if it
+// actually covered the singleton record, and never over a newer live update.
+func TestBioBackfillReconcilesMissingRecord(t *testing.T) {
+	dev := devenv.WithDevEnv(t)
+	for _, legacy := range []bool{false, true} {
+		name := "verified walk"
+		if legacy {
+			name = "full CAR"
+		}
+		t.Run(name, func(t *testing.T) {
+			ctx := t.Context()
+			atsync, mod := backfillTestSynchronizer(t, dev)
+			user := dev.CreateAccount(t)
+			require.NoError(t, mod.UpdateRepo(&model.Repo{DID: user.DID, PDS: dev.PDSURL, Handle: user.Handle, Version: "3lpretend0000"}))
+			createBackfillRecord(t, user, "place.stream.bio.page", "self", &placestream.BioPage{CreatedAt: time.Now().UTC().Format(util.ISO8601)})
+			ident, err := atsync.resolveIdent(ctx, user.DID, false)
+			require.NoError(t, err)
+			client := &xrpc.Client{Host: dev.PDSURL, Client: &aqhttp.Client}
+			sync := func() {
+				t.Helper()
+				if legacy {
+					_, err = atsync.legacyBackfill(ctx, ident, client)
+				} else {
+					_, _, err = atsync.walkBackfill(ctx, ident, client, backfillRanges(""))
+				}
+				require.NoError(t, err)
+			}
+			sync()
+			indexed, err := mod.GetBioPage(ctx, user.DID)
+			require.NoError(t, err)
+			require.NotNil(t, indexed)
+			_, err = comatproto.RepoDeleteRecord(ctx, user.XRPC, &comatproto.RepoDeleteRecord_Input{Repo: user.DID, Collection: "place.stream.bio.page", Rkey: "self"})
+			require.NoError(t, err)
+			if !legacy {
+				_, _, err = atsync.walkBackfill(ctx, ident, client, windowRanges("", ""))
+				require.NoError(t, err)
+				page, err := mod.GetBioPage(ctx, user.DID)
+				require.NoError(t, err)
+				require.NotNil(t, page, "a chat-history window cannot prove a bio is absent")
+			}
+			sync()
+			page, err := mod.GetBioPage(ctx, user.DID)
+			require.NoError(t, err)
+			require.Nil(t, page, "the snapshot must reconcile a missed delete")
+
+			indexed.RepoRev = reposync.TIDForTime(time.Now().Add(24 * time.Hour))
+			require.NoError(t, mod.CreateBioPage(ctx, indexed))
+			sync()
+			page, err = mod.GetBioPage(ctx, user.DID)
+			require.NoError(t, err)
+			require.NotNil(t, page, "an older snapshot cannot erase a newer live update")
+			require.Equal(t, indexed.RepoRev, page.RepoRev)
+		})
+	}
+}
+
+func TestBioBackfillPropagatesWriteFailure(t *testing.T) {
+	dev := devenv.WithDevEnv(t)
+	for _, legacy := range []bool{false, true} {
+		name := "verified walk"
+		if legacy {
+			name = "full CAR"
+		}
+		t.Run(name, func(t *testing.T) {
+			ctx := t.Context()
+			atsync, mod := backfillTestSynchronizer(t, dev)
+			user := dev.CreateAccount(t)
+			require.NoError(t, mod.UpdateRepo(&model.Repo{DID: user.DID, PDS: dev.PDSURL, Handle: user.Handle, Version: "3lpretend0000"}))
+			createBackfillRecord(t, user, "place.stream.bio.page", "self", &placestream.BioPage{CreatedAt: time.Now().UTC().Format(util.ISO8601)})
+			ident, err := atsync.resolveIdent(ctx, user.DID, false)
+			require.NoError(t, err)
+			db := mod.(*model.DBModel).DB
+			require.NoError(t, db.Exec(`CREATE TRIGGER reject_bio_write BEFORE INSERT ON bio_pages BEGIN SELECT RAISE(ABORT, 'bio write failed'); END`).Error)
+			client := &xrpc.Client{Host: dev.PDSURL, Client: &aqhttp.Client}
+			if legacy {
+				_, err = atsync.legacyBackfill(ctx, ident, client)
+			} else {
+				_, _, err = atsync.walkBackfill(ctx, ident, client, backfillRanges(""))
+			}
+			require.ErrorContains(t, err, "bio write failed", "a failed bio write must leave the snapshot incomplete")
+		})
+	}
 }

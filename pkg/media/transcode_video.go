@@ -13,9 +13,8 @@ import (
 	"stream.place/streamplace/pkg/muxl"
 )
 
-// Video renditions as first-class MUXL tracks — the audio dual-codec path
-// (finishTranscodedSegment) applied to video. The transcoder hands
-// back one MP4 per rendition of a source segment; each rendition's video
+// Video renditions are independently signed MUXL tracks. The transcoder
+// hands back one MP4 per rendition of a source segment; each rendition's video
 // track is relabelled to a fixed track id, signed as a c2pa.transcoded
 // derivative of the source video track under the node's identity, and the
 // signed tracks are appended into one bare canonical segment ("addendum").

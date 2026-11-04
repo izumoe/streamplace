@@ -110,9 +110,9 @@ func (m *DBModel) DeleteChatMessage(ctx context.Context, uri string, deletedAt *
 	return nil
 }
 
-func (m *DBModel) GetChatMessage(uri string) (*ChatMessage, error) {
+func (m *DBModel) GetChatMessage(ctx context.Context, uri string) (*ChatMessage, error) {
 	var message ChatMessage
-	err := m.DB.
+	err := m.DB.WithContext(ctx).
 		Preload("Repo").
 		Preload("ChatProfile").
 		Preload("ReplyTo").
@@ -131,9 +131,9 @@ func (m *DBModel) GetChatMessage(uri string) (*ChatMessage, error) {
 	return &message, nil
 }
 
-func (m *DBModel) MostRecentChatMessages(repoDID string, since time.Time) ([]placestream.ChatDefs_MessageView, error) {
+func (m *DBModel) MostRecentChatMessages(ctx context.Context, repoDID string, since time.Time) ([]placestream.ChatDefs_MessageView, error) {
 	dbmessages := []ChatMessage{}
-	query := m.DB.
+	query := m.DB.WithContext(ctx).
 		Preload("Repo").
 		Preload("ChatProfile").
 		Preload("ReplyTo").

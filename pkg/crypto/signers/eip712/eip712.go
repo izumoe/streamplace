@@ -9,6 +9,7 @@ import (
 	"io"
 	"math/big"
 	"reflect"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -81,6 +82,10 @@ func MakeEIP712Signer(ctx context.Context, opts *EIP712SignerOptions) (*EIP712Si
 }
 
 func (signer *EIP712Signer) InitKeystore(ctx context.Context) error {
+	// Scrypt needs large temporary buffers. Return their pages before media startup
+	// rather than retaining them until unrelated work triggers collection.
+	defer debug.FreeOSMemory()
+
 	keyStore := keystore.NewKeyStore(signer.Opts.EthKeystorePath, keystore.StandardScryptN, keystore.StandardScryptP)
 
 	var account *accounts.Account

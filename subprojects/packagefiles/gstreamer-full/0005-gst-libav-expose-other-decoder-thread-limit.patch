@@ -1,0 +1,19 @@
+diff --git a/subprojects/gst-libav/ext/libav/gstavviddec.c b/subprojects/gst-libav/ext/libav/gstavviddec.c
+--- a/subprojects/gst-libav/ext/libav/gstavviddec.c
++++ b/subprojects/gst-libav/ext/libav/gstavviddec.c
+@@ -350,10 +350,14 @@
+   caps = klass->in_plugin->capabilities;
+-  if (caps & (AV_CODEC_CAP_FRAME_THREADS | AV_CODEC_CAP_SLICE_THREADS)) {
++  if (caps & (AV_CODEC_CAP_FRAME_THREADS | AV_CODEC_CAP_SLICE_THREADS |
++          AV_CODEC_CAP_OTHER_THREADS)) {
+     g_object_class_install_property (G_OBJECT_CLASS (klass), PROP_MAX_THREADS,
+         g_param_spec_int ("max-threads", "Maximum decode threads",
+             "Maximum number of worker threads to spawn. (0 = auto)",
+             0, G_MAXINT, DEFAULT_MAX_THREADS,
+             G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
++  }
++
++  if (caps & (AV_CODEC_CAP_FRAME_THREADS | AV_CODEC_CAP_SLICE_THREADS)) {
+     g_object_class_install_property (G_OBJECT_CLASS (klass), PROP_THREAD_TYPE,
+         g_param_spec_flags ("thread-type", "Thread type",
+             "Multithreading methods to use",

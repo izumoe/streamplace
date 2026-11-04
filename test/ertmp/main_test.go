@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -33,6 +34,9 @@ func TestFixtureTracksKeepTheirOwnLoopTimeline(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, tracks, 4)
 	require.IsType(t, &codecs.H264{}, tracks[0].track.Codec)
+	require.True(t, slices.ContainsFunc(tracks[0].samples[0].au, func(unit []byte) bool {
+		return len(unit) > 0 && unit[0]&31 == 6
+	}), "fixture replay must retain the source's SEI alongside its picture")
 	require.IsType(t, &codecs.H264{}, tracks[1].track.Codec)
 	require.IsType(t, &codecs.AV1{}, tracks[2].track.Codec)
 	require.IsType(t, &codecs.MPEG4Audio{}, tracks[3].track.Codec)

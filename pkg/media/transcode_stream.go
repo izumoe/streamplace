@@ -3,10 +3,11 @@ package media
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"strconv"
+	"reflect"
 	"sync"
 	"time"
 
@@ -21,22 +22,20 @@ import (
 // opaque caller context (the validated-segment info), returned verbatim to
 // onComplete so the caller can archive/distribute the completed segment.
 type transcodeJob struct {
-	src    []byte
-	token  any
-	events []*muxl.MuxlEvent
+	src        []byte
+	token      any
+	events     []*muxl.MuxlEvent
+	data       []byte
+	ingredient audioIngredient
 }
 
 // streamTranscoder runs ONE long-lived audio transcode for a single stream.
 //
-// Source segments are fed (via [streamTranscoder.Feed]) in arrival order into a
-// continuous decode→encode pipeline whose output is re-segmented at the
-// source's own video keyframes (muxl's segmenter, with the passed-through video
-// as the cut clock). Because the encoder runs continuously, the transcoded
-// audio is gapless — encoder priming happens once at stream start, not per
-// segment — and the re-segmentation is a lossless regroup at boundaries
-// identical to the source's. Each completed dual-codec segment is delivered to
-// onComplete in order, ~1 GoP behind the fed segment (the encoder needs the
-// next segment's head to finish the current one).
+// Source segments enter a continuous decode→encode pipeline in arrival order.
+// Serialized input markers complete each source with the packets already
+// encoded, leaving codec lookahead live. Sources shorter than codec priming
+// coalesce until packets are available. Original signed sources remain intact;
+// Close delivers retained packets as a separately signed audio addendum.
 //
 // Lifecycle: created per stream, Feed in order, Close on stream end (flushes the
 // tail). Not safe for concurrent Feed; feed from one goroutine (the stream's
@@ -50,11 +49,10 @@ type streamTranscoder struct {
 	// lock, so it needs no separate synchronization).
 	cert       []byte
 	keyPEM     []byte
-	onComplete func(token any, completed []byte)
+	onComplete func(token any, completed []byte, audioOnly bool)
 
 	ctx    context.Context
 	cancel context.CancelFunc
-	feedW  *io.PipeWriter
 	jobs   chan transcodeJob
 	done   chan struct{}
 
@@ -95,12 +93,16 @@ func ingestSessionFromContext(ctx context.Context) uint64 {
 
 // feedStreamTranscoder routes one source segment into the stream's continuous
 // transcoder, creating it on first use. The completed dual-codec segment is
-// distributed asynchronously (≈1 GoP later) via distributeSegment.
+// distributed asynchronously via distributeSegment when its marker completes.
 func (mm *MediaManager) feedStreamTranscoder(ctx context.Context, vs *validatedSegment, src []byte, target string, cert, keyPEM []byte) error {
 	did := vs.repoDID
 	sessionID := ingestSessionFromContext(ctx)
 	mm.transcodersMu.Lock()
 	t := mm.transcoders[did]
+	if t != nil && sessionID != 0 && sessionID < t.sessionID {
+		mm.transcodersMu.Unlock()
+		return fmt.Errorf("audio source belongs to an older ingest session")
+	}
 	if t != nil && t.needsReset(target, sessionID) {
 		// The live encoder is wrong for the incoming segment:
 		//   - a newer ingest session took over — the streamer reconnected (a rapid
@@ -111,26 +113,39 @@ func (mm *MediaManager) feedStreamTranscoder(ctx context.Context, vs *validatedS
 		//     dropped RTMP/AAC and picked up WHIP/Opus), so the pipeline expects the
 		//     previous codec; or
 		//   - the pipeline failed.
-		// Flush + tear it down (async, so we don't block ingest — its tail segments
-		// still complete) and rebuild. One seam at the boundary, clean after.
+		// Drain the old encoder before feeding the replacement session.
 		old := t
-		delete(mm.transcoders, did)
-		t = nil
-		log.Log(ctx, "resetting stream transcoder",
-			"streamer", did, "from_target", old.target, "to_target", target,
-			"from_session", old.sessionID, "to_session", sessionID)
-		go func() {
-			if err := old.Close(); err != nil {
-				log.Error(ctx, "stream transcoder reset close failed", "streamer", did, "error", err)
-			}
-		}()
+		if old.reaper != nil {
+			old.reaper.Stop()
+		}
+		mm.transcodersMu.Unlock()
+		// Keep this instance in the registry while its tail drains, so another
+		// feed cannot create a replacement and publish ahead of that tail.
+		if err := old.Close(); err != nil {
+			log.Error(ctx, "stream transcoder reset close failed", "streamer", did, "error", err)
+		}
+		mm.transcodersMu.Lock()
+		if mm.transcoders[did] == old {
+			delete(mm.transcoders, did)
+		}
+		mm.transcodersMu.Unlock()
+		return mm.feedStreamTranscoder(ctx, vs, src, target, cert, keyPEM)
 	}
 	if t == nil {
 		// The transcoder outlives any single request; carry log values but not
 		// cancellation, and cancel explicitly on reap.
-		streamCtx := context.WithoutCancel(ctx)
-		t = mm.newStreamTranscoder(streamCtx, target, cert, keyPEM, func(token any, completed []byte) {
+		// Admission belongs to each completed segment, not the shared encoder.
+		// distributeSegment restores a local segment's captured generation;
+		// remote segments must not inherit a previous publisher's admission.
+		streamCtx := context.WithValue(context.WithoutCancel(ctx), publisherAdmissionKey{}, nil)
+		t = mm.newStreamTranscoder(streamCtx, target, cert, keyPEM, func(token any, completed []byte, audioOnly bool) {
 			v := token.(*validatedSegment)
+			if audioOnly {
+				if err := mm.publishAudioAddendum(context.WithoutCancel(streamCtx), v, completed); err != nil {
+					log.Error(streamCtx, "publish audio tail failed", "error", err)
+				}
+				return
+			}
 			if err := mm.distributeSegment(context.WithoutCancel(streamCtx), v, completed, nil); err != nil {
 				log.Error(streamCtx, "distribute completed segment failed", "streamer", v.repoDID, "error", err)
 			}
@@ -163,7 +178,7 @@ func (mm *MediaManager) feedStreamTranscoder(ctx context.Context, vs *validatedS
 // Guarding on strict advance rather than inequality just makes that explicit and
 // avoids any reset thrash if they ever did.
 func (t *streamTranscoder) needsReset(target string, sessionID uint64) bool {
-	return t.target != target || sessionID > t.sessionID || t.failed()
+	return t.target != target || sessionID > t.sessionID || t.failed() || t.isClosed()
 }
 
 // failed reports whether the transcoder's pipeline has errored out.
@@ -183,36 +198,54 @@ func (t *streamTranscoder) isClosed() bool {
 // reapStreamTranscoder flushes and removes an idle stream's transcoder (the
 // flush emits its final buffered segment). Safe to call once per timer fire.
 func (mm *MediaManager) reapStreamTranscoder(did string, t *streamTranscoder) {
+	if err := t.Close(); err != nil {
+		log.Error(t.ctx, "stream transcoder reap close failed", "streamer", did, "error", err)
+	}
 	mm.transcodersMu.Lock()
 	if mm.transcoders[did] == t {
 		delete(mm.transcoders, did)
 	}
 	mm.transcodersMu.Unlock()
-	if err := t.Close(); err != nil {
-		log.Error(t.ctx, "stream transcoder reap close failed", "streamer", did, "error", err)
+}
+
+// closeStreamTranscoder drains only this ingest session. A disconnected older
+// publisher must not flush the replacement session's continuous encoder.
+func (mm *MediaManager) closeStreamTranscoder(ctx context.Context, did string) error {
+	mm.transcodersMu.Lock()
+	transcoder := mm.transcoders[did]
+	if transcoder == nil || transcoder.sessionID != ingestSessionFromContext(ctx) {
+		mm.transcodersMu.Unlock()
+		return nil
 	}
+	mm.transcodersMu.Unlock()
+	err := transcoder.Close()
+	mm.transcodersMu.Lock()
+	if mm.transcoders[did] == transcoder {
+		delete(mm.transcoders, did)
+	}
+	mm.transcodersMu.Unlock()
+	return err
 }
 
 // newStreamTranscoder starts a per-stream continuous transcoder. target is the
 // codec to add. cert/keyPEM are the node's S2PA signer. onComplete is invoked,
 // in order, with each completed dual-codec segment (and its feed token).
-func (mm *MediaManager) newStreamTranscoder(parent context.Context, target string, cert, keyPEM []byte, onComplete func(token any, completed []byte)) *streamTranscoder {
+func (mm *MediaManager) newStreamTranscoder(parent context.Context, target string, cert, keyPEM []byte, onComplete func(token any, completed []byte, audioOnly bool)) *streamTranscoder {
 	ctx, cancel := context.WithCancel(parent)
-	feedR, feedW := io.Pipe()
 	t := &streamTranscoder{
 		mm: mm, target: target, cert: cert, keyPEM: keyPEM, onComplete: onComplete,
-		ctx: ctx, cancel: cancel, feedW: feedW,
+		ctx: ctx, cancel: cancel,
 		jobs: make(chan transcodeJob, 16), done: make(chan struct{}),
 	}
 	go func() {
 		defer close(t.done)
-		err := t.run(feedR)
+		err := t.run()
 		t.mu.Lock()
 		if t.err == nil {
 			t.err = err
 		}
 		t.mu.Unlock()
-		feedR.CloseWithError(err) // unblock the appsrc feeder if still writing
+		t.cancel() // release a feed or native callback after failure
 		if err != nil && !errors.Is(err, context.Canceled) {
 			log.Error(ctx, "stream transcoder exited", "target", target, "error", err)
 		}
@@ -221,7 +254,7 @@ func (mm *MediaManager) newStreamTranscoder(parent context.Context, target strin
 }
 
 // Feed pushes a source segment (bare canonical .m4s) in arrival order. The
-// matching completed segment is delivered to onComplete later (≈1 GoP behind).
+// matching completion is delivered to onComplete after its serialized marker.
 func (t *streamTranscoder) Feed(src []byte, token any) error {
 	t.feedMu.Lock()
 	defer t.feedMu.Unlock()
@@ -249,11 +282,24 @@ func (t *streamTranscoder) Feed(src []byte, token any) error {
 	}
 	first := !t.started
 	t.mu.Unlock()
-	// Native completion needs one cut-clock video and the audio it decodes.
+	// Native input selects one video track and the audio it decodes.
 	// The queued job retains every original signed source track unchanged.
 	events, err := unwrapMuxlEvents(t.ctx, src)
 	if err != nil {
 		return fmt.Errorf("unwrap audio completion source: %w", err)
+	}
+	ingredient, err := sourceAudioIngredient(events)
+	if err != nil {
+		return err
+	}
+	if source, ok := token.(*validatedSegment); ok {
+		ingredient.policy = source.meta
+	} else {
+		verified, err := ValidateMP4MediaC2PA(t.ctx, ingredient.data)
+		if err != nil {
+			return fmt.Errorf("read source audio policy: %w", err)
+		}
+		ingredient.policy = verified.Meta
 	}
 	selected, err := selectEventTracks(events, 0, "", t.target == "aac")
 	if err != nil {
@@ -268,50 +314,38 @@ func (t *streamTranscoder) Feed(src []byte, token any) error {
 		init = header.Bytes()
 	}
 
-	// Enqueue before writing even the init so the pipeline can choose its
-	// parser from the first source catalog and pair every completion in order.
+	data := selected
+	if len(init) > 0 {
+		data = append(init, selected...)
+	}
 	select {
-	case t.jobs <- transcodeJob{src: src, token: token, events: events}:
+	case t.jobs <- transcodeJob{src: src, token: token, events: events, ingredient: ingredient, data: data}:
 	case <-t.ctx.Done():
 		return t.ctx.Err()
 	}
-	if first {
-		if _, err := t.feedW.Write(init); err != nil {
-			return err
-		}
-		t.mu.Lock()
-		t.started = true
-		t.mu.Unlock()
-	}
-	if _, err := t.feedW.Write(selected); err != nil {
-		return err
-	}
+	t.mu.Lock()
+	t.started = true
+	t.mu.Unlock()
+
 	return nil
 }
 
 // Close flushes the tail (EOS → final segment) and tears the pipeline down.
 func (t *streamTranscoder) Close() error {
+	t.feedMu.Lock()
 	t.mu.Lock()
-	if t.closed {
-		t.mu.Unlock()
-		return nil
+	if !t.closed {
+		t.closed = true
+		close(t.jobs)
 	}
-	t.closed = true
-	started := t.started
 	t.mu.Unlock()
-
+	t.feedMu.Unlock()
 	if t.reaper != nil {
 		t.reaper.Stop()
 	}
-	t.feedW.Close() // EOS to the appsrc → flush the final fragment(s)
-	if started {
-		select {
-		case <-t.done:
-		case <-time.After(15 * time.Second):
-			t.cancel() // pipeline wedged on shutdown — force it down
-			<-t.done
-		}
-	} else {
+	select {
+	case <-t.done:
+	case <-time.After(15 * time.Second):
 		t.cancel()
 		<-t.done
 	}
@@ -324,242 +358,269 @@ func (t *streamTranscoder) Close() error {
 	return nil
 }
 
-// run builds the continuous pipeline, drives muxl's segmenter over its output,
-// and finishes each emitted transcoded segment against its source.
-func (t *streamTranscoder) run(feedR *io.PipeReader) error {
+// run preserves the continuous codec state. Serialized input markers close
+// the packets already encoded for a source, without draining the codec tail.
+func (t *streamTranscoder) run() error {
 	ctx := t.ctx
-	var firstJob transcodeJob
+	var first transcodeJob
 	select {
-	case firstJob = <-t.jobs:
+	case job, ok := <-t.jobs:
+		if !ok {
+			return nil
+		}
+		first = job
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-	video, ok := primaryVideoTrack(catalogFromEvents(firstJob.events), 0, "")
-	if !ok {
-		return fmt.Errorf("audio completion source has no video clock")
-	}
-	pipeline, err := buildAudioTranscodePipeline(t.target, video.Codec)
+	pipeline, err := buildAudioTranscodePipeline(t.target)
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if pipeline.SetState(gst.StateNull) == gst.StateChangeFailure {
-			log.Error(ctx, "stream transcode: set null failed")
+	defer func() { t.cancel(); pipeline.BlockSetState(gst.StateNull, gst.ClockTimeNone) }()
+	output := make(chan audioOutput, 128)
+	emit := func(item audioOutput) bool {
+		select {
+		case output <- item:
+			return true
+		case <-ctx.Done():
+			return false
 		}
-	}()
-
-	srcEle := pipeline.GetByName("src")
-	if srcEle == nil {
-		return fmt.Errorf("stream transcode: src element not found")
 	}
-	srcEle.(app.AppSrc).SetCallbacks(&app.AppSrcCallbacks{
-		NeedData: gstpipeline.ReaderNeedDataIncremental(ctx, feedR),
-	})
-
-	// appsink output → io.Pipe → muxl streaming segmenter.
-	muxR, muxW := io.Pipe()
-	sink := pipeline.GetByName("sink")
-	if sink == nil {
-		return fmt.Errorf("stream transcode: sink element not found")
-	}
-	sink.(app.AppSink).SetCallbacks(&app.AppSinkCallbacks{
-		NewSample: gstpipeline.WriterNewSample(ctx, muxW),
-	})
-
-	eventCh := make(chan *muxl.MuxlEvent, 16)
-	segErr := make(chan error, 1)
-	go func() {
-		segErr <- muxl.RunMuxlSegmenterEvents(ctx, muxR, eventCh)
-		close(eventCh)
-	}()
-
-	busErr := make(chan error, 1)
-	go func() {
-		err := gstpipeline.HandleBusMessages(ctx, pipeline)
-		muxW.CloseWithError(err) // EOF/err to the muxl reader so it flushes + ends
-		busErr <- err
-	}()
-
-	if pipeline.SetState(gst.StatePlaying) == gst.StateChangeFailure {
-		return fmt.Errorf("stream transcode: set playing: state change failed")
-	}
-
-	// Consume per-GoP transcoded segments, pairing each 1:1 (in order) with the
-	// source segment that produced it.
-	var catalog *muxl.MuxlCatalog
-	first := true
-	for ev := range eventCh {
-		switch ev.Type {
-		case "init":
-			if ev.Catalog != nil {
-				catalog = ev.Catalog
-			}
-			continue
-		case "segment", "signed-segment":
-		default:
-			continue
-		}
-
-		audioTID, ok := audioTrackID(catalog)
-		if !ok {
-			log.Error(ctx, "stream transcode: no audio track in transcoded catalog")
-			continue
-		}
-		transAudio := ev.Tracks[strconv.FormatUint(uint64(audioTID), 10)]
-
+	installAudioOutput(pipeline, emit)
+	src := pipeline.GetByName("src").(app.AppSrc)
+	initial := true
+	src.SetCallbacks(&app.AppSrcCallbacks{NeedData: func(src app.AppSrc, _ uint) {
 		var job transcodeJob
-		if first {
-			job, firstJob, first = firstJob, transcodeJob{}, false
+		if initial {
+			job = first
+			first = transcodeJob{}
+			initial = false
 		} else {
 			select {
-			case job = <-t.jobs:
+			case next, ok := <-t.jobs:
+				if !ok {
+					src.EndOfStream()
+					return
+				}
+				job = next
 			case <-ctx.Done():
-				return ctx.Err()
+				src.EndOfStream()
+				return
 			}
 		}
-		if len(transAudio) == 0 {
-			log.Error(ctx, "stream transcode: emitted segment missing audio track", "track", audioTID)
-			continue
+		if !emit(audioOutput{job: &job}) {
+			return
 		}
-
-		// Pass the WHOLE transcoded segment (video + audio), not the audio alone:
-		// finishTranscodedSegment re-canonicalizes it to relabel the audio track,
-		// and canonicalize needs the video keyframe as its cut clock to emit one
-		// segment per GoP. Audio by itself has no keyframes to anchor on.
-		transSeg := concatTracksByID(ev.Tracks)
-		completed, err := t.mm.finishTranscodedSegment(ctx, job.src, job.events, transSeg, audioTID, t.cert, t.keyPEM)
+		buffer, err := gstpipeline.NewBufferFromBytes(job.data)
 		if err != nil {
-			log.Error(ctx, "stream transcode: finish segment failed", "error", err)
-			continue
+			src.PostMessage(gst.NewMessageError(src, "copy audio input", err))
+			return
 		}
-		t.onComplete(job.token, completed)
-	}
-
-	// eventCh closed: prefer a real pipeline/segmenter error over a clean EOF.
-	if e := <-busErr; e != nil && !errors.Is(e, context.Canceled) {
-		return e
-	}
-	if e := <-segErr; e != nil && !errors.Is(e, io.EOF) && !errors.Is(e, io.ErrClosedPipe) {
-		return e
-	}
-	return nil
-}
-
-// finishTranscodedSegment assembles one completed dual-codec segment: relabel
-// the freshly-segmented transcoded audio (the audio track transTID within
-// transSeg) to a free track id so it won't collide with the source tracks, sign
-// each canonical audio asset as a c2pa.transcoded derivative of the source
-// audio (node identity), and append it to the source segment. The relabel is a lossless
-// re-container (no re-encode), so the continuous encoder's gaplessness is
-// preserved.
-//
-// transSeg includes the video so its keyframes anchor audio re-segmentation.
-// Every resulting canonical audio asset is signed independently and names all
-// original source audio assets as ingredients.
-func (mm *MediaManager) finishTranscodedSegment(ctx context.Context, srcSeg []byte, events []*muxl.MuxlEvent, transSeg []byte, transTID uint32, cert, keyPEM []byte) ([]byte, error) {
-	cat := catalogFromEvents(events)
-	if cat == nil || cat.Audio == nil {
-		return nil, fmt.Errorf("source segment has no audio track")
-	}
-	var srcAudioTID, maxTID uint32
-	if cat.Video != nil {
-		for _, v := range cat.Video.Renditions {
-			maxTID = maxU32(maxTID, v.TrackID())
+		if src.PushBuffer(buffer) != gst.FlowOK {
+			return
 		}
+		if !src.SendEvent(gst.NewEventCustom(gst.EventCustomDownstream, gst.NewStructureEmpty(audioBoundaryEvent))) {
+			src.PostMessage(gst.NewMessageError(src, "queue audio boundary", fmt.Errorf("boundary event rejected")))
+		}
+	}})
+	nativeDone := make(chan error, 1)
+	go func() { nativeDone <- gstpipeline.HandleBusMessages(ctx, pipeline) }()
+	if pipeline.SetState(gst.StatePlaying) == gst.StateChangeFailure {
+		return fmt.Errorf("stream transcode: set playing failed")
 	}
-	for _, a := range cat.Audio.Renditions {
-		maxTID = maxU32(maxTID, a.TrackID())
-		srcAudioTID = a.TrackID()
-	}
-	sourceAudio := concatTrackAcrossSegments(events, strconv.FormatUint(uint64(srcAudioTID), 10))
-	if len(sourceAudio) == 0 {
-		return nil, fmt.Errorf("source audio track %d missing", srcAudioTID)
-	}
-	freeTID := maxTID + 1
-
-	// Relabel transTID → freeTID without re-encoding. Keep the full video cut
-	// clock while re-containering, then sign each relabeled audio asset.
-	var fmp4 bytes.Buffer
-	if err := muxl.RunMuxlWrap(ctx, bytes.NewReader(transSeg), "fmp4", &fmp4); err != nil {
-		return nil, fmt.Errorf("wrap transcoded segment: %w", err)
-	}
-	canon, err := muxl.RunMuxlCanonicalize(ctx, fmp4.Bytes(), map[uint32]uint32{transTID: freeTID})
-	if err != nil {
-		return nil, fmt.Errorf("relabel transcoded audio: %w", err)
-	}
-	canonEvents, err := unwrapMuxlEvents(ctx, canon)
-	if err != nil {
-		return nil, fmt.Errorf("unwrap relabeled audio: %w", err)
-	}
-	audioID := strconv.FormatUint(uint64(freeTID), 10)
-	var outputTimescale uint32
-	outputCatalog := catalogFromEvents(canonEvents)
-	if outputCatalog != nil && outputCatalog.Audio != nil {
-		for _, audio := range outputCatalog.Audio.Renditions {
-			if audio.TrackID() == freeTID {
-				outputTimescale = audio.Timescale()
-				break
+	var jobs []transcodeJob
+	var packets []audioPacket
+	var header []byte
+	var last *transcodeJob
+	var ingredients []audioIngredient
+	nativeEnded := false
+	finish := func(job *transcodeJob, tail bool) error {
+		if len(packets) == 0 {
+			return fmt.Errorf("audio boundary has no encoded packets")
+		}
+		if len(header) == 0 {
+			return fmt.Errorf("audio boundary has no initialization segment")
+		}
+		// Retain the preceding source as well as every source whose samples can
+		// overlap this chunk. A codec packet may straddle an input boundary.
+		for len(ingredients) > 1 && ingredients[1].end <= packets[0].pts {
+			ingredients = ingredients[1:]
+		}
+		private := false
+		current := job.ingredient.policy
+		for _, ingredient := range ingredients {
+			policy := ingredient.policy
+			if !policy.Published || !reflect.DeepEqual(policy.ContentWarnings, current.ContentWarnings) || !reflect.DeepEqual(policy.ContentRights, current.ContentRights) || !reflect.DeepEqual(policy.DistributionPolicy, current.DistributionPolicy) || !reflect.DeepEqual(policy.MetadataConfiguration, current.MetadataConfiguration) {
+				private = true
 			}
 		}
-	}
-	sourceClock, sourceOK := primaryVideoTrack(cat, 0, "")
-	outputClock, outputOK := primaryVideoTrack(outputCatalog, 0, "")
-	if !sourceOK || !outputOK || outputClock.Timescale() == 0 || outputTimescale == 0 {
-		return nil, fmt.Errorf("audio completion has no video clock")
-	}
-	var sourceVideo, outputVideo []byte
-	for _, event := range events {
-		if sourceVideo = event.Tracks[strconv.FormatUint(uint64(sourceClock.TrackID()), 10)]; len(sourceVideo) > 0 {
-			break
+		title := "transcoded audio"
+		if tail {
+			title = audioTailTitle
 		}
-	}
-	for _, event := range canonEvents {
-		if outputVideo = event.Tracks[strconv.FormatUint(uint64(outputClock.TrackID()), 10)]; len(outputVideo) > 0 {
-			break
+		manifest := transcodeManifestFor(t.mm.cli.BroadcasterDID(), title)
+		if private {
+			var definition map[string]any
+			if err := json.Unmarshal(manifest, &definition); err != nil {
+				return err
+			}
+			definition["assertions"] = append(definition["assertions"].([]any), obj{"label": audioPublicationAssertion, "data": obj{"published": false}})
+			var err error
+			manifest, err = json.Marshal(definition)
+			if err != nil {
+				return err
+			}
 		}
-	}
-	// The passed-through video keeps the encoder's running-time origin.
-	// Audio packet boundaries can straddle a cut, so retain their relative
-	// timestamps and convert only that common origin into audio ticks.
-	delta, ok := retimeDelta(sourceVideo, sourceClock.Timescale(), outputVideo, outputClock.Timescale())
-	if !ok {
-		return nil, fmt.Errorf("align transcoded audio timeline")
-	}
-	delta = int64(float64(delta) * float64(outputTimescale) / float64(outputClock.Timescale()))
-	var pieces [][]byte
-	size := len(srcSeg)
-	manifest := transcodeManifest(mm.cli.BroadcasterDID())
-	for _, event := range canonEvents {
-		output := event.Tracks[audioID]
-		if len(output) == 0 {
-			continue
-		}
-		shiftTfdt(output, delta)
-		// Each canonical asset needs its own signature, even when the lossless
-		// re-container splits one completed batch across video boundaries.
-		signed, err := muxl.RunMuxlSignTranscode(ctx, muxl.TranscodeInput{
-			Output:   output,
-			Source:   sourceAudio,
-			CertPEM:  cert,
-			KeyPEM:   keyPEM,
-			Manifest: manifest,
-		})
+		signed, err := t.mm.signAudioChunk(ctx, header, packets, ingredients, job.events, t.cert, t.keyPEM, manifest)
 		if err != nil {
-			return nil, fmt.Errorf("sign transcoded track: %w", err)
+			return err
 		}
-		pieces = append(pieces, signed)
-		size += len(signed)
+		token := job.token
+		if private {
+			if source, ok := token.(*validatedSegment); ok {
+				restricted := *source
+				metadata := *source.meta
+				metadata.Published = false
+				restricted.meta = &metadata
+				token = &restricted
+			}
+		}
+		if tail {
+			t.onComplete(token, signed, true)
+		} else {
+			completed := make([]byte, 0, len(job.src)+len(signed))
+			completed = append(completed, job.src...)
+			completed = append(completed, signed...)
+			t.onComplete(token, completed, false)
+		}
+		packets = nil
+		return nil
 	}
-	if len(pieces) == 0 {
-		return nil, fmt.Errorf("relabeled audio track %d missing", freeTID)
+	ready, boundaryPackets := 0, 0
+	finishReady := func() error {
+		if ready == 0 || boundaryPackets == 0 || len(header) == 0 {
+			return nil
+		}
+		job := jobs[0]
+		if ready > 1 {
+			// A scene-cut GoP can be shorter than codec priming. Retain its original
+			// signed bytes and combine only pending sources until audio is encodable.
+			var combined []byte
+			for _, source := range jobs[:ready] {
+				combined = append(combined, source.src...)
+			}
+			job.src = combined
+			if source, ok := job.token.(*validatedSegment); ok {
+				valid, err := ValidateMP4Media(ctx, combined)
+				if err != nil {
+					return err
+				}
+				merged := *source
+				merged.mediaData = valid.MediaData
+				job.token = &merged
+			}
+		}
+		available := packets
+		packets = available[:boundaryPackets]
+		if boundaryPackets < len(available) {
+			// The retained packet supplies the preceding packet's final duration,
+			// including native timestamp corrections, before that packet is signed.
+			previous := &packets[len(packets)-1]
+			next := available[boundaryPackets].pts
+			if next <= previous.pts {
+				return fmt.Errorf("encoded audio timestamps are not increasing")
+			}
+			previous.duration = next - previous.pts
+		}
+		if err := finish(&job, false); err != nil {
+			return err
+		}
+		clear(available[:boundaryPackets])
+		packets = available[boundaryPackets:]
+		boundaryPackets = 0
+		clear(jobs[:ready])
+		jobs = jobs[ready:]
+		ready = 0
+		last = &job
+		return nil
+	}
+	packetEOS, headerEOS := false, false
+	for {
+		select {
+		case item := <-output:
+			switch {
+			case item.err != nil:
+				return item.err
+			case item.job != nil:
+				if len(jobs) >= cap(t.jobs) {
+					return fmt.Errorf("audio encoder did not complete its pending sources")
+				}
+				jobs = append(jobs, *item.job)
+			case item.header != nil:
+				header = item.header
+				if err := finishReady(); err != nil {
+					return err
+				}
+			case item.packet != nil:
+				packets = append(packets, *item.packet)
+			case item.boundary:
+				if ready >= len(jobs) {
+					return fmt.Errorf("audio boundary has no source")
+				}
+				ingredients = append(ingredients, jobs[ready].ingredient)
+				ready++
+				// Keep one encoded packet so the final signed duration is known
+				// from the next PTS, without waiting for another source GoP.
+				boundaryPackets = max(len(packets)-1, 0)
+				if err := finishReady(); err != nil {
+					return err
+				}
+			case item.eos:
+				packetEOS = true
+			case item.muxEOS:
+				headerEOS = true
+			}
+			// The header muxer may emit its initialization only while draining a
+			// short input. The direct packet sink's EOS alone cannot end this run.
+			if packetEOS && headerEOS {
+				if ready != len(jobs) {
+					return fmt.Errorf("audio ended before source boundaries")
+				}
+				if ready > 0 {
+					boundaryPackets = len(packets)
+					// An initial sub-priming source can produce everything at EOS. Keep
+					// its final packet in the continuation so live HLS also flushes the
+					// final short fragments, without marking a resumable playlist as VOD.
+					if boundaryPackets > 1 {
+						boundaryPackets--
+					}
+				}
+				if err := finishReady(); err != nil {
+					return err
+				}
+				if len(jobs) > 0 {
+					return fmt.Errorf("audio source ended without encoded output")
+				}
+				if len(packets) > 0 && last != nil {
+					if err := finish(last, true); err != nil {
+						return err
+					}
+				}
+				if !nativeEnded {
+					return <-nativeDone
+				}
+				return nil
+			}
+		case err := <-nativeDone:
+			if err != nil {
+				return err
+			}
+			nativeEnded = true
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 
-	completed := make([]byte, 0, size)
-	completed = append(completed, srcSeg...)
-	for _, piece := range pieces {
-		completed = append(completed, piece...)
-	}
-	return completed, nil
 }
 
 // audioTrackID returns the (single) audio rendition's track id in a catalog.

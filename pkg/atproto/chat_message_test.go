@@ -131,7 +131,7 @@ func TestChatMessage(t *testing.T) {
 
 	messages := []placestream.ChatDefs_MessageView{}
 	err = untilNoErrors(t, func() error {
-		messages, err = mod.MostRecentChatMessages(user.DID, time.Time{})
+		messages, err = mod.MostRecentChatMessages(ctx, user.DID, time.Time{})
 		if err != nil {
 			return err
 		}
@@ -171,7 +171,7 @@ func TestChatMessage(t *testing.T) {
 	require.NoError(t, err)
 
 	err = untilNoErrors(t, func() error {
-		messages, err = mod.MostRecentChatMessages(user.DID, time.Time{})
+		messages, err = mod.MostRecentChatMessages(ctx, user.DID, time.Time{})
 		if err != nil {
 			return err
 		}

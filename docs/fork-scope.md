@@ -16,9 +16,11 @@ Retired updater and desktop download routes return 404.
 
 Beta invites and requests are removed from the API, lexicons, indexing,
 notifications, database models and interfaces. Uploads and durable recording use
-the existing operator stream allowlist. Authentication and bans still apply;
-recording also requires the user's existing recording setting. Old database
-tables are left intact, with no destructive migration.
+an independent VOD capability, bootstrapped from the existing operator stream
+allowlist. Local publishing approval and node chat restrictions use
+[node access](node-access.md). Authentication and bans still apply; recording
+also honors the user's existing recording setting. Old database tables are left
+intact, with no destructive migration.
 
 ## Useful core
 

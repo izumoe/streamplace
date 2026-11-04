@@ -1,0 +1,63 @@
+{
+  "lexicon": 1,
+  "id": "place.stream.access.createGrant",
+  "defs": {
+    "main": {
+      "type": "procedure",
+      "description": "Create an allowance or denial for local publishing or chat. Repeating an identical entry is idempotent; changing its metadata requires revoking that exact entry first. Requires node administrator authorization.",
+      "input": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": ["subject", "capability", "effect"],
+          "properties": {
+            "subject": {
+              "type": "string",
+              "format": "did"
+            },
+            "capability": {
+              "type": "string",
+              "enum": ["streamer", "chat"]
+            },
+            "effect": {
+              "type": "string",
+              "enum": ["allow", "deny"]
+            },
+            "reason": {
+              "type": "string",
+              "maxLength": 1024
+            },
+            "expiresAt": {
+              "type": "string",
+              "format": "datetime"
+            }
+          }
+        }
+      },
+      "output": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "ref",
+          "ref": "place.stream.access.defs#grant"
+        }
+      },
+      "errors": [
+        {
+          "name": "Unauthorized"
+        },
+        {
+          "name": "Forbidden"
+        },
+        {
+          "name": "InvalidRequest"
+        },
+        {
+          "name": "Conflict"
+        },
+        {
+          "name": "Unavailable"
+        }
+      ]
+    }
+  }
+}

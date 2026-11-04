@@ -506,3 +506,54 @@ describe("handleWebSocketMessages ingest problems", () => {
     expect(result.ingestProblems).toEqual([]);
   });
 });
+
+describe("node chat policy refresh", () => {
+  it("replaces cached chat, pins and reply selection without changing playback or channel blocks", () => {
+    const message = (did: string, text: string) => ({
+      $type: "place.stream.chat.defs#messageView",
+      uri: `at://${did}/place.stream.chat.message/1`,
+      cid: `cid-${did}`,
+      author: { did, handle: "author.test" },
+      record: {
+        $type: "place.stream.chat.message",
+        text,
+        streamer: "did:plc:streamer",
+        createdAt: "2026-11-02T12:00:00Z",
+      },
+      indexedAt: "2026-11-02T12:00:00Z",
+    });
+    const banned = message("did:plc:banned", "remove me");
+    const allowed = message("did:plc:allowed", "retain me");
+    const initial = handleWebSocketMessages(
+      makeState({ pendingHides: ["channel-hidden"], chatDraft: "draft" }),
+      [banned, allowed],
+    );
+    const cached = {
+      ...initial,
+      replyToMessage: initial.chat[0],
+      pinnedComment: {
+        message: initial.chat[0],
+      } as LivestreamState["pinnedComment"],
+    };
+    const refreshed = handleWebSocketMessages(cached, [
+      {
+        $type: "place.stream.chat.refresh",
+        revision: 2,
+        messages: [allowed],
+        pinnedComment: null,
+      },
+    ]);
+    expect(refreshed.chat.map((entry) => entry.author.did)).toEqual([
+      "did:plc:allowed",
+    ]);
+    expect(
+      Object.values(refreshed.chatIndex).map((entry) => entry.author.did),
+    ).toEqual(["did:plc:allowed"]);
+    expect(refreshed.pinnedComment).toBeNull();
+    expect(refreshed.replyToMessage).toBeNull();
+    expect(refreshed.pendingHides).toEqual(["channel-hidden"]);
+    expect(refreshed.chatDraft).toBe("draft");
+    expect(refreshed.segment).toBe(cached.segment);
+    expect(refreshed.livestream).toBe(cached.livestream);
+  });
+});
