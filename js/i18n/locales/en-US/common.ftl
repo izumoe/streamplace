@@ -523,3 +523,26 @@ player-stats-decode-time = Video decode (avg.)
 player-stats-decode-time-help = WebRTC video decode time per decoded frame, averaged over the current video stream.
 player-stats-jitter-buffer = Jitter buffer (avg.)
 player-stats-jitter-buffer-help = WebRTC video jitter buffer residence time per emitted frame, averaged over the current video stream.
+
+player-stats-open-diagnostics = Open diagnostics
+player-stats-diagnostics = Playback diagnostics
+player-stats-history-window = Last 60 seconds · collected while stats are open. Gaps mean no sample was received.
+player-stats-group-playback = Playback delay
+player-stats-group-playback-help = Receiver-side estimates. Batch duration and the delay target overlap with live edge delay; do not add them together.
+player-stats-group-processing = Receiver processing
+player-stats-group-processing-help = WebRTC averages over the current video stream. Processing includes buffering and decode; these readings overlap.
+player-stats-group-connection = Connection & A/V timing
+player-stats-group-connection-help = RTT is to the relay. Positive video − audio means video is ahead; physical display and speaker delay are excluded.
+player-stats-group-bandwidth = Video & bandwidth
+player-stats-group-bandwidth-help = Estimates depend on the transport. Selected video bitrate and connection bandwidth are different measurements.
+player-stats-no-processing = This transport does not report receiver processing timings.
+player-stats-no-data = No measurements available for this transport.
+player-stats-collecting = Collecting samples…
+player-stats-chart-label = { $group } over the last 60 seconds
+player-stats-ttfb = TTFB
+
+player-stats-buffer-help = Media buffered ahead of playback. WebRTC's element buffer excludes its internal jitter buffer.
+player-stats-ttfb-help = The HLS client's time-to-first-byte estimate.
+player-stats-bitrate-help = Transport-reported video bitrate. WebRTC samples received bytes; HLS reports rendition metadata.
+player-stats-rendition-bitrate-help = The selected video's conservative catalog bitrate estimate, not measured network throughput.
+player-stats-available-bandwidth-help = Estimated available connection bandwidth, not the selected video's bitrate.

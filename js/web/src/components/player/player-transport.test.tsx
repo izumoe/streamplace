@@ -245,30 +245,31 @@ it.each([undefined, 0, 7])(
         document.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"]'),
       ).find((item) => item.textContent === "player-stats")!;
       await act(async () => toggle.click());
-      const dialog = container.querySelector(
+      await act(async () => {
+        await vi.dynamicImportSettled();
+      });
+      const summary = container.querySelector(
         '[role="dialog"][aria-label="player-stats"]',
       )!;
+      expect(summary).not.toBeNull();
+      expect(summary.textContent).not.toContain("player-stats-session");
+      await act(async () =>
+        container
+          .querySelector<HTMLButtonElement>(
+            'button[aria-label="player-stats-open-diagnostics"]',
+          )!
+          .click(),
+      );
+      const dialog = document.querySelector('[data-slot="sheet-content"]')!;
       expect(dialog).not.toBeNull();
       expect(dialog.textContent?.includes("player-stats-skipped")).toBe(
         value !== undefined,
       );
       expect(dialog.textContent?.includes("FPS")).toBe(value !== undefined);
-      expect(dialog.textContent?.includes("player-stats-bitrate")).toBe(
-        value !== undefined,
-      );
-      expect(
-        dialog.textContent?.includes("player-stats-rendition-bitrate"),
-      ).toBe(value !== undefined);
-      expect(
-        dialog.textContent?.includes("player-stats-available-bandwidth"),
-      ).toBe(value !== undefined);
-      expect(dialog.textContent).toContain("player-stats-broadcaster-delay");
-      expect(dialog.textContent).toContain("player-stats-not-measured");
-      const details = dialog.querySelector("details")!;
-      expect(details).not.toBeNull();
-      expect(details.open).toBe(false);
-      expect(details.textContent).toContain("player-stats-session");
       for (const label of [
+        "bitrate",
+        "rendition-bitrate",
+        "available-bandwidth",
         "live-edge-delay",
         "playback-delay",
         "publication-batch",
@@ -278,12 +279,15 @@ it.each([undefined, 0, 7])(
         "decode-time",
         "jitter-buffer",
       ]) {
-        const row = Array.from(dialog.querySelectorAll("[title]")).find(
-          (element) => element.textContent?.includes(`player-stats-${label}`),
+        expect(dialog.textContent?.includes(`player-stats-${label}`)).toBe(
+          value !== undefined,
         );
-        expect(row !== undefined).toBe(value !== undefined);
-        if (row) expect(details.contains(row)).toBe(false);
       }
+      expect(dialog.textContent).toContain("player-stats-broadcaster-delay");
+      expect(dialog.textContent).toContain("player-stats-not-measured");
+      const details = dialog.querySelector("details")!;
+      expect(details.open).toBe(false);
+      expect(details.textContent).toContain("player-stats-session");
       if (value !== undefined) {
         expect(dialog.textContent).toContain(`${value.toFixed(1)} ms`);
         expect(dialog.textContent).toContain(`${(-value).toFixed(1)} ms`);

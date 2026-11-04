@@ -256,6 +256,8 @@ export function PlayerControls({
       const tag = target?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
       if (target?.isContentEditable) return;
+      if (target instanceof Element && target.closest('[role="dialog"]'))
+        return;
       if (e.key === " ") {
         e.preventDefault();
         togglePlay();

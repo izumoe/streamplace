@@ -201,9 +201,7 @@ test("Enhanced RTMP Auto downshifts and recovers through a bandwidth-limited QUI
     copy.height = 90;
     const context = copy.getContext("2d", { willReadFrequently: true })!;
     setInterval(() => {
-      const stats = document.querySelector(
-        '[role="dialog"][aria-label="Stats for Nerds"]',
-      );
+      const stats = document.querySelector("[data-player-diagnostics]");
       if (stats?.textContent)
         window.ertmpAbrStats!.push({ at: Date.now(), text: stats.textContent });
       const surface = document.querySelector<HTMLCanvasElement>(
@@ -313,7 +311,7 @@ test("Enhanced RTMP Auto downshifts and recovers through a bandwidth-limited QUI
   });
   const player = page.locator("[data-playback-transport]");
   const canvas = player.locator("canvas");
-  const stats = page.getByRole("dialog", { name: "Stats for Nerds" });
+  const stats = page.getByRole("dialog", { name: "Playback diagnostics" });
   async function picture() {
     return page.evaluate(
       () =>
@@ -422,7 +420,9 @@ test("Enhanced RTMP Auto downshifts and recovers through a bandwidth-limited QUI
       .getByRole("menuitemcheckbox", { name: "Stats for Nerds" })
       .click();
     await page.keyboard.press("Escape");
-    await stats.getByText("Stream details", { exact: true }).click();
+    await page
+      .getByRole("button", { name: "Open diagnostics", exact: true })
+      .click();
     await expect(stats).toContainText("Video bitrate estimate");
     await expect(stats).toContainText("Bandwidth estimate");
     await expectPlaying("green");

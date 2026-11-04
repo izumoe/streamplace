@@ -1,6 +1,9 @@
 import { useFullscreen } from "@/contexts/fullscreen-context";
 import { useSonare } from "@/lib/useSonare";
+import { CatchBoundary } from "@tanstack/react-router";
 import {
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useRef,
@@ -10,6 +13,7 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { cn } from "../../lib/utils";
+import { Button } from "../ui/button";
 import { Loader } from "../ui/loader";
 import { ContentWarningOverlay } from "./content-warning-overlay";
 import { HLSPlayer } from "./hls-player";
@@ -23,6 +27,8 @@ import {
 } from "./player-buffering";
 import { PlayerControls } from "./player-controls";
 import { WebRTCPlayer } from "./webrtc-player";
+
+const StatsOverlay = lazy(() => import("./stats-overlay"));
 
 export type PlayerProps = {
   /** Full URL to the media source. Scheme/route is dispatched to a backend. */
@@ -229,6 +235,27 @@ export function Player({
             : "webrtc";
   const [showStats, setShowStats] = useState(false);
   const [stats, setStats] = useState<PlayerStats | null>(null);
+  const StatsError = useCallback(
+    () => (
+      <div
+        role="dialog"
+        aria-label={t("player-stats")}
+        onClick={(event) => event.stopPropagation()}
+        className="bg-background/95 text-foreground absolute top-4 right-4 z-20 max-w-full space-y-3 rounded-lg border p-3 text-sm"
+      >
+        <h3 className="font-medium">{t("player-stats")}</h3>
+        <p role="alert">{t("unexpected-error")}</p>
+        <Button
+          className="min-h-11"
+          variant="ghost"
+          onClick={() => setShowStats(false)}
+        >
+          {t("close")}
+        </Button>
+      </div>
+    ),
+    [t],
+  );
   // Stable per-mount id for video playback
   const [sessionId] = useSonare();
 
@@ -568,24 +595,33 @@ export function Player({
       )}
 
       {active && showStats && stats && (
-        <StatsOverlay
-          stats={stats}
-          live={mode === "live"}
-          protocol={
-            transport === "moq"
-              ? "MoQ"
-              : transport === "webrtc"
-                ? t("player-protocol-webrtc")
-                : t("player-protocol-hls")
-          }
-          latencyMode={
-            transport === "hls" && !lowLatency
-              ? t("player-latency-standard")
-              : t("player-latency-low")
-          }
-          renderSurface={transport === "moq" ? "canvas" : "video"}
-          sessionId={sessionId}
-        />
+        <CatchBoundary
+          getResetKey={() => `${src}:${mode}:${transport}`}
+          errorComponent={StatsError}
+        >
+          <Suspense fallback={null}>
+            <StatsOverlay
+              key={`${src}:${mode}:${transport}`}
+              portalContainer={fullscreen ? containerRef : undefined}
+              stats={stats}
+              live={mode === "live"}
+              protocol={
+                transport === "moq"
+                  ? "MoQ"
+                  : transport === "webrtc"
+                    ? t("player-protocol-webrtc")
+                    : t("player-protocol-hls")
+              }
+              latencyMode={
+                transport === "hls" && !lowLatency
+                  ? t("player-latency-standard")
+                  : t("player-latency-low")
+              }
+              renderSurface={transport === "moq" ? "canvas" : "video"}
+              sessionId={sessionId}
+            />
+          </Suspense>
+        </CatchBoundary>
       )}
 
       {error && (
@@ -657,248 +693,5 @@ function PlayerBackend({
       onCurrentQualityChange={onCurrentQualityChange}
       onStatsChange={onStatsChange}
     />
-  );
-}
-
-function StatsOverlay({
-  stats,
-  live,
-  protocol,
-  latencyMode,
-  renderSurface,
-  sessionId,
-}: {
-  stats: PlayerStats;
-  live: boolean;
-  protocol: string;
-  latencyMode: string;
-  renderSurface: "canvas" | "video";
-  sessionId: string;
-}) {
-  const { t } = useTranslation();
-  const [position, setPosition] = useState({ x: 0, y: 0 });
-  const [isDragging, setIsDragging] = useState(false);
-  const dragStart = useRef({ x: 0, y: 0, posX: 0, posY: 0 });
-
-  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    e.currentTarget.setPointerCapture(e.pointerId);
-    setIsDragging(true);
-    dragStart.current = {
-      x: e.clientX,
-      y: e.clientY,
-      posX: position.x,
-      posY: position.y,
-    };
-  };
-
-  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!isDragging) return;
-    const dx = e.clientX - dragStart.current.x;
-    const dy = e.clientY - dragStart.current.y;
-    setPosition({
-      x: dragStart.current.posX + dx,
-      y: dragStart.current.posY + dy,
-    });
-  };
-
-  const onPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-      e.currentTarget.releasePointerCapture(e.pointerId);
-    }
-    setIsDragging(false);
-  };
-
-  const kbps = stats.bitrate ? Math.round(stats.bitrate / 1000) : null;
-  const mbps = kbps ? (kbps / 1000).toFixed(2) : null;
-  const bitrateDisplay =
-    mbps && kbps && kbps > 1000
-      ? `${mbps} Mbps`
-      : kbps
-        ? `${kbps} Kbps`
-        : "N/A";
-  return (
-    <div
-      role="dialog"
-      aria-label={t("player-stats")}
-      // Stop the synthetic click from bubbling to the player's
-      // click-to-toggle when the user just taps the panel (no drag).
-      onClick={(e) => e.stopPropagation()}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
-      onPointerCancel={onPointerUp}
-      className={cn(
-        "bg-background/95 text-foreground absolute top-12 right-2 z-20 max-h-[calc(100%-var(--spacing)*14)] max-w-[calc(100%-var(--spacing)*4)] min-w-48 overflow-auto rounded border font-mono text-xs leading-snug select-none",
-        isDragging && "ring-ring cursor-grabbing ring-1",
-      )}
-      style={{ transform: `translate(${position.x}px, ${position.y}px)` }}
-    >
-      <div
-        onPointerDown={onPointerDown}
-        className="bg-muted text-muted-foreground w-full cursor-grab touch-none rounded-t px-3 py-2 font-mono text-sm select-none"
-      >
-        {t("player-stats")}
-      </div>
-      <div className="space-y-2 px-3 py-2">
-        {live && (
-          <>
-            <Row
-              label={t("player-stats-broadcaster-delay")}
-              value={t("player-stats-not-measured")}
-              title={t("player-stats-broadcaster-delay-help")}
-            />
-            <Row
-              label={t("player-stats-server-processing")}
-              value={t("player-stats-not-measured")}
-              title={t("player-stats-server-processing-help")}
-            />
-          </>
-        )}
-        <TimingRow
-          label={t("player-stats-live-edge-delay")}
-          value={
-            stats.liveEdgeDelay === undefined
-              ? undefined
-              : stats.liveEdgeDelay * 1000
-          }
-          title={t("player-stats-live-edge-delay-help")}
-        />
-        <TimingRow
-          label={t("player-stats-playback-delay")}
-          value={stats.playbackDelayMs}
-          title={t("player-stats-playback-delay-help")}
-        />
-        <TimingRow
-          label={t("player-stats-publication-batch")}
-          value={stats.publicationBatchMs}
-          title={t("player-stats-publication-batch-help")}
-        />
-        <TimingRow
-          label={t("player-stats-rtt")}
-          value={stats.roundTripTimeMs}
-          title={t("player-stats-rtt-help")}
-        />
-        <TimingRow
-          label={t("player-stats-av-sync")}
-          value={stats.avSyncMs}
-          signed
-          title={t("player-stats-av-sync-help")}
-        />
-        <TimingRow
-          label={t("player-stats-processing-delay")}
-          value={stats.processingDelayMs}
-          title={t("player-stats-processing-delay-help")}
-        />
-        <TimingRow
-          label={t("player-stats-decode-time")}
-          value={stats.decodeTimeMs}
-          title={t("player-stats-decode-time-help")}
-        />
-        <TimingRow
-          label={t("player-stats-jitter-buffer")}
-          value={stats.jitterBufferMs}
-          title={t("player-stats-jitter-buffer-help")}
-        />
-        <Row
-          label={t("player-stats-buffer")}
-          value={`${stats.buffered.toFixed(2)} sec`}
-        />
-        <details>
-          <summary className="text-muted-foreground focus-visible:ring-ring cursor-pointer rounded focus-visible:ring-2">
-            {t("player-stats-stream-details")}
-          </summary>
-          <div className="pt-2">
-            <Row
-              label={t("player-stats-resolution")}
-              value={`${stats.width}×${stats.height}`}
-            />
-            <Row
-              label={t("player-stats-viewport")}
-              value={`${stats.viewportWidth}×${stats.viewportHeight}`}
-            />
-            {stats.bitrate !== undefined && (
-              <Row label={t("player-stats-bitrate")} value={bitrateDisplay} />
-            )}
-            {stats.renditionBitrate !== undefined && (
-              <Row
-                label={t("player-stats-rendition-bitrate")}
-                value={`${Math.round(stats.renditionBitrate / 1000)} Kbps`}
-              />
-            )}
-            {stats.availableBandwidth !== undefined && (
-              <Row
-                label={t("player-stats-available-bandwidth")}
-                value={`${Math.round(stats.availableBandwidth / 1000)} Kbps`}
-              />
-            )}
-            {stats.ttfbEstimate !== undefined && stats.ttfbEstimate > 0 && (
-              <Row
-                label="TTFB"
-                value={`${Math.round(stats.ttfbEstimate)} ms`}
-              />
-            )}
-            {stats.fps !== undefined && (
-              <Row label="FPS" value={Math.round(stats.fps).toString()} />
-            )}
-            {stats.droppedFrames !== undefined && (
-              <Row
-                label={t("player-stats-skipped")}
-                value={`${stats.droppedFrames} / ${stats.totalFrames}`}
-              />
-            )}
-            {stats.codecs && (
-              <Row label={t("player-stats-codecs")} value={stats.codecs} />
-            )}
-            <Row label={t("player-stats-protocol")} value={protocol} />
-            <Row label={t("player-stats-latency-mode")} value={latencyMode} />
-            <Row
-              label={t("player-stats-render-surface")}
-              value={renderSurface}
-            />
-            {stats.hlsVersion && (
-              <Row label="hls.js version" value={stats.hlsVersion} />
-            )}
-            <Row label={t("player-stats-session")} value={sessionId} />
-          </div>
-        </details>
-      </div>
-    </div>
-  );
-}
-
-function TimingRow({
-  label,
-  value,
-  title,
-  signed = false,
-}: {
-  label: string;
-  value?: number;
-  title: string;
-  signed?: boolean;
-}) {
-  if (value === undefined || !Number.isFinite(value) || (!signed && value < 0))
-    return null;
-  return <Row label={label} value={`${value.toFixed(1)} ms`} title={title} />;
-}
-
-function Row({
-  label,
-  value,
-  title,
-}: {
-  label: string;
-  value: string;
-  title?: string;
-}) {
-  return (
-    <div
-      title={title}
-      className="flex items-start justify-between gap-3 text-xs"
-    >
-      <span className="text-muted-foreground font-mono">{label}</span>
-      <span className="min-w-0 text-right font-mono break-all tabular-nums">
-        {value}
-      </span>
-    </div>
   );
 }
