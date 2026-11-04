@@ -34,9 +34,7 @@ PKG_CONFIG_PATH=$(shell pwd)/$(BUILDDIR)/meson-uninstalled:$(shell pwd)/$(BUILDD
 NATIVE_LIBDIR=$(abspath $(BUILDDIR)/rust/streamplace-native)
 NATIVE_ENV=bash "$(CURDIR)/hack/native-go.sh" "$(NATIVE_LIBDIR)"
 NATIVE_CGO_LDFLAGS=-L$(NATIVE_LIBDIR) -lmoq_ffi $(MACOS_VERSION_FLAG)
-ifeq ($(BUILDOS),windows)
-	NATIVE_CGO_LDFLAGS+= -Wl,-Bstatic -lstdc++ -lwinpthread -Wl,-Bdynamic -static-libgcc
-else ifneq ($(BUILDOS),darwin)
+ifneq ($(BUILDOS),darwin)
 	NATIVE_CGO_LDFLAGS+= -Wl,-Bstatic -lstdc++ -Wl,-Bdynamic
 endif
 
@@ -82,38 +80,25 @@ app-cached:
 mobile-prebuild: install
 	pnpm --filter @streamplace/app native:prebuild
 
-.PHONY: ci-ios
-ci-ios: version install app
-	$(MAKE) ios
-	$(MAKE) ci-upload-ios
-
-.PHONY: ci-android
-ci-android: version install android ci-upload-android
-
-.PHONY: ci-android-debug
-ci-android-debug: version install
-	pnpm run app native:prebuild
-	$(MAKE) android-debug
-	$(MAKE) ci-upload-android-debug
-
-.PHONY: ci-android-release
-ci-android-release: version install
-	pnpm run app native:prebuild
-	$(MAKE) android-release
-	$(MAKE) ci-upload-android-release
-
-
 ANDROID_KEYSTORE_PASSWORD?=streamplace
 ANDROID_KEYSTORE_ALIAS?=alias_name
 ANDROID_KEYSTORE_BASE64?=
+export ANDROID_KEYSTORE_PASSWORD ANDROID_KEYSTORE_ALIAS
+ANDROID_SIGNING_OPTS= \
+	-Pandroid.injected.signing.store.file="$(abspath my-release-key.keystore)" \
+	-Pandroid.injected.signing.store.password="$$ANDROID_KEYSTORE_PASSWORD" \
+	-Pandroid.injected.signing.key.alias="$$ANDROID_KEYSTORE_ALIAS" \
+	-Pandroid.injected.signing.key.password="$$ANDROID_KEYSTORE_PASSWORD"
+ANDROID_VERIFY_SIGNING=jarsigner -verify -strict -keystore "$(abspath my-release-key.keystore)" -storepass:env ANDROID_KEYSTORE_PASSWORD
 
 .PHONY: android-keystore
 android-keystore:
+	umask 077; \
 	if [ -n "$$ANDROID_KEYSTORE_BASE64" ]; then \
 		echo "$$ANDROID_KEYSTORE_BASE64" | base64 -d > my-release-key.keystore; \
 	fi; \
 	if [ ! -f my-release-key.keystore ]; then \
-		keytool -genkey -v -keystore my-release-key.keystore -alias alias_name -keyalg RSA -keysize 2048 -validity 10000 -storepass $(ANDROID_KEYSTORE_PASSWORD) -keypass $(ANDROID_KEYSTORE_PASSWORD) -dname "CN=Streamplace, OU=Streamplace, O=Streamplace, L=Streamplace, S=Streamplace, C=US"; \
+		keytool -genkey -v -keystore my-release-key.keystore -alias "$$ANDROID_KEYSTORE_ALIAS" -keyalg RSA -keysize 2048 -validity 10000 -storepass:env ANDROID_KEYSTORE_PASSWORD -keypass:env ANDROID_KEYSTORE_PASSWORD -dname "CN=Streamplace, OU=Streamplace, O=Streamplace, L=Streamplace, S=Streamplace, C=US"; \
 	fi
 
 .PHONY: android
@@ -129,11 +114,12 @@ android-release: .build/bundletool.jar android-keystore
 	fi
 	export NODE_ENV=production \
 	&& cd ./js/app/android \
-	&& ./gradlew :app:bundleRelease \
+	&& ./gradlew :app:bundleRelease $(ANDROID_SIGNING_OPTS) \
 	&& cd - \
 	&& mv ./js/app/android/app/build/outputs/bundle/release/app-release.aab ./bin/streamplace-$(VERSION)-android-release.aab \
+	&& $(ANDROID_VERIFY_SIGNING) ./bin/streamplace-$(VERSION)-android-release.aab "$$ANDROID_KEYSTORE_ALIAS" \
 	&& cd bin \
-	&& java -jar ../.build/bundletool.jar build-apks --ks ../my-release-key.keystore --ks-key-alias alias_name --ks-pass pass:$(ANDROID_KEYSTORE_PASSWORD) --bundle=streamplace-$(VERSION)-android-release.aab --output=streamplace-$(VERSION)-android-release.apks --mode=universal \
+	&& java -jar ../.build/bundletool.jar build-apks --ks ../my-release-key.keystore --ks-key-alias "$$ANDROID_KEYSTORE_ALIAS" --ks-pass "pass:$$ANDROID_KEYSTORE_PASSWORD" --bundle=streamplace-$(VERSION)-android-release.aab --output=streamplace-$(VERSION)-android-release.apks --mode=universal \
 	&& unzip streamplace-$(VERSION)-android-release.apks && mv universal.apk streamplace-$(VERSION)-android-release.apk && rm toc.pb
 
 # The release build for the Maestro suite (hack/e2e-local.sh): it trusts
@@ -144,22 +130,24 @@ android-e2e: .build/bundletool.jar android-keystore
 	cd js/app && SP_E2E_BUILD=true pnpm run native:prebuild
 	export NODE_ENV=production \
 	&& cd ./js/app/android \
-	&& ./gradlew :app:bundleRelease \
+	&& ./gradlew :app:bundleRelease $(ANDROID_SIGNING_OPTS) \
 	&& cd - \
 	&& mv ./js/app/android/app/build/outputs/bundle/release/app-release.aab ./bin/streamplace-$(VERSION)-android-e2e.aab \
+	&& $(ANDROID_VERIFY_SIGNING) ./bin/streamplace-$(VERSION)-android-e2e.aab "$$ANDROID_KEYSTORE_ALIAS" \
 	&& cd bin \
-	&& java -jar ../.build/bundletool.jar build-apks --overwrite --ks ../my-release-key.keystore --ks-key-alias alias_name --ks-pass pass:$(ANDROID_KEYSTORE_PASSWORD) --bundle=streamplace-$(VERSION)-android-e2e.aab --output=streamplace-$(VERSION)-android-e2e.apks --mode=universal \
+	&& java -jar ../.build/bundletool.jar build-apks --overwrite --ks ../my-release-key.keystore --ks-key-alias "$$ANDROID_KEYSTORE_ALIAS" --ks-pass "pass:$$ANDROID_KEYSTORE_PASSWORD" --bundle=streamplace-$(VERSION)-android-e2e.aab --output=streamplace-$(VERSION)-android-e2e.apks --mode=universal \
 	&& unzip -o streamplace-$(VERSION)-android-e2e.apks && mv universal.apk streamplace-$(VERSION)-android-e2e.apk && rm toc.pb
 
 .PHONY: android-debug
 android-debug: .build/bundletool.jar android-keystore
 	export NODE_ENV=production \
 	&& cd ./js/app/android \
-	&& ./gradlew :app:bundleDebug \
+	&& ./gradlew :app:bundleDebug $(ANDROID_SIGNING_OPTS) \
 	&& cd - \
 	&& mv ./js/app/android/app/build/outputs/bundle/debug/app-debug.aab ./bin/streamplace-$(VERSION)-android-debug.aab \
+	&& $(ANDROID_VERIFY_SIGNING) ./bin/streamplace-$(VERSION)-android-debug.aab "$$ANDROID_KEYSTORE_ALIAS" \
 	&& cd bin \
-	&& java -jar ../.build/bundletool.jar build-apks --ks ../my-release-key.keystore --ks-key-alias alias_name --ks-pass pass:$(ANDROID_KEYSTORE_PASSWORD) --bundle=streamplace-$(VERSION)-android-debug.aab --output=streamplace-$(VERSION)-android-debug.apks --mode=universal \
+	&& java -jar ../.build/bundletool.jar build-apks --ks ../my-release-key.keystore --ks-key-alias "$$ANDROID_KEYSTORE_ALIAS" --ks-pass "pass:$$ANDROID_KEYSTORE_PASSWORD" --bundle=streamplace-$(VERSION)-android-debug.aab --output=streamplace-$(VERSION)-android-debug.apks --mode=universal \
 	&& unzip streamplace-$(VERSION)-android-debug.apks && mv universal.apk streamplace-$(VERSION)-android-debug.apk && rm toc.pb
 
 .PHONY: ios
@@ -544,17 +532,7 @@ link-test-macos:
 		&& exit 1; \
 	fi
 
-WINDOWS_LINK_COUNT=19
-.PHONY: link-test-windows
-link-test-windows:
-	count=$(shell x86_64-w64-mingw32-objdump -p ./build-windows-amd64/streamplace.exe | grep "DLL Name" | tr '[:upper:]' '[:lower:]' | sort | uniq | wc -l | xargs) \
-	&& echo $$count \
-	&& if [ "$$count" != "$(WINDOWS_LINK_COUNT)" ]; then echo "x86_64-w64-mingw32-objdump -p reports new libaries linked! want $(WINDOWS_LINK_COUNT) got $$count" \
-		&& x86_64-w64-mingw32-objdump -p ./build-windows-amd64/streamplace.exe | grep "DLL Name" \
-		&& exit 1; \
-	fi
-
-# Run the GitLab build pipeline locally in the builder container.
+# Run the supported build targets locally in the builder container.
 .PHONY: all
 all:
 	bash hack/all.sh
@@ -570,19 +548,10 @@ build-signable:
 sign:
 	bash hack/sign-release.sh "$(SIGN_INPUT)"
 
-.PHONY: ci
-ci: version install app node-all-platforms ci-upload-node
-
-
 .PHONY: ci-test
 ci-test: app
 	meson setup $(BUILDDIR) $(OPTS)
 	meson test -C $(BUILDDIR) go-tests
-
-.PHONY: ci-npm-release
-ci-npm-release: install
-	echo //registry.npmjs.org/:_authToken=$$NPM_TOKEN > ~/.npmrc \
-	&& npx lerna publish from-package --yes
 
 .build/bin/uniffi-bindgen-go-forked:
 	mkdir -p .build \
@@ -610,26 +579,16 @@ ci-npm-release: install
 
 # linux-amd64 (native)
 # linux-arm64
-# windows-amd64
 # darwin-amd64
 # darwin-arm64
 
-.PHONY: node-all-platforms
-node-all-platforms: app
-	meson setup build-linux-amd64 $(OPTS) --buildtype debugoptimized
-	meson compile -C build-linux-amd64 archive
-	$(MAKE) link-test-linux
-	$(MAKE) linux-arm64
-	$(MAKE) windows-amd64
-	$(MAKE) windows-amd64-startup-test
-
 .PHONY: streamplace
 streamplace: app-cached meson-setup-static
-	meson compile -C $(BUILDDIR) streamplace | grep -v drectve
+	meson compile -C $(BUILDDIR) streamplace
 
 .PHONY: archive
 archive: app-cached meson-setup-static godeps
-	meson compile -C $(BUILDDIR) archive | grep -v drectve
+	meson compile -C $(BUILDDIR) archive
 
 .PHONY: linux-amd64
 linux-amd64:
@@ -645,17 +604,6 @@ linux-arm64:
 	MESON_SETUP_OPTS="--cross-file util/linux-arm64-gnu.ini" \
 	BUILDDIR=build-linux-arm64 \
 	CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
-	$(MAKE) -j $(shell nproc) archive
-
-.PHONY: windows-amd64
-windows-amd64:
-	rustup target add x86_64-pc-windows-gnu \
-	&& CC=x86_64-w64-mingw32-gcc \
-	LD=x86_64-w64-mingw32-ld \
-	CROSS_COMPILE=1 \
-	CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc \
-	MESON_SETUP_OPTS="--cross-file util/windows-amd64-gnu.ini" \
-	BUILDDIR=build-windows-amd64 \
 	$(MAKE) -j $(shell nproc) archive
 
 .PHONY: darwin-amd64
@@ -704,11 +652,6 @@ darwin-arm64:
 		&& cd -; \
 	fi
 
-# unbuffer here is a workaround for wine trying to pop up a terminal window and failing
-.PHONY: windows-amd64-startup-test
-windows-amd64-startup-test:
-	bash -c 'set -euo pipefail && unbuffer wine64 ./build-windows-amd64/streamplace.exe self-test | cat'
-
 # link your local version of mist for dev
 .PHONY: link-mist
 link-mist:
@@ -750,7 +693,7 @@ DOCKER_BUILD_OPTS?=
 BUILDER_TARGET?=builder
 .PHONY: docker-build-builder
 docker-build-builder:
-	podman build --target=$(BUILDER_TARGET) --os=linux --arch=amd64 -f docker/build.Dockerfile -t dist.stream.place/streamplace/streamplace:$(BUILDER_TARGET) $(DOCKER_BUILD_OPTS) .
+	podman build --target=$(BUILDER_TARGET) --os=linux --arch=amd64 -f docker/build.Dockerfile -t $(DOCKER_REF) $(DOCKER_BUILD_OPTS) .
 
 .PHONY: precommit
 precommit: dockerfile-hash-precommit
@@ -760,28 +703,13 @@ dockerfile-hash-precommit:
 	# Hash every file the builder image bakes in (docker/build.Dockerfile plus
 	# its ADD inputs), so a change to any of them changes DOCKERFILE_HASH and
 	# publishes a new builder-<hash> tag instead of mutating the pinned one.
-	@bash -c 'printf "variables:\n  DOCKERFILE_HASH: `cat docker/build.Dockerfile docker/sources.list docker/winehq.key docker/llvm-snapshot.key | git hash-object --stdin`" > .ci/dockerfile-hash.yaml' \
+	@bash -c 'printf "variables:\n  DOCKERFILE_HASH: `cat docker/build.Dockerfile docker/sources.list docker/llvm-snapshot.key | git hash-object --stdin`" > .ci/dockerfile-hash.yaml' \
 	&& git add .ci/dockerfile-hash.yaml
-
-# tricks the github action for golangci-lint to run inside a container
-.PHONY: golangci-lint-container
-golangci-lint-container: docker-build-builder
-	podman run \
-		-v $$(pwd):$$(pwd) \
-		-w $$(pwd) \
-		-e PKG_CONFIG_PATH=$$(pwd)/build-linux-amd64/lib/pkgconfig \
-		-d \
-		--name golangci-lint \
-		dist.stream.place/streamplace/streamplace:$(BUILDER_TARGET) \
-		tail -f /dev/null
-	podman exec golangci-lint mkdir -p .build
-	podman exec golangci-lint touch .build/lexicon-stamp
-	podman exec golangci-lint make dev
 
 # runs a command in the build container, building if necessary
 IN_CONTAINER_CMD?=echo 'usage: make in-container IN_CONTAINER_CMD=\"<command>\"'
 DOCKER_BIN?=podman
-DOCKER_REF?=dist.stream.place/streamplace/streamplace:$(BUILDER_TARGET)
+DOCKER_REF?=ghcr.io/izumoe/streamplace:$(BUILDER_TARGET)
 DOCKER_OPTS?=
 DOCKER_PWD_MOUNT_PATH?=$$(pwd)
 .PHONY: in-container
@@ -799,45 +727,12 @@ docker-shell:
 #  | |__| || |_ ____) |  | |  | | \ \| |__| |
 #  |_____/_____|_____/   |_|  |_|  \_\\____/
 
-# distro: cut new versions, build apt and brew packages, upload to S3/gitlab
+# Versioning and optional local Debian packages. Releases publish on GitHub.
 
 .PHONY: release
 release: install
 	$(MAKE) lexicons
 	pnpm run release
-
-.PHONY: ci-release
-ci-release:
-	go install gitlab.com/gitlab-org/release-cli/cmd/release-cli
-	go run ./pkg/config/git/git.go -release -o release.yml
-	release-cli create-from-file --file release.yml
-
-.PHONY: homebrew
-homebrew:
-	$(MAKE) ci-download-file download_file=streamplace-$(VERSION)-linux-amd64.tar.gz
-	$(MAKE) ci-download-file download_file=streamplace-$(VERSION)-linux-arm64.tar.gz
-	$(MAKE) ci-download-file download_file=streamplace-$(VERSION)-darwin-amd64.tar.gz
-	$(MAKE) ci-download-file download_file=streamplace-$(VERSION)-darwin-arm64.tar.gz
-	git clone git@github.com:streamplace/homebrew-streamplace.git /tmp/homebrew-streamplace
-	go run ./pkg/config/git/git.go -homebrew -o /tmp/homebrew-streamplace/Formula/streamplace.rb
-
-.PHONY: ci-homebrew
-ci-homebrew:
-	git config --global user.name "Streamplace Homebrew Robot"
-	git config --global user.email support@stream.place
-	mkdir -p ~/.ssh
-	echo "Host * \n\
-	  StrictHostKeyChecking no \n\
-	  UserKnownHostsFile=/dev/null" > ~/.ssh/config
-	echo "$$CI_HOMEBREW_KEY_BASE64" | base64 -d > ~/.ssh/id_ed25519
-	chmod 600 ~/.ssh/id_ed25519
-
-	chmod 600 ~/.ssh/config
-	$(MAKE) homebrew
-	cd /tmp/homebrew-streamplace \
-	&& git add . \
-	&& git commit -m "Update streamplace $(VERSION)" \
-	&& git push
 
 FPM_BASE_OPTS= \
 	-s dir \
@@ -868,121 +763,6 @@ pkg-linux-amd64:
 .PHONY: pkg-linux-arm64
 pkg-linux-arm64:
 	$(MAKE) deb-pkg SP_ARCH_NAME=arm64
-
-.PHONY: pkg-darwin-amd64
-pkg-darwin-amd64:
-	echo todo
-
-.PHONY: pkg-darwin-arm64
-pkg-darwin-arm64:
-	echo todo
-
-.PHONY: pkg-windows-amd64
-pkg-windows-amd64:
-	echo todo
-
-.PHONY: deb-release
-deb-release:
-	aptly repo create -distribution=all -component=main streamplace-releases
-	aptly mirror create old-version $$S3_PUBLIC_URL/debian all
-	aptly mirror update old-version
-	aptly repo import old-version streamplace-releases streamplace
-	aptly repo add streamplace-releases \
-		bin/streamplace-$(VERSION)-linux-arm64.deb \
-		bin/streamplace-$(VERSION)-linux-amd64.deb
-	aptly snapshot create streamplace-$(VERSION) from repo streamplace-releases
-	aptly publish snapshot -distribution=all streamplace-$(VERSION) s3:streamplace-releases:
-
-.PHONY: ci-deb-release
-ci-deb-release:
-	$(MAKE) ci-download-file download_file=streamplace-$(VERSION)-linux-amd64.deb
-	$(MAKE) ci-download-file download_file=streamplace-$(VERSION)-linux-arm64.deb
-	echo $$CI_SIGNING_KEY_BASE64 | base64 -d | gpg --import
-	gpg --armor --export | gpg --no-default-keyring --keyring trustedkeys.gpg --import
-	echo '{"S3PublishEndpoints":{"streamplace-releases":{"region":"'$$S3_REGION'","bucket":"'$$S3_BUCKET_NAME'","endpoint":"'$$S3_ENDPOINT'","acl":"public-read","prefix":"debian"}}}' > ~/.aptly.conf
-	$(MAKE) deb-release
-
-#    _____ _____
-#   / ____|_   _|
-#  | |      | |
-#  | |      | |
-#  | |____ _| |_
-#   \_____|_____|
-
-# mostly "do a thing and then gitlab upload the artifact"
-
-.PHONY: ci-upload
-ci-upload: ci-upload-node ci-upload-android
-
-.PHONY: ci-upload-node-linux-amd64
-ci-upload-node-linux-amd64:
-	$(MAKE) ci-upload-file upload_file=streamplace-$(VERSION)-linux-amd64.tar.gz \
-	&& $(MAKE) ci-upload-file upload_file=streamplace-$(VERSION)-linux-amd64.deb
-
-.PHONY: ci-upload-node-linux-arm64
-ci-upload-node-linux-arm64:
-	$(MAKE) ci-upload-file upload_file=streamplace-$(VERSION)-linux-arm64.tar.gz \
-	&& $(MAKE) ci-upload-file upload_file=streamplace-$(VERSION)-linux-arm64.deb
-
-.PHONY: ci-upload-node-darwin-arm64
-ci-upload-node-darwin-arm64:
-	export file=streamplace-$(VERSION)-darwin-arm64.tar.gz \
-	&& $(MAKE) ci-upload-file upload_file=$$file;
-
-.PHONY: ci-upload-node-darwin-amd64
-ci-upload-node-darwin-amd64:
-	export file=streamplace-$(VERSION)-darwin-amd64.tar.gz \
-	&& $(MAKE) ci-upload-file upload_file=$$file;
-
-.PHONY: ci-upload-node-windows-amd64
-ci-upload-node-windows-amd64:
-	$(MAKE) ci-upload-file upload_file=streamplace-$(VERSION)-windows-amd64.zip
-
-.PHONY: ci-upload-node-macos
-ci-upload-node-macos: node-all-platforms-macos
-	for GOOS in darwin; do \
-		for GOARCH in amd64 arm64; do \
-			export file=streamplace-$(VERSION)-$$GOOS-$$GOARCH.tar.gz \
-			&& $(MAKE) ci-upload-file upload_file=$$file; \
-		done \
-	done;
-
-.PHONY: ci-upload-android
-ci-upload-android: android
-	$(MAKE) ci-upload-android-debug \
-	&& $(MAKE) ci-upload-android-release
-
-.PHONY: ci-upload-android-debug
-ci-upload-android-debug:
-	$(MAKE) ci-upload-file upload_file=streamplace-$(VERSION)-android-debug.apk \
-	&& $(MAKE) ci-upload-file upload_file=streamplace-$(VERSION)-android-debug.aab
-
-.PHONY: ci-upload-android-release
-ci-upload-android-release:
-	$(MAKE) ci-upload-file upload_file=streamplace-$(VERSION)-android-release.apk \
-	&& $(MAKE) ci-upload-file upload_file=streamplace-$(VERSION)-android-release.aab
-
-.PHONY: ci-upload-ios
-ci-upload-ios: ios
-	$(MAKE) ci-upload-file upload_file=streamplace-$(VERSION)-ios-release.xcarchive.tar.gz
-
-upload_file?=""
-.PHONY: ci-upload-file
-ci-upload-file:
-	curl \
-		--fail-with-body \
-		--header "JOB-TOKEN: $$CI_JOB_TOKEN" \
-		--upload-file bin/$(upload_file) \
-		"$$CI_API_V4_URL/projects/$$CI_PROJECT_ID/packages/generic/$(BRANCH)/$(VERSION)/$(upload_file)";
-
-download_file?=""
-.PHONY: ci-download-file
-ci-download-file:
-	curl \
-		--fail-with-body \
-		--header "JOB-TOKEN: $$CI_JOB_TOKEN" \
-		-o bin/$(download_file) \
-		"$$CI_API_V4_URL/projects/$$CI_PROJECT_ID/packages/generic/$(BRANCH)/$(VERSION)/$(download_file)";
 
 .PHONY: c2pa-types
 c2pa-types:

@@ -1,5 +1,5 @@
 # amd64-only MistServer companion image published to ghcr.io by
-# .github/workflows/docker.yaml. amd64 only because the upstream MistServer
+# .github/workflows/build.yaml. amd64 only because the upstream MistServer
 # release (mistserver_64) is x86-64. The streamplace binary is baked in from the
 # build context; see docker/release.ghcr.Dockerfile for the rationale.
 FROM --platform=linux/amd64 ubuntu:24.04
