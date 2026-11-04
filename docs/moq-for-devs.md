@@ -79,6 +79,40 @@ connection negotiates its protocol version through ALPN.
 | `--moq-addr` | `SP_MOQ_ADDR` | `:38443`                                         | UDP listen address; an empty value disables the listener |
 | `--moq-url`  | `SP_MOQ_URL`  | Derived from `--server-host` and the listen port | Public `moqt://` URL advertised to subscribers           |
 
+`--moq-relay-url` (`SP_MOQ_RELAY_URL`) instead opens an outbound connection
+and advertises that relay in the existing `moqURL` field. Use it when the origin
+is behind an HTTP tunnel or cannot receive public UDP. It shares the local
+listener's on-demand broadcasts, preserving the signed source bytes and playback
+catalogs without re-encoding. The websocket replicator must be enabled and
+`--disable-syndication` must be off.
+
+For a local macOS node using the public test relay:
+
+```sh
+SP_MOQ_RELAY_URL=https://cdn.moq.dev/anon/your-unique-node-name \
+  ./build-darwin-arm64/streamplace --moq-addr=""
+```
+
+Choose a unique namespace beneath `/anon/`. Media served there is public.
+The relay URL is advertised to viewers, so credentials and query parameters
+are rejected; this option does not provide authenticated relay publishing.
+An empty `--moq-addr` disables only the inbound listener; relay publishing and
+RTMP ingest still work. Keep a nonempty address to serve direct clients too.
+When a relay is configured it takes precedence over `--moq-url` for discovery;
+the origin listener's certificate fingerprint is not attached to the relay URL.
+Relay connections retry after failure and reconnect without stopping ingest.
+
+To exercise synthetic signed-media delivery through a public relay explicitly:
+
+```sh
+SP_MOQ_RELAY_TEST=https://cdn.moq.dev/anon/your-unique-test-name \
+  go test -count=1 ./pkg/replication/websocketrep -run '^TestMoqPublicRelay$'
+```
+
+Use the native Go build environment described below for this test, as for other
+media package tests. Without `SP_MOQ_RELAY_TEST`, it is skipped; normal tests use
+a real loopback QUIC relay.
+
 Make the advertised host and UDP port reachable from subscribers. An HTTPS
 reverse proxy alone does not carry the MoQ connection. The MoQ listener
 terminates TLS itself, including when the node's HTTP server sits behind a proxy.
@@ -108,7 +142,9 @@ moq --connect moqt://host:38443 --connect-tls-fingerprint <certhash> \
 
 The DOM app's low-latency mode tries MoQ when the browser has a secure context,
 WebTransport, WebCodecs and Web Audio. If discovery or playback fails, it falls
-back to WebRTC, then HLS. Standard mode and VOD use HLS. An explicit `webrtc://`
+back to WebRTC, then HLS. Visible, unpaused MoQ startup gets two seconds to
+render its first frame; established playback keeps a ten-second stall allowance.
+Standard mode and VOD use HLS. An explicit `webrtc://`
 source selects WebRTC directly.
 
 The player asks the configured node for

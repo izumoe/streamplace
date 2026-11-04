@@ -115,12 +115,13 @@ func (r *WebsocketReplicator) Start(ctx context.Context, cli *config.CLI) error 
 			return nil
 		})
 	}
-	if cli.MoqAddr != "" {
+	if cli.MoqAddr != "" || cli.MoqRelayURL != "" {
 		r.group.Go(func() error {
 			return r.serveMoQ(ctx)
 		})
 	}
-	return r.startBusSubscribe(ctx)
+	r.group.Go(func() error { return r.startBusSubscribe(ctx) })
+	return r.group.Wait()
 }
 
 // pollOrigins learns about origins from the station's shared statedb rather
@@ -476,6 +477,9 @@ func (r *WebsocketReplicator) BuildOriginRecord(origin *placestream.BroadcastOri
 // --moq-url override or this host on --moq-addr's port, carrying the
 // self-signed certificate's hash for the peer to pin; "" with no listener.
 func (r *WebsocketReplicator) getMyMoqURL() string {
+	if r.cli.MoqRelayURL != "" {
+		return r.cli.MoqRelayURL
+	}
 	if r.cli.MoqAddr == "" {
 		return ""
 	}

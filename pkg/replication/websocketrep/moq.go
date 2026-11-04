@@ -49,9 +49,41 @@ var moqLivenessInterval = time.Second
 // node's ACME one still on its way, asks for it again.
 var moqTLSRetry = 5 * time.Second
 
-// serveMoQ runs the node's Media over QUIC listener on --moq-addr: every
-// stream live on this node's bus, for the peers that pull it.
+// serveMoQ shares the same on-demand broadcasts between the local listener
+// and an outbound relay. Neither path re-encodes or re-signs media.
 func (r *WebsocketReplicator) serveMoQ(ctx context.Context) error {
+	origin := official.NewOriginProducer()
+	requests, err := origin.Dynamic("", official.Route{})
+	if err != nil {
+		return err
+	}
+	defer requests.Cancel()
+	g, gctx := errgroup.WithContext(ctx)
+	if r.cli.MoqAddr != "" {
+		g.Go(func() error { return r.listenMoQ(gctx, origin) })
+	}
+	if r.cli.MoqRelayURL != "" {
+		g.Go(func() error { return r.publishMoQRelay(gctx, origin) })
+	}
+	g.Go(func() error {
+		var wg sync.WaitGroup
+		defer wg.Wait()
+		for req, err := range requests.Requests(gctx) {
+			if err != nil {
+				return err
+			}
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				r.serveBroadcast(gctx, req)
+			}()
+		}
+		return nil
+	})
+	return g.Wait()
+}
+
+func (r *WebsocketReplicator) listenMoQ(ctx context.Context, origin *official.OriginProducer) error {
 	if r.MoqTLS == nil {
 		return fmt.Errorf("moq listener has no TLS files")
 	}
@@ -67,12 +99,6 @@ func (r *WebsocketReplicator) serveMoQ(ctx context.Context) error {
 		case <-time.After(moqTLSRetry):
 		}
 	}
-	origin := official.NewOriginProducer()
-	requests, err := origin.Dynamic("", official.Route{})
-	if err != nil {
-		return err
-	}
-	defer requests.Cancel()
 	// Go's ":port" means every interface, which the transport only takes
 	// spelled out; its "[::]" socket is dual-stack.
 	bind := r.cli.MoqAddr
@@ -93,22 +119,36 @@ func (r *WebsocketReplicator) serveMoQ(ctx context.Context) error {
 		return nil
 	})
 	g.Go(func() error { return srv.Serve(gctx) })
-	g.Go(func() error {
-		var wg sync.WaitGroup
-		defer wg.Wait()
-		for req, err := range requests.Requests(gctx) {
-			if err != nil {
-				return err
-			}
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				r.serveBroadcast(gctx, req)
-			}()
-		}
-		return nil
-	})
 	return g.Wait()
+}
+
+// publishMoQRelay keeps the outbound route available across relay restarts.
+// Failed initial connections use the same bounded backoff as origin pulls.
+func (r *WebsocketReplicator) publishMoQRelay(ctx context.Context, origin *official.OriginProducer) error {
+	delay := pullBackoffMin
+	for {
+		client, err := r.dialMoq(ctx, r.cli.MoqRelayURL,
+			official.WithPublishOrigin(origin),
+			official.WithReconnect(true),
+			official.WithBackoff(official.Backoff{Timeout: official.RetryForever}),
+		)
+		if err == nil {
+			log.Log(ctx, "moq relay connected")
+			delay = pullBackoffMin
+			err = client.Session().Closed(ctx)
+			_ = client.Close()
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		log.Warn(ctx, "moq relay disconnected; retrying", "error", err, "backoff", delay)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(delay):
+		}
+		delay = min(delay*2, pullBackoffMax)
+	}
 }
 
 // serveBroadcast answers a request for a streamer's broadcast: a
@@ -502,7 +542,7 @@ func cmafFragments(track []byte) (fragments [][]byte, catalog []byte, err error)
 
 // dialMoq opens a session to a moqt:// URL, pinning the certificate its
 // certhash parameter names when it has one.
-func (r *WebsocketReplicator) dialMoq(ctx context.Context, rawURL string) (*official.Client, error) {
+func (r *WebsocketReplicator) dialMoq(ctx context.Context, rawURL string, options ...official.ClientOption) (*official.Client, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, fmt.Errorf("could not parse moq URL: %w", err)
@@ -526,7 +566,7 @@ func (r *WebsocketReplicator) dialMoq(ctx context.Context, rawURL string) (*offi
 	}
 	dialCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	client, err := official.Dial(dialCtx, u.String(), opts...)
+	client, err := official.Dial(dialCtx, u.String(), append(opts, options...)...)
 	if err != nil {
 		spmetrics.ReplicationConnectErrorsTotal.Inc()
 		return nil, fmt.Errorf("%w (%s): %w", errMoqUnreachable, rawURL, err)

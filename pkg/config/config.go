@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -155,6 +156,7 @@ type CLI struct {
 	WebsocketURL                string
 	MoqAddr                     string
 	MoqURL                      string
+	MoqRelayURL                 string
 	BehindHTTPSProxy            bool
 	SegmentDebugDir             string
 	AdminDIDs                   []string
@@ -1072,6 +1074,12 @@ func (cli *CLI) NewCommand(name string) *urfavecli.Command {
 				Sources:     urfavecli.EnvVars("SP_MOQ_ADDR"),
 			},
 			&urfavecli.StringFlag{
+				Name:        "moq-relay-url",
+				Usage:       "publish this node's MoQ broadcasts to an outbound relay and advertise that relay for playback (for example https://cdn.moq.dev/anon/unique-node)",
+				Destination: &cli.MoqRelayURL,
+				Sources:     urfavecli.EnvVars("SP_MOQ_RELAY_URL"),
+			},
+			&urfavecli.StringFlag{
 				Name:        "moq-url",
 				Usage:       "override the moqt:// url peers use to reach this node's Media over QUIC listener (default: server-host on moq-addr's port)",
 				Destination: &cli.MoqURL,
@@ -1455,6 +1463,18 @@ func (cli *CLI) CheckConfig() error {
 	}
 	if cli.DuplicateMistTest && (!cli.Secure || cli.RTMPServerAddon == "") {
 		errs = append(errs, fmt.Errorf("--duplicate-mist-test requires --secure and --rtmp-server-addon pointing to Mist"))
+	}
+	if cli.MoqRelayURL != "" {
+		u, err := url.Parse(cli.MoqRelayURL)
+		if err != nil || u.Hostname() == "" || (u.Scheme != "https" && u.Scheme != "moqt") || u.Fragment != "" || u.User != nil || u.RawQuery != "" {
+			errs = append(errs, fmt.Errorf("--moq-relay-url must be an absolute HTTPS or moqt URL without credentials, a query, or a fragment"))
+		}
+		if cli.DisableSyndication {
+			errs = append(errs, fmt.Errorf("--moq-relay-url cannot be used with --disable-syndication"))
+		}
+		if len(cli.Replicators) > 0 && !slices.Contains(cli.Replicators, ReplicatorWebsocket) {
+			errs = append(errs, fmt.Errorf("--moq-relay-url requires the websocket replicator"))
+		}
 	}
 	if cli.TranscoderURL != "" {
 		u, err := url.Parse(cli.TranscoderURL)
