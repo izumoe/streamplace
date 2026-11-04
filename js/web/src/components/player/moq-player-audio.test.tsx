@@ -22,7 +22,10 @@ type Playback = {
   };
   audio: {
     source: Watch.Audio.Source;
-    out: { timestamp: Watch.Signals.Signal<Watch.Net.Time.Milli | undefined> };
+    out: {
+      timestamp: Watch.Signals.Signal<Watch.Net.Time.Milli | undefined>;
+      stalled: Watch.Signals.Signal<boolean>;
+    };
   };
 };
 
@@ -49,6 +52,7 @@ vi.mock("@moq/watch", async (original) => {
       }),
       out: {
         timestamp: new Signal<Watch.Net.Time.Milli | undefined>(undefined),
+        stalled: new Signal(false),
       },
     };
     video = {
@@ -160,13 +164,13 @@ afterEach(async () => {
   vi.useRealTimers();
 });
 
-async function render(muted = false) {
+async function render(muted = false, paused = false) {
   await act(async () =>
     root.render(
       <MoQPlayer
         canvasRef={{ current: document.createElement("canvas") }}
         src="https://node.example/xrpc/place.stream.playback.getLivePlaylist?streamer=alice"
-        paused={false}
+        paused={paused}
         muted={muted}
         volume={1}
         onUnavailable={unavailable}
@@ -249,7 +253,7 @@ it("reports MoQ receiver timing from the real sync clock, without inventing broa
   vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
   vi.spyOn(performance, "now").mockReturnValue(10_000);
   const sdk = await import("@moq/watch");
-  await render(true);
+  await render();
   const player = fixture.player as Playback;
   await act(async () => {
     player.sync.received(sdk.Net.Time.Milli(6000));
@@ -269,12 +273,35 @@ it("reports MoQ receiver timing from the real sync clock, without inventing broa
   });
   expect(stats?.avSyncMs).toBe(-100);
   await act(async () => {
+    player.renderer.out.timestamp.set(sdk.Net.Time.Milli(0));
+    player.audio.out.timestamp.set(sdk.Net.Time.Milli(0));
+    await vi.advanceTimersByTimeAsync(1000);
+  });
+  expect(stats?.avSyncMs).toBe(0);
+  await act(async () => {
     player.renderer.out.timestamp.set(undefined);
     await vi.advanceTimersByTimeAsync(1000);
   });
   expect(stats?.liveEdgeDelay).toBeUndefined();
   expect(stats?.avSyncMs).toBeUndefined();
 });
+
+it.each(["muted", "paused", "stalled"])(
+  "does not report stream position as A/V skew when audio is %s",
+  async (state) => {
+    vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+    const sdk = await import("@moq/watch");
+    await render(state === "muted", state === "paused");
+    const player = fixture.player as Playback;
+    await act(async () => {
+      player.audio.out.stalled.set(state === "stalled");
+      player.audio.out.timestamp.set(sdk.Net.Time.Milli(0));
+      player.renderer.out.timestamp.set(sdk.Net.Time.Milli(528_870));
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    expect(stats?.avSyncMs).toBeUndefined();
+  },
+);
 
 it("allows the requested playout buffer before declaring first-frame startup stalled", async () => {
   fixture.audio = false;

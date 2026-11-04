@@ -167,7 +167,11 @@ export function MoQPlayer(props: MoQPlayerProps) {
         publicationBatchMs: catalog && getMoqBatchDuration(catalog),
         roundTripTimeMs: connection?.probe.peek()?.rtt,
         avSyncMs:
-          video === undefined || audio === undefined
+          video === undefined ||
+          audio === undefined ||
+          state.muted ||
+          state.paused ||
+          player.audio.out.stalled.peek()
             ? undefined
             : video - audio,
         totalFrames: frames,
