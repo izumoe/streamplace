@@ -120,6 +120,37 @@ it("keeps an explicit WebRTC source on WebRTC without discovery requests", async
   }
 });
 
+it("falls back from failed WebRTC without saving it as the viewer's preference", async () => {
+  localStorage.setItem("player-transport", "webrtc");
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  try {
+    await act(async () =>
+      root.render(
+        <FullscreenProvider>
+          <Player
+            src="https://node.example/playlist?streamer=did:plc:alice"
+            active
+          />
+        </FullscreenProvider>,
+      ),
+    );
+    const video = container.querySelector("video")!;
+    Object.defineProperty(video, "error", { value: { code: 2 } });
+    await act(async () => video.dispatchEvent(new Event("error")));
+    expect(
+      container
+        .querySelector("[data-playback-transport]")
+        ?.getAttribute("data-playback-transport"),
+    ).toBe("hls");
+    expect(localStorage.getItem("player-transport")).toBe("webrtc");
+  } finally {
+    await act(async () => root.unmount());
+    container.remove();
+  }
+});
+
 it("keeps the viewer unmuted when switching from MoQ to standard playback", async () => {
   vi.stubGlobal("isSecureContext", true);
   for (const api of [
@@ -173,6 +204,7 @@ it("keeps the viewer unmuted when switching from MoQ to standard playback", asyn
         ?.getAttribute("data-playback-transport"),
     ).toBe("hls");
     expect(container.querySelector("video")!.muted).toBe(false);
+    expect(localStorage.getItem("player-transport")).toBe("hls");
   } finally {
     await act(async () => root.unmount());
     container.remove();

@@ -277,7 +277,6 @@ export function Player({
       // WebRTC failed; fall back to HLS automatically.
       if (useWebRTCRef.current) {
         setUseWebRTC(false);
-        writeTransportPreference(false);
       }
     },
     [isStreamer],
