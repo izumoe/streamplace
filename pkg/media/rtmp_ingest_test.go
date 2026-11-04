@@ -370,24 +370,65 @@ func TestRTMPDirectIngestPublishesMultitrackBeforeEOF(t *testing.T) {
 	red := readRTMPFixture(t, "ertmp-red-h264.mp4")
 	blue := readRTMPFixture(t, "ertmp-blue-h264.mp4")
 	green := readRTMPFixture(t, "ertmp-green-av1.mp4")
-	session := rtmpSessionForFixtures(t, red, red, blue, green)
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-	mm := &MediaManager{cli: &config.CLI{AllowedStreams: []string{session.MediaSigner.Streamer()}}, bus: bus.NewBus()}
-	var first []byte
-	err := mm.rtmpIngestSession(ctx, session, func(_ context.Context, segment []byte) error {
-		if first == nil {
-			first = segment
-			cancel()
-		}
-		return nil
-	})
-	require.ErrorIs(t, err, context.Canceled, "a complete live batch must publish while packet input remains open")
-	require.NotEmpty(t, first)
-	result, err := ValidateMP4Media(t.Context(), first)
-	require.NoError(t, err)
-	require.Len(t, result.MediaData.Video, 3)
-	require.Len(t, result.MediaData.Audio, 1)
+	for _, tc := range []struct {
+		name   string
+		videos []rtmpFixture
+		bursts bool
+	}{
+		{"mixed codecs", []rtmpFixture{red, blue, green}, false},
+		{"three H264", []rtmpFixture{red, blue, red}, false},
+		{"three H264 uneven arrival", []rtmpFixture{red, blue, red}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			session := rtmpSessionForFixtures(t, red, tc.videos...)
+			if tc.bursts {
+				// Independent encoders can deliver one track ahead of another.
+				// Keep each track ordered, but deliver audio and then each video's
+				// samples in 200ms bursts rather than a merged DTS ordering.
+				events := make([]any, 0, len(session.EventChan))
+				for len(session.EventChan) > 0 {
+					events = append(events, <-session.EventChan)
+				}
+				stamp := func(event any) (time.Duration, int) {
+					switch packet := event.(type) {
+					case *RTMPVideoData:
+						return packet.DTS / (200 * time.Millisecond), packet.TrackID + 1
+					case *RTMPAACData:
+						return packet.PTS / (200 * time.Millisecond), 0
+					}
+					panic("unexpected test event")
+				}
+				sort.SliceStable(events, func(i, j int) bool {
+					ti, trackI := stamp(events[i])
+					tj, trackJ := stamp(events[j])
+					if ti != tj {
+						return ti < tj
+					}
+					return trackI < trackJ
+				})
+				for _, event := range events {
+					session.EventChan <- event
+				}
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			mm := &MediaManager{cli: &config.CLI{AllowedStreams: []string{session.MediaSigner.Streamer()}}, bus: bus.NewBus()}
+			var first []byte
+			err := mm.rtmpIngestSession(ctx, session, func(_ context.Context, segment []byte) error {
+				if first == nil {
+					first = segment
+					cancel()
+				}
+				return nil
+			})
+			require.ErrorIs(t, err, context.Canceled, "a complete live batch must publish while packet input remains open")
+			require.NotEmpty(t, first)
+			result, err := ValidateMP4Media(t.Context(), first)
+			require.NoError(t, err)
+			require.Len(t, result.MediaData.Video, 3)
+			require.Len(t, result.MediaData.Audio, 1)
+		})
+	}
 }
 
 func TestRTMPMultitrackCompletionAndExtraction(t *testing.T) {
