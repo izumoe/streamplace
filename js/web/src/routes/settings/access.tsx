@@ -1,5 +1,4 @@
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useNodeAccess } from "@/hooks/use-node-access";
 import { useNodeActorSearch } from "@/hooks/use-node-actor-search";
@@ -10,7 +9,7 @@ import {
 } from "@/lib/store/hooks";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { place } from "streamplace";
 
@@ -18,7 +17,8 @@ export const Route = createFileRoute("/settings/access")({
   component: NodeAccessSettings,
 });
 type Grant = place.stream.access.defs.Grant;
-type Capability = "streamer" | "chat" | "syndicate" | "vod";
+const editableCapabilities = ["streamer", "chat", "syndicate", "vod"] as const;
+type Capability = (typeof editableCapabilities)[number];
 type Mode = "open" | "allowlist" | "off";
 
 function NodeAccessSettings() {
@@ -47,6 +47,7 @@ function NodeAccessEditor() {
       return agent.client.call(place.stream.access.listGrants, {});
     },
   });
+  const editor = useRef<HTMLDetailsElement>(null);
   const [subject, setSubject] = useState("");
   const [accountQuery, setAccountQuery] = useState("");
   const actors = useNodeActorSearch(
@@ -144,12 +145,36 @@ function NodeAccessEditor() {
     admin: t("node-access-administration", "Node administration"),
     viewer: t("node-access-public-viewing", "Public viewing"),
   };
-  const people = new Map<string, Grant[]>();
+  const columns: string[] = [...editableCapabilities, "admin"];
+  const people = new Map<string, Map<string, Grant[]>>();
   for (const entry of grants.data?.grants ?? []) {
-    const entries = people.get(entry.subject) ?? [];
+    if (!columns.includes(entry.capability)) columns.push(entry.capability);
+    let permissions = people.get(entry.subject);
+    if (!permissions) {
+      permissions = new Map();
+      people.set(entry.subject, permissions);
+    }
+    const entries = permissions.get(entry.capability) ?? [];
     entries.push(entry);
-    people.set(entry.subject, entries);
+    permissions.set(entry.capability, entries);
   }
+  const startRule = (subject: string, capability: Capability) => {
+    if (busy || !status.isAdmin) return;
+    setSubject(subject);
+    setAccountQuery(subject);
+    setCapability(capability);
+    setEffect("allow");
+    setReason("");
+    setExpires("");
+    setError(null);
+    if (editor.current) {
+      editor.current.open = true;
+      editor.current.querySelector("input")?.focus();
+    }
+  };
+  const streamingMode = status.data?.capabilities.find(
+    (entry) => entry.capability === "streamer",
+  )?.mode;
 
   if (!did || !agent)
     return <p>{t("node-access-sign-in", "Sign in to manage node access.")}</p>;
@@ -206,17 +231,28 @@ function NodeAccessEditor() {
           {error ?? grants.error?.message}
         </p>
       )}
-      <Card className="gap-4 p-4">
-        <h2 className="text-lg font-semibold">
-          {t("node-access-policy", "Streaming policy")}
-        </h2>
+      <details
+        data-access-policy-editor
+        className="max-w-3xl space-y-4 rounded-md border p-4"
+      >
+        <summary className="cursor-pointer font-medium">
+          <span>{t("node-access-policy", "Streaming policy")}</span>
+          {" · "}
+          <span className="text-muted-foreground">
+            {streamingMode === "open"
+              ? t("node-access-any-account", "Any authenticated account")
+              : streamingMode === "off"
+                ? t("node-access-disabled", "Disabled")
+                : t("node-access-approved-only", "Approved accounts only")}
+          </span>
+        </summary>
         <p className="text-muted-foreground text-sm">
           {t(
             "node-access-policy-help",
             "Saved policies take effect without a restart and override startup defaults. Restrictions disconnect existing publishers; reopening requires them to reconnect.",
           )}
         </p>
-        {(["streamer", "chat", "syndicate", "vod"] as const).map((cap) => {
+        {editableCapabilities.map((cap) => {
           const policy = status.data?.capabilities.find(
             (entry) => entry.capability === cap,
           );
@@ -311,7 +347,7 @@ function NodeAccessEditor() {
             "Explicit denials still apply in open mode. Public viewing stays open. Network services disabled at startup remain disabled.",
           )}
         </p>
-      </Card>
+      </details>
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold">
           {t("node-access-people", "People and approvals")}
@@ -324,11 +360,15 @@ function NodeAccessEditor() {
           {t("node-access-refresh", "Refresh")}
         </Button>
       </div>
-      <details data-access-editor className="rounded-md border p-4">
+      <details
+        ref={editor}
+        data-access-editor
+        className="rounded-md border p-4"
+      >
         <summary className="cursor-pointer font-medium">
           {t("node-access-add-account", "Add account")}
         </summary>
-        <form onSubmit={create} className="space-y-4 pt-4">
+        <form onSubmit={create} className="max-w-3xl space-y-4 pt-4">
           <label className="block space-y-2">
             <span>{t("node-access-find-account", "Find an account")}</span>
             <Input
@@ -397,19 +437,18 @@ function NodeAccessEditor() {
             <span>{t("node-access-capability", "Capability")}</span>
             <select
               className="border-input bg-background h-12 w-full rounded-md border px-3"
+              name="capability"
               value={capability}
               disabled={busy}
               onChange={(event) =>
                 setCapability(event.target.value as Capability)
               }
             >
-              {(["streamer", "chat", "syndicate", "vod"] as const).map(
-                (cap) => (
-                  <option key={cap} value={cap}>
-                    {capabilityLabels[cap]}
-                  </option>
-                ),
-              )}
+              {editableCapabilities.map((cap) => (
+                <option key={cap} value={cap}>
+                  {capabilityLabels[cap]}
+                </option>
+              ))}
             </select>
           </label>
           <label className="block space-y-2">
@@ -476,115 +515,202 @@ function NodeAccessEditor() {
       {grants.isPending && (
         <p role="status">{t("node-access-loading", "Loading node access…")}</p>
       )}
-      <div className="max-w-full overflow-x-auto rounded-md border">
-        <table className="w-full text-left text-sm">
+      <div className="max-h-screen max-w-full overflow-auto rounded-md border">
+        <table className="w-full border-separate border-spacing-0 text-left text-sm">
           <caption className="sr-only">
             {t("node-access-entries", "Access entries")}
           </caption>
-          <thead className="bg-muted text-muted-foreground">
-            <tr className="border-b">
-              <th scope="col" className="px-3 py-2 font-medium">
+          <thead>
+            <tr>
+              <th
+                scope="col"
+                className="bg-muted sticky top-0 z-20 border-r border-b px-3 py-3 font-medium md:left-0"
+              >
                 {t("account", "Account")}
               </th>
-              <th scope="col" className="px-3 py-2 font-medium">
-                {t("node-access-permission", "Permission")}
-              </th>
-              <th scope="col" className="px-3 py-2 font-medium">
-                {t("node-access-details", "Details")}
-              </th>
-              <th scope="col" className="px-3 py-2 text-right font-medium">
-                {t("node-access-actions", "Actions")}
-              </th>
+              {columns.map((capability) => (
+                <th
+                  key={capability}
+                  scope="col"
+                  className="bg-muted sticky top-0 z-10 min-w-36 border-r border-b px-3 py-3 font-medium last:border-r-0"
+                >
+                  {capabilityLabels[capability] ?? capability}
+                </th>
+              ))}
             </tr>
           </thead>
-          {[...people].map(([subject, entries]) => (
-            <tbody
-              key={subject}
-              data-access-subject={subject}
-              className="divide-y border-b last:border-b-0"
-            >
-              {entries.map((entry, index) => {
-                const capabilityLabel =
-                  capabilityLabels[entry.capability] ?? entry.capability;
-                const decision = entry.effectiveAllowed
-                  ? t("node-access-permitted", "permitted")
-                  : t("node-access-denied", "denied");
-                const revokeLabel =
-                  entry.capability === "chat" && entry.effect === "deny"
-                    ? t("node-access-unban-chat", "Unban chat")
-                    : entry.effect === "deny"
-                      ? t("node-access-remove-denial", "Remove denial")
-                      : t("node-access-revoke-approval", "Revoke approval");
-                return (
-                  <tr
-                    key={
-                      entry.id ||
-                      `${entry.source}:${entry.subject}:${entry.capability}:${entry.effect}`
-                    }
-                    data-entry-id={entry.id}
-                  >
-                    {index === 0 && (
-                      <th
-                        scope="rowgroup"
-                        rowSpan={entries.length}
-                        className="max-w-40 min-w-24 px-3 py-3 align-top font-mono font-normal break-all"
-                      >
-                        {subject}
-                      </th>
-                    )}
-                    <th scope="row" className="px-3 py-3 align-top font-normal">
-                      <p className="font-medium">
-                        {capabilityLabel} {decision}
-                      </p>
-                      <p className="text-muted-foreground">
-                        {entry.effect === "allow"
-                          ? t("node-access-allowance", "Allowance")
-                          : t("node-access-denial", "Denial")}
-                      </p>
-                    </th>
-                    <td className="text-muted-foreground min-w-28 px-3 py-3 align-top">
-                      <p>
-                        {entry.source === "stored"
-                          ? t("node-access-stored", "Saved on this node")
-                          : t(
-                              "node-access-configuration",
-                              "Configuration entry",
+          <tbody>
+            {[...people].map(([subject, permissions]) => (
+              <tr key={subject} data-access-subject={subject}>
+                <th
+                  scope="row"
+                  className="bg-background w-56 min-w-48 border-r border-b px-3 py-3 align-top font-mono font-normal break-all md:sticky md:left-0 md:z-10"
+                >
+                  {subject}
+                </th>
+                {columns.map((capability) => {
+                  const entries = permissions.get(capability);
+                  const label = capabilityLabels[capability] ?? capability;
+                  const editable = editableCapabilities.includes(
+                    capability as Capability,
+                  );
+                  const mode = status.data?.capabilities.find(
+                    (entry) => entry.capability === capability,
+                  )?.mode;
+                  const policyLabel =
+                    mode === "open"
+                      ? t("node-access-any-source", "Any account")
+                      : mode === "off"
+                        ? t("node-access-disabled", "Disabled")
+                        : t(
+                            "node-access-approved-only",
+                            "Approved accounts only",
+                          );
+                  const decision = entries?.[0].effectiveAllowed
+                    ? t("node-access-permitted", "permitted")
+                    : t("node-access-denied", "denied");
+                  return (
+                    <td
+                      key={capability}
+                      data-access-capability={capability}
+                      className="border-r border-b p-3 align-top last:border-r-0"
+                    >
+                      {entries ? (
+                        <details>
+                          <summary
+                            className="min-h-11 cursor-pointer content-center font-medium md:min-h-0"
+                            aria-label={`${label}: ${decision} (${entries.length})`}
+                          >
+                            {decision}
+                            <span className="text-muted-foreground ml-2 text-xs">
+                              ({entries.length})
+                            </span>
+                          </summary>
+                          <div className="mt-3 min-w-48 space-y-3">
+                            {entries.map((entry) => {
+                              const revokeLabel =
+                                entry.capability === "chat" &&
+                                entry.effect === "deny"
+                                  ? t("node-access-unban-chat", "Unban chat")
+                                  : entry.effect === "deny"
+                                    ? t(
+                                        "node-access-remove-denial",
+                                        "Remove denial",
+                                      )
+                                    : t(
+                                        "node-access-revoke-approval",
+                                        "Revoke approval",
+                                      );
+                              return (
+                                <div
+                                  key={
+                                    entry.id ||
+                                    `${entry.source}:${entry.capability}:${entry.effect}`
+                                  }
+                                  data-entry-id={entry.id}
+                                  className="space-y-2 border-t pt-3"
+                                >
+                                  <p>
+                                    {label} {decision}
+                                  </p>
+                                  <p className="text-muted-foreground text-xs">
+                                    {entry.effect === "allow"
+                                      ? t("node-access-allowance", "Allowance")
+                                      : t("node-access-denial", "Denial")}{" "}
+                                    ·{" "}
+                                    {entry.source === "stored"
+                                      ? t(
+                                          "node-access-stored",
+                                          "Saved on this node",
+                                        )
+                                      : t(
+                                          "node-access-configuration",
+                                          "Configuration entry",
+                                        )}
+                                  </p>
+                                  {entry.reason && (
+                                    <p className="max-w-64 break-words">
+                                      {entry.reason}
+                                    </p>
+                                  )}
+                                  {entry.expiresAt && (
+                                    <p className="text-muted-foreground text-xs">
+                                      {t("node-access-expiry", "Expiry")}:{" "}
+                                      <time dateTime={entry.expiresAt}>
+                                        {new Date(
+                                          entry.expiresAt,
+                                        ).toLocaleString()}
+                                      </time>
+                                    </p>
+                                  )}
+                                  {entry.source === "stored" ? (
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      disabled={busy}
+                                      onClick={() => void revoke(entry)}
+                                    >
+                                      {revokeLabel}
+                                    </Button>
+                                  ) : (
+                                    <span className="text-muted-foreground text-xs">
+                                      {t("node-access-read-only", "Read-only")}
+                                    </span>
+                                  )}
+                                </div>
+                              );
+                            })}
+                            {editable && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                disabled={busy}
+                                onClick={() =>
+                                  startRule(subject, capability as Capability)
+                                }
+                              >
+                                {t("node-access-set-rule", "Set rule")}
+                              </Button>
                             )}
-                      </p>
-                      {entry.reason && (
-                        <p className="max-w-64 break-words">{entry.reason}</p>
-                      )}
-                      {entry.expiresAt && (
-                        <p>
-                          {t("node-access-expiry", "Expiry")}:{" "}
-                          <time dateTime={entry.expiresAt}>
-                            {new Date(entry.expiresAt).toLocaleString()}
-                          </time>
-                        </p>
-                      )}
-                    </td>
-                    <td className="px-3 py-3 text-right align-top">
-                      {entry.source === "stored" ? (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="h-auto whitespace-normal"
-                          disabled={busy}
-                          onClick={() => void revoke(entry)}
-                        >
-                          {revokeLabel}
-                        </Button>
+                          </div>
+                        </details>
                       ) : (
-                        <span className="text-muted-foreground">
-                          {t("node-access-read-only", "Read-only")}
-                        </span>
+                        <div className="space-y-1">
+                          {editable ? (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-muted-foreground h-auto min-h-11 justify-start p-0 md:min-h-0"
+                              disabled={busy}
+                              aria-label={`${t("node-access-set-rule", "Set rule")}: ${subject} · ${label}`}
+                              onClick={() =>
+                                startRule(subject, capability as Capability)
+                              }
+                            >
+                              {t(
+                                "node-access-default-policy",
+                                "Default policy",
+                              )}
+                            </Button>
+                          ) : (
+                            <span className="text-muted-foreground">
+                              {t(
+                                "node-access-default-policy",
+                                "Default policy",
+                              )}
+                            </span>
+                          )}
+                          <p className="text-muted-foreground text-xs">
+                            {policyLabel}
+                          </p>
+                        </div>
                       )}
                     </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          ))}
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
         </table>
       </div>
     </div>

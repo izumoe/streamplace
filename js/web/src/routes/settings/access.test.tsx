@@ -359,6 +359,9 @@ it("finds an account by handle and submits its DID for approval", async () => {
     )!,
     "publisher",
   );
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  });
   await expectText("publisher.test");
   const person = Array.from(
     container.querySelectorAll<HTMLButtonElement>("button"),
@@ -468,12 +471,54 @@ it("shows a table with grouped accounts and independent permission actions", asy
   expect(table?.querySelector("caption")?.textContent).toBe("Access entries");
   expect(
     Array.from(table!.querySelectorAll("thead th"), (cell) => cell.textContent),
-  ).toEqual(["Account", "Permission", "Details", "Actions"]);
+  ).toEqual([
+    "Account",
+    "Publishing",
+    "Chat",
+    "Remote carriage",
+    "Uploads and recordings",
+    "Node administration",
+  ]);
+  expect(person!.tagName).toBe("TR");
   expect(
-    person!.querySelector('th[scope="rowgroup"]')?.getAttribute("rowspan"),
-  ).toBe("2");
+    person!.querySelectorAll('[data-access-capability="streamer"]'),
+  ).toHaveLength(1);
   expect(person!.querySelectorAll("[data-entry-id]")).toHaveLength(2);
   expect(person!.querySelector('[data-entry-id="allow-id"]')).not.toBeNull();
   expect(person!.querySelector('[data-entry-id="deny-id"]')).not.toBeNull();
   expect(container.querySelectorAll("[data-access-subject]")).toHaveLength(2);
+});
+
+it("starts a permission rule from a person's default cell without saving implicitly", async () => {
+  await render();
+  await expectText("Publishing denied");
+  const person = container.querySelector(
+    '[data-access-subject="did:plc:publisher"]',
+  )!;
+  const cell = person.querySelector('[data-access-capability="chat"]')!;
+  await act(async () =>
+    (cell.querySelector("button") as HTMLButtonElement).click(),
+  );
+  expect(
+    container.querySelector<HTMLDetailsElement>("[data-access-editor]")!.open,
+  ).toBe(true);
+  expect(
+    container.querySelector<HTMLInputElement>('[aria-label="Find an account"]')!
+      .value,
+  ).toBe(subject);
+  expect(
+    container.querySelector<HTMLSelectElement>('select[name="capability"]')!
+      .value,
+  ).toBe("chat");
+  expect(requests.filter((r) => r.method === "createGrant")).toEqual([]);
+  await act(async () =>
+    container.querySelector<HTMLFormElement>("form")!.requestSubmit(),
+  );
+  await vi.waitFor(() =>
+    expect(requests.find((r) => r.method === "createGrant")?.input).toEqual({
+      subject,
+      capability: "chat",
+      effect: "allow",
+    }),
+  );
 });

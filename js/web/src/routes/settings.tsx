@@ -231,7 +231,7 @@ function DisplayNavItem({
   );
 }
 
-function MobileSettingsNav({ isAdmin }: { isAdmin: boolean }) {
+function CompactSettingsNav({ isAdmin }: { isAdmin: boolean }) {
   const { t } = useTranslation("settings");
   const { state } = useSession();
   const userProfile = useUserProfile();
@@ -255,7 +255,7 @@ function MobileSettingsNav({ isAdmin }: { isAdmin: boolean }) {
   if (!activeLink) return null;
 
   return (
-    <div className="lg:hidden">
+    <div>
       <label htmlFor="settings-mobile-nav" className="sr-only">
         {t("settings-title")}
       </label>
@@ -287,19 +287,31 @@ function MobileSettingsNav({ isAdmin }: { isAdmin: boolean }) {
 function SettingsLayout() {
   const { isAdmin } = useNodeAccess();
   const { t } = useTranslation("settings");
+  const matchRoute = useMatchRoute();
+  const accessPage = !!matchRoute({ to: "/settings/access", fuzzy: true });
 
   return (
-    <div className="mx-auto flex max-w-screen flex-col gap-6 px-4 py-6 lg:flex-row lg:gap-8 lg:px-6 lg:py-10">
-      {/* Mobile: compact sticky nav */}
-      <div className="sticky top-0 z-30 -mx-4 bg-(--color-bg)/80 px-4 py-2 backdrop-blur-md lg:hidden">
+    <div
+      className={cn(
+        "mx-auto flex max-w-screen flex-col gap-6 px-4 py-6 lg:gap-8 lg:px-6 lg:py-10",
+        accessPage ? "w-full" : "lg:flex-row",
+      )}
+    >
+      {/* Compact navigation leaves room for the permissions grid. */}
+      <div
+        className={cn(
+          "sticky top-0 z-30 -mx-4 bg-(--color-bg)/80 px-4 py-2 backdrop-blur-md",
+          !accessPage && "lg:hidden",
+        )}
+      >
         <h2 className="font-display mb-2 text-lg font-semibold tracking-tight">
           {t("settings-title")}
         </h2>
-        <MobileSettingsNav isAdmin={isAdmin} />
+        <CompactSettingsNav isAdmin={isAdmin} />
       </div>
 
       {/* Desktop: sidebar */}
-      <div className="hidden shrink-0 lg:block lg:w-56">
+      <div className={cn("hidden shrink-0 lg:w-56", !accessPage && "lg:block")}>
         <nav className="sticky top-6 flex flex-col gap-0.5 self-start">
           <p className="font-display px-2 pb-3 text-2xl font-semibold">
             {t("settings-title")}
@@ -314,7 +326,13 @@ function SettingsLayout() {
         </nav>
       </div>
 
-      <div className="mt-0.75 w-full min-w-0 flex-1 md:w-screen md:max-w-md xl:max-w-xl">
+      <div
+        data-settings-content
+        className={cn(
+          "mt-0.75 w-full min-w-0 flex-1",
+          !accessPage && "md:w-screen md:max-w-md xl:max-w-xl",
+        )}
+      >
         <Outlet />
       </div>
     </div>

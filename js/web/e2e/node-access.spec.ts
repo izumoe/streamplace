@@ -1,4 +1,4 @@
-import { request as createRequest } from "@playwright/test";
+import { type Locator, request as createRequest } from "@playwright/test";
 import { loginThroughPds } from "../../e2e-web/flows/login";
 import { expect, test } from "./fixtures";
 
@@ -7,6 +7,36 @@ const httpsServer = process.env.SERVER_HTTPS_URL;
 const pdsServer = process.env.PDS_HTTPS_URL;
 
 test.use({ actionTimeout: 30_000 });
+
+async function openRule(entry: Locator) {
+  const details = entry.locator("xpath=ancestor::details[1]");
+  if (
+    !(await details.evaluate((element) => (element as HTMLDetailsElement).open))
+  ) {
+    await details.locator("summary").click();
+  }
+}
+
+test("uses the available width for the permissions grid", async ({ page }) => {
+  test.skip(!httpsServer, "requires the real TLS OAuth harness");
+  await loginThroughPds(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`${httpsServer}/settings/access`);
+  const table = page.getByRole("table", {
+    name: "Access entries",
+    exact: true,
+  });
+  await expect(table).toBeVisible();
+  expect((await table.boundingBox())!.width).toBeGreaterThan(1000);
+  await expect(
+    page.getByRole("combobox", { name: "Settings", exact: true }),
+  ).toBeVisible();
+  await page.goto(`${httpsServer}/settings/advanced`);
+  await expect(page.locator("[data-settings-content]")).toBeVisible();
+  expect(
+    (await page.locator("[data-settings-content]").boundingBox())!.width,
+  ).toBeLessThanOrEqual(576);
+});
 
 test("node administrators approve publishing and restrict chat independently of public viewing", async ({
   page,
@@ -65,8 +95,9 @@ test("node administrators approve publishing and restrict chat independently of 
     page.getByRole("heading", { name: "Node access", exact: true }),
   ).toBeVisible();
   const configuration = page
-    .getByRole("row")
+    .locator("[data-entry-id]")
     .filter({ hasText: "Configuration entry" });
+  await openRule(configuration.first());
   await expect(configuration.first()).toContainText("Read-only");
   await expect(configuration.first().getByRole("button")).toHaveCount(0);
   await page.getByText("Add account", { exact: true }).click();
@@ -98,6 +129,7 @@ test("node administrators approve publishing and restrict chat independently of 
   const denyRow = page.locator(`[data-entry-id="${restriction.id}"]`);
   await expect(denyRow).toContainText("Publishing denied");
   await expect(allowRow).toContainText("Publishing denied");
+  await openRule(denyRow);
   await denyRow
     .getByRole("button", { name: "Remove denial", exact: true })
     .click();
@@ -111,6 +143,7 @@ test("node administrators approve publishing and restrict chat independently of 
   const ban = await save("chat", "deny");
   const banRow = page.locator(`[data-entry-id="${ban.id}"]`);
   await expect(banRow).toContainText("Chat denied");
+  await openRule(banRow);
   await banRow.getByRole("button", { name: "Unban chat", exact: true }).click();
   await expect(banRow).toHaveCount(0);
   await page.reload();
@@ -128,6 +161,9 @@ test("administrator saves policy, reloads it, approves an account, and restores 
   test.skip(!httpsServer, "requires the real TLS OAuth harness");
   await loginThroughPds(page);
   await page.goto(`${httpsServer}/settings/access`);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const policyEditor = page.locator("[data-access-policy-editor]");
+  await policyEditor.locator(":scope > summary").click();
   const policy = page.getByRole("combobox", {
     name: "Who can stream",
     exact: true,
@@ -143,11 +179,24 @@ test("administrator saves policy, reloads it, approves an account, and restores 
   expect((await saved).ok()).toBe(true);
   await expect(page.locator('[data-policy-reset="streamer"]')).toBeVisible();
   await page.reload();
+  await policyEditor.locator(":scope > summary").click();
   await expect(policy).toHaveValue("open");
-  await page.getByText("Add account", { exact: true }).click();
+  await policyEditor.locator(":scope > summary").click();
   await page
-    .getByRole("textbox", { name: "Find an account", exact: true })
-    .fill(process.env.ACCOUNT_DID!);
+    .getByRole("button", {
+      name: `Set rule: ${process.env.ACCOUNT_DID} · Chat`,
+      exact: true,
+    })
+    .click();
+  await expect(
+    page.getByRole("textbox", { name: "Find an account", exact: true }),
+  ).toHaveValue(process.env.ACCOUNT_DID!);
+  const capability = page.getByRole("combobox", {
+    name: "Capability",
+    exact: true,
+  });
+  await expect(capability).toHaveValue("chat");
+  await capability.selectOption("streamer");
   const created = page.waitForResponse(
     (response) =>
       response.url().endsWith("/xrpc/place.stream.access.createGrant") &&
@@ -167,7 +216,7 @@ test("administrator saves policy, reloads it, approves an account, and restores 
     fullPage: true,
   });
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(policy).toBeVisible();
+  await openRule(row);
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= window.innerWidth,
@@ -179,6 +228,11 @@ test("administrator saves policy, reloads it, approves an account, and restores 
   await expect(row).toHaveCount(0);
   await expect(page.getByText("Configuration entry").first()).toBeVisible();
   await page
+    .locator(
+      `[data-access-subject="${process.env.ACCOUNT_DID}"] [data-access-capability="streamer"] summary`,
+    )
+    .click();
+  await page
     .getByRole("table", { name: "Access entries", exact: true })
     .evaluate((table) => {
       table.parentElement!.scrollLeft = 0;
@@ -187,6 +241,7 @@ test("administrator saves policy, reloads it, approves an account, and restores 
     path: test.info().outputPath("node-access-phone.png"),
     fullPage: true,
   });
+  await policyEditor.locator(":scope > summary").click();
   await page.locator('[data-policy-reset="streamer"]').click();
   await expect(policy).toHaveValue("allowlist");
   await expect(page.locator('[data-policy-reset="streamer"]')).toHaveCount(0);
