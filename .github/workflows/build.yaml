@@ -417,7 +417,7 @@ jobs:
           path: |
             ~/.android/avd/*
             ~/.android/adb*
-          key: avd-pixel-6-api-34-google-apis-v1
+          key: avd-pixel-6-api-34-google-apis-4cpu-6144m-576m-v2
 
       # A Google APIs image, not Play Store: hack/e2e-local.sh needs root to
       # point the emulator at the harness and install its CA.
@@ -430,6 +430,9 @@ jobs:
           arch: x86_64
           profile: pixel_6
           force-avd-creation: false
+          cores: 4
+          ram-size: 6144M
+          heap-size: 576M
           emulator-options:
             -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
             -camera-back none
