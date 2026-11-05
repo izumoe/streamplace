@@ -2,11 +2,10 @@ package media
 
 import (
 	"context"
-	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
-	"stream.place/streamplace/pkg/muxl"
 )
 
 // makeOpenGOPFMP4 synthesizes what a broadcast encoder sends at scene cuts:
@@ -87,8 +86,6 @@ func firstSampleNALTypes(b []byte) []int {
 	return h264NALTypes(mdat[:size])
 }
 
-var _ = muxl.RunMuxlUnwrapEvents
-
 // Every signed segment starts on an IDR, even when the encoder's keyframes
 // include open-GOP I-frames: those stay inside the GoP of the IDR before
 // them rather than starting a segment no decoder could begin on.
@@ -117,12 +114,9 @@ func TestIngestOpenGOPSegmentsStartOnIDR(t *testing.T) {
 	require.LessOrEqual(t, len(segs), 2, "one IDR in 90 frames (the other 8 keyframes are open-GOP I-frames): one GoP, not a segment per I-frame")
 }
 
-// The dual-codec completion re-segments its transcoded audio on the
-// passed-through video's keyframes; with open-GOP I-frames in the source
-// it must still cut exactly where the source segments were cut, or the
-// audio chunks pair with the wrong segments and the completed track
-// drifts from the video (HLS audio then lands outside the video's
-// timeline). Every completed segment's audio must match its video.
+// Completion can publish before the encoder drains. Its signed continuation
+// must preserve the same uninterrupted audio, including through open-GOP
+// I-frames that stay inside the source's IDR-bounded segment.
 func TestIngestOpenGOPCompletionStaysAligned(t *testing.T) {
 	ctx := context.Background()
 	mp4 := makeOpenGOPFMP4(t, ctx)
@@ -130,37 +124,35 @@ func TestIngestOpenGOPCompletionStaysAligned(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, segs)
 	for i, seg := range segs {
-		evs, err := unwrapMuxlEvents(ctx, seg)
-		require.NoError(t, err)
-		cat, _ := catalogAndTracks(evs)
-		require.NotNil(t, cat)
-		require.NotNil(t, cat.Audio)
-		require.Len(t, cat.Audio.Renditions, 2, "segment %d is dual-codec", i)
-		scales := map[string]float64{}
-		for _, v := range cat.Video.Renditions {
-			scales[fmt.Sprint(v.TrackID())] = float64(v.Timescale())
-		}
-		for _, a := range cat.Audio.Renditions {
-			scales[fmt.Sprint(a.TrackID())] = float64(a.Timescale())
-		}
-		for _, ev := range evs {
-			if ev.Type != "segment" && ev.Type != "signed-segment" {
-				continue
+		_, err := ValidateMP4MediaC2PA(ctx, seg)
+		require.NoError(t, err, "source, completion, and continuation signatures must validate")
+		want := uninterruptedAudioPackets(t, ctx, [][]byte{seg}, "aac")
+		aac := canonicalAudioPackets(t, ctx, seg, "aac")
+		opus := canonicalAudioPackets(t, ctx, seg, "opus")
+		require.NotEmpty(t, opus)
+		require.NotEmpty(t, want)
+		require.Len(t, aac, len(want), "segment %d cannot lose or repeat an encoded packet", i)
+		for n, packet := range aac {
+			require.Equal(t, want[n].data, packet.data, "segment %d packet %d payload", i, n)
+			require.InDelta(t, want[n].pts, packet.pts, float64(time.Second)/48000, "packet %d PTS", n)
+			duration := want[n].duration
+			if n+1 < len(want) {
+				// The encoder's initial duration can overlap its next PTS while
+				// clipping priming; the signed clock follows actual packet starts.
+				require.Greater(t, want[n+1].pts, want[n].pts)
+				duration = want[n+1].pts - want[n].pts
 			}
-			// The two audio tracks (the source's and the completed one)
-			// must cover the same span: the completion cut where the
-			// source did.
-			var audios []float64
-			for tid, d := range ev.Durations {
-				if tid == "1" {
-					continue
-				}
-				audios = append(audios, float64(d)/scales[tid])
+			require.InDelta(t, duration, packet.duration, float64(time.Second)/48000, "packet %d duration", n)
+			if n > 0 {
+				require.Equal(t, aac[n-1].pts+aac[n-1].duration, packet.pts, "packet %d has no gap or overlap", n)
 			}
-			require.Len(t, audios, 2, "segment %d has both audio tracks", i)
-			require.InDelta(t, audios[0], audios[1], 0.1, "segment %d: audio tracks carry %.3fs and %.3fs", i, audios[0], audios[1])
-			break
 		}
+		const tolerance = float64(100 * time.Millisecond)
+		require.InDelta(t, opus[0].pts, aac[0].pts, tolerance, "segment %d audio starts together", i)
+		sourceEnd := opus[len(opus)-1].pts + opus[len(opus)-1].duration
+		completedEnd := aac[len(aac)-1].pts + aac[len(aac)-1].duration
+		require.InDelta(t, sourceEnd, completedEnd, tolerance, "segment %d audio ends together", i)
+		t.Logf("segment %d: %d AAC packets match uninterrupted encoding, Opus %.3fs AAC %.3fs", i, len(aac), float64(sourceEnd-opus[0].pts)/float64(time.Second), float64(completedEnd-aac[0].pts)/float64(time.Second))
 	}
 	require.LessOrEqual(t, len(segs), 2, "as many completed segments as source segments: one GoP")
 }

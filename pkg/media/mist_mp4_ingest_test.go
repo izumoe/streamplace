@@ -34,8 +34,8 @@ func runMP4ThroughIngestWorker(t *testing.T, mp4 []byte, transcode bool) (int, e
 }
 
 // runMP4ThroughIngestWorkerSegments is runMP4ThroughIngestWorker returning the
-// raw segment payloads, for tests that validate the emitted segments rather
-// than just count them.
+// completed segment payloads, including independently signed audio tails,
+// for tests that validate the emitted segments rather than just count them.
 func runMP4ThroughIngestWorkerSegments(t *testing.T, mp4 []byte, transcode bool) ([][]byte, error) {
 	t.Helper()
 	// The shortened watchdog tests native progress, not cold WASM compilation.
@@ -63,8 +63,7 @@ func runMP4ThroughIngestWorkerSegments(t *testing.T, mp4 []byte, transcode bool)
 		BroadcasterHost: "test.example.com",
 	}
 	if transcode {
-		cfg.NodeCertPEM = ms.Cert
-		cfg.NodeKeyPEM = keyPEM
+		cfg.NodeCertPEM, cfg.NodeKeyPEM = nodeSignerForTest(t)
 	}
 
 	var buf bytes.Buffer
@@ -80,6 +79,9 @@ func runMP4ThroughIngestWorkerSegments(t *testing.T, mp4 []byte, transcode bool)
 		require.NoError(t, rerr)
 		if typ == ingestframe.Segment || typ == ingestframe.CompletedSourceSegment {
 			segs = append(segs, payload)
+		} else if typ == ingestframe.AudioAddendum {
+			require.NotEmpty(t, segs, "audio continuation follows a completed source")
+			appendAudioCompletion(&segs, payload, true)
 		}
 	}
 	return segs, runErr

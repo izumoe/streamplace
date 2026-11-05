@@ -86,6 +86,11 @@ ENV STREAMPLACE_TEST_POSTGRES_URL="postgresql://postgres:postgres@localhost:5432
 # allow all postgres connections
 RUN bash -c 'echo -en "local   all             postgres                                peer\nhost    all             all             0.0.0.0/0            trust\n" > /etc/postgresql/14/main/pg_hba.conf'
 
+# Media tests inspect packets with CLI tools independently of the linked libraries.
+RUN apt update \
+  && apt install -y --no-install-recommends ffmpeg \
+  && rm -rf /var/lib/apt/lists/*
+
 FROM builder-no-darwin AS builder
 
 WORKDIR /osxcross
