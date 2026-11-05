@@ -196,7 +196,7 @@ func TestLivestreamTasksKeepOwnedCleanupIndependentOfPublishing(t *testing.T) {
 			atsync, mod, _ := offlineSynchronizer(t)
 			const did = "did:plc:aaaaaaaaaaaaaaaaaaaaaaaa"
 			require.NoError(t, mod.UpdateRepo(&model.Repo{DID: did, Handle: "author.test", PDS: "http://127.0.0.1:1", Version: "3lrev00000000"}))
-			policy, err := access.NewSnapshot(access.Bootstrap{Authority: "did:web:node.test", Modes: map[access.Capability]access.Mode{access.Streamer: tc.stream, access.VOD: tc.vod}}, 1, nil)
+			policy, err := access.NewSnapshot(access.Bootstrap{Authority: "did:web:node.test", Modes: map[access.Capability]access.Mode{access.Streamer: tc.stream, access.VOD: tc.vod}}, 1, nil, nil)
 			require.NoError(t, err)
 			atsync.Access = policy
 			if tc.local {

@@ -60,7 +60,7 @@ func (cli *CLI) AccessBootstrap() (access.Bootstrap, error) {
 	if cli.DisableSyndication {
 		policy.Modes[access.Syndicate] = access.Off
 	}
-	_, err := access.NewSnapshot(policy, 0, nil)
+	_, err := access.NewSnapshot(policy, 0, nil, nil)
 	return policy, err
 }
 
@@ -71,6 +71,6 @@ func (cli *CLI) CapabilityAllowed(did string, capability access.Capability) bool
 	if err != nil {
 		return false
 	}
-	policy, err := access.NewSnapshot(bootstrap, 0, nil)
+	policy, err := access.NewSnapshot(bootstrap, 0, nil, nil)
 	return err == nil && policy.Check(did, capability).Allowed
 }

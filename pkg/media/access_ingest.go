@@ -97,3 +97,15 @@ func (mm *MediaManager) resumePublisher(ctx context.Context, meta workerMeta) (c
 	}
 	return mm.admitPublisher(ctx, meta.StreamerDID)
 }
+
+// ShouldSyndicate uses the installed policy, falling back to startup configuration
+// for media managers without a policy controller.
+func (mm *MediaManager) ShouldSyndicate(did string) bool {
+	if mm.cli.DisableSyndication {
+		return false
+	}
+	if mm.Access != nil {
+		return mm.Access.Check(did, access.Syndicate).Allowed
+	}
+	return mm.cli.ShouldSyndicate(did)
+}

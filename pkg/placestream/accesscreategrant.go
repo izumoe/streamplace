@@ -41,7 +41,7 @@ func (t *AccessCreateGrant_Input) UnmarshalCBOR(r io.Reader) error {
 
 // AccessCreateGrant calls the XRPC method "place.stream.access.createGrant".
 //
-// Create an allowance or denial for local publishing or chat. Repeating an identical entry is idempotent; changing its metadata requires revoking that exact entry first. Requires node administrator authorization.
+// Create a node-local allowance or denial for publishing, chat, remote carriage or uploads and recording. Repeating an identical entry is idempotent; changing its metadata requires revoking that exact entry first. Requires node administrator authorization.
 func AccessCreateGrant(ctx context.Context, c glex.LexClient, input *AccessCreateGrant_Input) (*AccessDefs_Grant, error) {
 	var out AccessDefs_Grant
 

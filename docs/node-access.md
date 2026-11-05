@@ -7,14 +7,14 @@ records, signing keys, signed media, or the distribution protocol.
 Capabilities are independent. Being an administrator does not grant publishing,
 chat, upload, or recording rights.
 
-| Capability  | Policy                                                 | Management                                                                              |
-| ----------- | ------------------------------------------------------ | --------------------------------------------------------------------------------------- |
-| `admin`     | Allowlisted administrator DIDs                         | `SP_ADMIN_DIDS` at startup                                                              |
-| `viewer`    | Public viewing                                         | Restricted viewing is unsupported                                                       |
-| `chat`      | Open by default                                        | Stored allowances and restrictions                                                      |
-| `streamer`  | Allowlist by default, including when the list is empty | Stored allowances and restrictions; `SP_ALLOWED_STREAMS` seeds configuration allowances |
-| `syndicate` | Incoming remote creators, off unless configured        | `SP_SYNDICATE` and startup mode                                                         |
-| `vod`       | Upload and recording eligibility                       | Startup mode and the compatibility mapping below                                        |
+| Capability  | Policy                                                 | Management                                                                         |
+| ----------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| `admin`     | Allowlisted administrator DIDs                         | `SP_ADMIN_DIDS` at startup                                                         |
+| `viewer`    | Public viewing                                         | Restricted viewing is unsupported                                                  |
+| `chat`      | Open by default                                        | Dashboard modes, allowances, and restrictions                                      |
+| `streamer`  | Allowlist by default, including when the list is empty | Dashboard modes and approvals; `SP_ALLOWED_STREAMS` seeds configuration allowances |
+| `syndicate` | Incoming remote creators, off unless configured        | Dashboard modes and approvals; `SP_SYNDICATE` seeds configuration allowances       |
+| `vod`       | Upload and recording eligibility                       | Dashboard modes and approvals; startup compatibility mapping below                 |
 
 ## Configure and manage access
 
@@ -40,8 +40,20 @@ SP_ACCESS_POLICY=streamer=allowlist,chat=open,syndicate=off,vod=off
 
 Modes are `open`, `allowlist`, or `off`. `admin` must remain `allowlist` and
 `viewer` must remain `open`. Invalid, duplicate, and unsupported assignments
-prevent startup. Modes have no live editor in this delivery. Stored writes are
-limited to `streamer` and `chat`.
+prevent startup. The dashboard edits `streamer`, `chat`, `syndicate`, and `vod`
+modes and account entries. Administrator access and public viewing remain fixed.
+
+Saved modes override startup defaults and survive restarts. **Use startup default**
+removes that saved override; the button shows the resolved default before you
+apply it. Configuration allowances remain read-only. `SP_DISABLE_SYNDICATION`
+and other disabled network services still take precedence over eligibility.
+
+Policy saves include the revision from when the edit began. A concurrent change
+is rejected rather than overwritten; the dashboard refreshes the effective
+settings so the operator can review and retry. Identical retries are idempotent.
+Changing the selected node or sign-in clears unsaved edits and account selections.
+A stricter publishing mode disconnects existing admissions, even if publishing is
+reopened before their queued work finishes. Publishers must reconnect.
 
 An open mode still requires an authenticated or verified account where the
 operation requires identity. Test `did:key` identities need explicit allowances.
@@ -60,14 +72,19 @@ independently of local publishing approval. `SP_SYNDICATE` seeds that allowlist;
 that previously used its local publishing list to limit remote creators.
 `syndicate=off` leaves public distribution of approved local streams available.
 The existing `SP_DISABLE_SYNDICATION` switch still disables both directions.
-Creator-signed distribution restrictions remain enforced.
+Creator-signed distribution restrictions remain enforced. Live carriage changes
+apply to admission and queued publication. Existing websocket pulls end when
+validation observes a denial; Iroh subscriptions are removed on their next origin
+update, and denied queued data is dropped before media validation. Opening
+carriage follows the next origin announcement; it does not start a history replay.
 
 VOD eligibility preserves the existing startup policy: `SP_ALLOWED_STREAMS`
 seeds both publishing and VOD allowances; an empty list leaves VOD open unless
 an explicit VOD mode overrides it. `SP_WIDE_OPEN` also opens VOD unless overridden.
 Later stored publishing grants do not change VOD eligibility. Recording still
 honors the user's existing recording opt-out. Set `vod=off` if the node should
-not admit uploads or begin recordings. Ending an owned livestream still queues
+not admit uploads or begin recordings. Changing VOD eligibility does not stop
+recordings or uploads that have already started. Ending an owned livestream still queues
 its normal cleanup after publishing approval is revoked.
 
 Publisher restriction generations survive entry removal and process restarts.

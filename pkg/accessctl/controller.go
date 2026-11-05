@@ -3,6 +3,7 @@ package accessctl
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -20,9 +21,10 @@ import (
 const RefreshInterval = 30 * time.Second
 
 type installed struct {
-	policy      *access.Snapshot
-	generations map[string]uint64
-	checkedAt   time.Time
+	policy              *access.Snapshot
+	generations         map[string]uint64
+	publisherGeneration uint64
+	checkedAt           time.Time
 }
 
 type Controller struct {
@@ -38,7 +40,7 @@ func New(ctx context.Context, bootstrap access.Bootstrap, state *statedb.Statefu
 		return nil, fmt.Errorf("%w: invalid node authority: %w", access.ErrInvalid, err)
 	}
 	// Copy configuration through the same ownership boundary as stored policy.
-	policy, err := access.NewSnapshot(bootstrap, 0, nil)
+	policy, err := access.NewSnapshot(bootstrap, 0, nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -56,7 +58,7 @@ func (c *Controller) Check(did string, capability access.Capability) access.Deci
 	current := c.current.Load()
 	decision := current.policy.Check(did, capability)
 	if capability == access.Streamer {
-		decision.Generation = current.generations[did]
+		decision.Generation = current.generations[did] + current.publisherGeneration
 	}
 	return decision
 }
@@ -66,22 +68,22 @@ func (c *Controller) refresh(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	policy, err := access.NewSnapshot(c.bootstrap, revision, entries)
+	policy, err := access.NewSnapshot(c.bootstrap, revision.Revision, entries, revision.Modes)
 	if err != nil {
 		return err
 	}
 	now := time.Now()
 	previous := c.current.Load()
-	next := &installed{policy: policy, generations: generations, checkedAt: now}
-	if previous != nil && previous.policy.Revision() > revision {
+	next := &installed{policy: policy, generations: generations, publisherGeneration: revision.PublisherGeneration, checkedAt: now}
+	if previous != nil && previous.policy.Revision() > revision.Revision {
 		return fmt.Errorf("access policy revision moved backwards")
 	}
 	c.current.Store(next)
 	if previous == nil || c.bus == nil {
 		return nil
 	}
-	change := access.Change{Revision: revision}
-	changed := revision != previous.policy.Revision()
+	change := access.Change{Revision: revision.Revision, ChatChanged: previous.policy.Mode(access.Chat).Mode != policy.Mode(access.Chat).Mode}
+	changed := revision.Revision != previous.policy.Revision() || change.ChatChanged
 	for _, entry := range append(previous.policy.Entries(), policy.Entries()...) {
 		if entry.Capability != access.Chat && entry.Capability != access.Streamer {
 			continue
@@ -132,6 +134,21 @@ func (c *Controller) Delete(ctx context.Context, id string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if err := c.state.DeleteAccessEntry(ctx, c.bootstrap.Authority, id); err != nil {
+		return err
+	}
+	return c.refresh(ctx)
+}
+
+func (c *Controller) SetMode(ctx context.Context, capability access.Capability, mode *access.Mode, revision uint64) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	err := c.state.SetAccessMode(ctx, c.bootstrap.Authority, capability, mode, revision, c.bootstrap.Modes[capability])
+	if err != nil {
+		if errors.Is(err, access.ErrConflict) {
+			if refreshErr := c.refresh(ctx); refreshErr != nil {
+				return refreshErr
+			}
+		}
 		return err
 	}
 	return c.refresh(ctx)

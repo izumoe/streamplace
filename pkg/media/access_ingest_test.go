@@ -22,7 +22,7 @@ import (
 func TestPublisherDenialPrecedesIngestSetup(t *testing.T) {
 	signer := newBareSegmentSigner(t)
 	signer.StreamerName = signer.DID()
-	policy, err := access.NewSnapshot(access.Bootstrap{Authority: "did:web:node.test"}, 1, nil)
+	policy, err := access.NewSnapshot(access.Bootstrap{Authority: "did:web:node.test"}, 1, nil, nil)
 	require.NoError(t, err)
 	mm := NewOffline(&config.CLI{AllowedStreams: []string{signer.Streamer()}})
 	mm.Access = policy
@@ -185,7 +185,7 @@ func TestPublisherFreshWatcherIgnoresOldAccessChange(t *testing.T) {
 
 func TestIngestWatcherRejectsAlreadyDeniedPublisher(t *testing.T) {
 	const did = "did:plc:publisher"
-	policy, err := access.NewSnapshot(access.Bootstrap{Authority: "did:web:node.test"}, 1, nil)
+	policy, err := access.NewSnapshot(access.Bootstrap{Authority: "did:web:node.test"}, 1, nil, nil)
 	require.NoError(t, err)
 	mm := &MediaManager{Access: policy, cli: &config.CLI{AllowedStreams: []string{did}}, bus: bus.NewBus()}
 	ctx, cancel := context.WithCancel(t.Context())
@@ -226,7 +226,7 @@ func TestIngestAccessSeparatesPublishingFromCarriage(t *testing.T) {
 			policy, err := access.NewSnapshot(access.Bootstrap{
 				Authority: "did:web:node.test",
 				Modes:     map[access.Capability]access.Mode{access.Streamer: access.Off, access.Syndicate: access.Off},
-			}, 1, nil)
+			}, 1, nil, nil)
 			require.NoError(t, err)
 			// The static path must work before a runtime controller is installed.
 			validated, _, err := mm.validateSource(t.Context(), segment, tc.local, streamer)
@@ -251,7 +251,7 @@ func TestIngestRuntimeCarriageCanOverrideStaticDenial(t *testing.T) {
 		Authority: "did:web:node.test",
 		Modes:     map[access.Capability]access.Mode{access.Syndicate: access.Allowlist},
 		Entries:   []access.Entry{{Subject: streamer, Capability: access.Syndicate, Effect: access.Allow}},
-	}, 1, nil)
+	}, 1, nil, nil)
 	require.NoError(t, err)
 	mm := NewOffline(&config.CLI{BroadcasterHost: "node.test"})
 	mm.Access = policy
@@ -325,4 +325,58 @@ func TestRevokedFirstHLSFeedLeavesNoWindow(t *testing.T) {
 	window, published := mm.GetLiveWindow(did)
 	require.Nil(t, window)
 	require.False(t, published)
+}
+
+func TestPublisherModeReopeningRejectsPendingDistribution(t *testing.T) {
+	did, segment := workerSourceForTest(t, "h264-opus-frag.mp4")
+	mm, controller := publisherAccessForTest(t, did)
+	ctx, err := mm.admitPublisher(t.Context(), did)
+	require.NoError(t, err)
+	validated, playable, err := mm.validateSource(ctx, segment, true, did)
+	require.NoError(t, err)
+	off := access.Off
+	require.NoError(t, controller.SetMode(t.Context(), access.Streamer, &off, controller.Snapshot().Revision()))
+	require.NoError(t, controller.SetMode(t.Context(), access.Streamer, nil, controller.Snapshot().Revision()))
+	require.ErrorContains(t, mm.distributeSegment(context.WithoutCancel(ctx), validated, segment, playable), "reconnect")
+	require.Empty(t, mm.BufferedSegments(did))
+	fresh, err := mm.admitPublisher(t.Context(), did)
+	require.NoError(t, err)
+	validated, playable, err = mm.validateSource(fresh, segment, true, did)
+	require.NoError(t, err)
+	require.NoError(t, mm.distributeSegment(fresh, validated, segment, playable))
+}
+
+func TestCarriageUsesSavedPolicyOverStartupDefaults(t *testing.T) {
+	const did = "did:plc:carried"
+	mm, controller := publisherAccessForTest(t, did)
+	require.False(t, mm.ShouldSyndicate(did))
+	open := access.Open
+	require.NoError(t, controller.SetMode(t.Context(), access.Syndicate, &open, controller.Snapshot().Revision()))
+	require.True(t, mm.ShouldSyndicate(did))
+	denial, err := controller.Create(t.Context(), did, access.Syndicate, access.Deny, "local ban", nil)
+	require.NoError(t, err)
+	require.False(t, mm.ShouldSyndicate(did))
+	require.NoError(t, controller.Delete(t.Context(), denial.ID))
+	require.True(t, mm.ShouldSyndicate(did))
+	require.NoError(t, controller.SetMode(t.Context(), access.Syndicate, nil, controller.Snapshot().Revision()))
+	require.False(t, mm.ShouldSyndicate(did))
+}
+
+func TestDisabledSyndicationOverridesSavedOpenPolicy(t *testing.T) {
+	mm, controller := publisherAccessForTest(t, "did:plc:carried")
+	open := access.Open
+	require.NoError(t, controller.SetMode(t.Context(), access.Syndicate, &open, controller.Snapshot().Revision()))
+	mm.cli.DisableSyndication = true
+	require.False(t, mm.ShouldSyndicate("did:plc:carried"))
+}
+
+func TestCarriageRestrictionRejectsPendingDistribution(t *testing.T) {
+	did, segment := workerSourceForTest(t, "h264-opus-frag.mp4")
+	mm, controller := publisherAccessForTest(t, did, access.Entry{Subject: did, Capability: access.Syndicate, Effect: access.Allow})
+	validated, playable, err := mm.validateSource(t.Context(), segment, false, "")
+	require.NoError(t, err)
+	off := access.Off
+	require.NoError(t, controller.SetMode(t.Context(), access.Syndicate, &off, controller.Snapshot().Revision()))
+	require.ErrorContains(t, mm.distributeSegment(t.Context(), validated, segment, playable), "does not syndicate")
+	require.Empty(t, mm.BufferedSegments(did))
 }

@@ -68,6 +68,16 @@
           "type": "string",
           "enum": ["open", "allowlist", "off"]
         },
+        "defaultMode": {
+          "type": "string",
+          "enum": ["open", "allowlist", "off"],
+          "description": "The startup default restored when a saved mode is removed."
+        },
+        "modeSource": {
+          "type": "string",
+          "knownValues": ["configuration", "stored"],
+          "description": "Whether this mode comes from startup configuration or saved node policy."
+        },
         "allowed": {
           "type": "boolean"
         },

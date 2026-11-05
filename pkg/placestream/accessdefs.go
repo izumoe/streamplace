@@ -16,10 +16,14 @@ type AccessDefs_Decision struct {
 	LexiconTypeID string `json:"$type,omitempty"`
 	Allowed       bool   `json:"allowed"`
 	Capability    string `json:"capability"`
+	// defaultMode: The startup default restored when a saved mode is removed.
+	DefaultMode *string `json:"defaultMode,omitempty"`
 	// enforced: Whether this node implements this capability gate. Informational defaults do not imply restricted viewing support.
 	Enforced bool   `json:"enforced"`
 	Mode     string `json:"mode"`
-	Reason   string `json:"reason"`
+	// modeSource: Whether this mode comes from startup configuration or saved node policy.
+	ModeSource *string `json:"modeSource,omitempty"`
+	Reason     string  `json:"reason"`
 }
 
 // RecordTypeID implements glex.Record.

@@ -16,7 +16,6 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/errgroup"
-	"stream.place/streamplace/pkg/access"
 	"stream.place/streamplace/pkg/aqtime"
 	"stream.place/streamplace/pkg/atproto"
 	"stream.place/streamplace/pkg/bus"
@@ -234,13 +233,7 @@ func (mm *MediaManager) validateSource(ctx context.Context, buf []byte, local bo
 			return nil, nil, fmt.Errorf("got valid segment, but user %s is not allowed: %w", repoDID, err)
 		}
 	} else {
-		var allowed bool
-		if mm.Access != nil {
-			allowed = mm.Access.Check(repoDID, access.Syndicate).Allowed
-		} else {
-			allowed = mm.cli.ShouldSyndicate(repoDID)
-		}
-		if !allowed {
+		if !mm.ShouldSyndicate(repoDID) {
 			return nil, nil, fmt.Errorf("node does not syndicate %s", repoDID)
 		}
 	}
@@ -309,6 +302,8 @@ func (mm *MediaManager) distributeSegment(ctx context.Context, vs *validatedSegm
 		if err != nil {
 			return err
 		}
+	} else if !mm.ShouldSyndicate(vs.repoDID) {
+		return fmt.Errorf("node does not syndicate %s", vs.repoDID)
 	}
 
 	// Segments are no longer written to disk, but a Segment DB row is still kept

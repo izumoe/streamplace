@@ -423,6 +423,7 @@ func (s *Server) RegisterHandlersPlacestream(e *echo.Echo) error {
 	e.POST("/xrpc/place.stream.access.deleteGrant", s.HandlePlaceStreamAccessDeleteGrant)
 	e.GET("/xrpc/place.stream.access.getStatus", s.HandlePlaceStreamAccessGetStatus)
 	e.GET("/xrpc/place.stream.access.listGrants", s.HandlePlaceStreamAccessListGrants)
+	e.POST("/xrpc/place.stream.access.setMode", s.HandlePlaceStreamAccessSetMode)
 	e.GET("/xrpc/place.stream.badge.getIssuedBadges", s.HandlePlaceStreamBadgeGetIssuedBadges)
 	e.GET("/xrpc/place.stream.badge.getValidBadges", s.HandlePlaceStreamBadgeGetValidBadges)
 	e.GET("/xrpc/place.stream.bio.getPage", s.HandlePlaceStreamBioGetPage)
@@ -551,6 +552,23 @@ func (s *Server) HandlePlaceStreamAccessListGrants(c echo.Context) error {
 	var handleErr error
 	// func (s *Server) handlePlaceStreamAccessListGrants(ctx context.Context) (*placestream.AccessListGrants_Output, error)
 	out, handleErr = s.handlePlaceStreamAccessListGrants(ctx)
+	if handleErr != nil {
+		return handleErr
+	}
+	return c.JSON(200, out)
+}
+
+func (s *Server) HandlePlaceStreamAccessSetMode(c echo.Context) error {
+	ctx, span := otel.Tracer("server").Start(c.Request().Context(), "HandlePlaceStreamAccessSetMode")
+	defer span.End()
+	var body placestream.AccessSetMode_Input
+	if err := c.Bind(&body); err != nil {
+		return err
+	}
+	var out *placestream.AccessSetMode_Output
+	var handleErr error
+	// func (s *Server) handlePlaceStreamAccessSetMode(ctx context.Context,body *placestream.AccessSetMode_Input) (*placestream.AccessSetMode_Output, error)
+	out, handleErr = s.handlePlaceStreamAccessSetMode(ctx, &body)
 	if handleErr != nil {
 		return handleErr
 	}

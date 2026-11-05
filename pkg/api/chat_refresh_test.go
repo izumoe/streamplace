@@ -47,7 +47,7 @@ func TestChatRefreshFiltersHistoryRepliesAndPins(t *testing.T) {
 		require.NoError(t, mod.CreateChatMessage(ctx, &model.ChatMessage{URI: entry.uri, CID: entry.cid, RepoDID: entry.did, StreamerRepoDID: streamer, CreatedAt: now, IndexedAt: &now, ChatMessage: &raw, ReplyToCID: entry.reply}))
 	}
 	require.NoError(t, mod.CreatePinnedRecord(ctx, &model.PinnedRecord{Uri: "at://" + streamer + "/place.stream.chat.pinnedRecord/1", RepoDID: streamer, PinnedMessage: parentURI, PinnedBy: streamer, CreatedAt: now, IndexedAt: &now, CID: "pin-cid"}))
-	policy, err := access.NewSnapshot(access.Bootstrap{Authority: "did:web:node.test", Modes: map[access.Capability]access.Mode{access.Chat: access.Open}}, 2, []access.Entry{{Subject: banned, Capability: access.Chat, Effect: access.Deny, Source: access.Stored}})
+	policy, err := access.NewSnapshot(access.Bootstrap{Authority: "did:web:node.test", Modes: map[access.Capability]access.Mode{access.Chat: access.Open}}, 2, []access.Entry{{Subject: banned, Capability: access.Chat, Effect: access.Deny, Source: access.Stored}}, nil)
 	require.NoError(t, err)
 	sync := &atproto.ATProtoSynchronizer{Model: mod, Access: policy}
 	api := &StreamplaceAPI{Model: mod, ATSync: sync, CLI: &config.CLI{BroadcasterHost: "node.test"}}
@@ -91,7 +91,7 @@ func TestQueuedChatDeliveryUsesOnlyNodePolicy(t *testing.T) {
 	const author = "did:plc:allowed"
 	const banned = "did:plc:banned"
 	require.NoError(t, mod.CreateChatAccessRule(ctx, &model.ChatAccessRule{URI: "at://" + streamer + "/place.stream.chat.access/rule", RepoDID: streamer, Action: model.ChatAccessDeny, SubjectType: model.ChatAccessSubjectVerifier, SubjectDID: "did:plc:verifier", CreatedAt: time.Now()}))
-	policy, err := access.NewSnapshot(access.Bootstrap{}, 1, []access.Entry{{Subject: banned, Capability: access.Chat, Effect: access.Deny}})
+	policy, err := access.NewSnapshot(access.Bootstrap{}, 1, []access.Entry{{Subject: banned, Capability: access.Chat, Effect: access.Deny}}, nil)
 	require.NoError(t, err)
 	sync := &atproto.ATProtoSynchronizer{Model: mod, Access: policy}
 	require.True(t, sync.ChatAllowed(ctx, streamer, author), "shared preparation applies channel policy")

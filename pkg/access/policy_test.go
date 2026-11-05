@@ -15,7 +15,7 @@ func TestCapabilityDecisions(t *testing.T) {
 		Modes:     map[Capability]Mode{Admin: Allowlist, Viewer: Open, Chat: Open, Streamer: Allowlist, Syndicate: Off, VOD: Allowlist},
 		Entries:   []Entry{{Subject: alice, Capability: Admin, Effect: Allow, Source: Configuration}},
 	}
-	policy, err := NewSnapshot(config, 1, nil)
+	policy, err := NewSnapshot(config, 1, nil, nil)
 	require.NoError(t, err)
 	require.True(t, policy.CheckAt(alice, Admin, now).Allowed)
 	require.False(t, policy.CheckAt(alice, Streamer, now).Allowed, "administration does not grant publishing")
@@ -28,13 +28,13 @@ func TestCapabilityDecisions(t *testing.T) {
 	grant := Entry{ID: "grant", Subject: alice, Capability: Chat, Effect: Allow, Source: Stored}
 	ban := Entry{ID: "ban", Subject: alice, Capability: Chat, Effect: Deny, Source: Stored}
 	config.Modes[Chat] = Allowlist
-	policy, err = NewSnapshot(config, 2, []Entry{grant, ban})
+	policy, err = NewSnapshot(config, 2, []Entry{grant, ban}, nil)
 	require.NoError(t, err)
 	require.False(t, policy.CheckAt(alice, Chat, now).Allowed)
-	policy, err = NewSnapshot(config, 3, []Entry{grant})
+	policy, err = NewSnapshot(config, 3, []Entry{grant}, nil)
 	require.NoError(t, err)
 	require.True(t, policy.CheckAt(alice, Chat, now).Allowed, "unban retains the independent allowance")
-	policy, err = NewSnapshot(config, 4, nil)
+	policy, err = NewSnapshot(config, 4, nil, nil)
 	require.NoError(t, err)
 	require.False(t, policy.CheckAt(alice, Chat, now).Allowed, "unban does not invent an allowance")
 }
@@ -44,13 +44,13 @@ func TestRestrictionExpiryAndConfiguration(t *testing.T) {
 	expires := now.Add(time.Minute)
 	const alice = "did:plc:alice"
 	config := Bootstrap{Authority: "did:web:node.example", Modes: map[Capability]Mode{Streamer: Open}, Entries: []Entry{{Subject: alice, Capability: Streamer, Effect: Allow, Source: Configuration}}}
-	policy, err := NewSnapshot(config, 1, []Entry{{Subject: alice, Capability: Streamer, Effect: Deny, ExpiresAt: &expires, Source: Stored}})
+	policy, err := NewSnapshot(config, 1, []Entry{{Subject: alice, Capability: Streamer, Effect: Deny, ExpiresAt: &expires, Source: Stored}}, nil)
 	require.NoError(t, err)
 	require.False(t, policy.CheckAt(alice, Streamer, now).Allowed, "deny wins over open mode and a configured grant")
 	require.True(t, policy.CheckAt(alice, Streamer, expires).Allowed, "expiry is exclusive")
 	require.False(t, policy.CheckAt("did:key:zSynthetic", Streamer, expires).Allowed, "open mode does not admit test identities")
 	config.Modes[Streamer] = Off
-	policy, err = NewSnapshot(config, 2, nil)
+	policy, err = NewSnapshot(config, 2, nil, nil)
 	require.NoError(t, err)
 	require.False(t, policy.CheckAt(alice, Streamer, now).Allowed, "off wins over an explicit grant")
 }
@@ -58,7 +58,7 @@ func TestRestrictionExpiryAndConfiguration(t *testing.T) {
 func TestSnapshotOwnsItsInputs(t *testing.T) {
 	config := Bootstrap{Authority: "did:web:node.example", Modes: map[Capability]Mode{Streamer: Allowlist}}
 	entries := []Entry{{Subject: "did:plc:alice", Capability: Streamer, Effect: Allow, Source: Stored}}
-	policy, err := NewSnapshot(config, 3, entries)
+	policy, err := NewSnapshot(config, 3, entries, nil)
 	require.NoError(t, err)
 	config.Modes[Streamer] = Open
 	entries[0].Effect = Deny
@@ -76,16 +76,46 @@ func TestRejectUnsupportedAndMalformedPolicy(t *testing.T) {
 		{Authority: "did:web:node.example", Modes: map[Capability]Mode{Capability("unknown"): Open}},
 		{Authority: "did:web:node.example", Entries: []Entry{{Subject: "alice.example", Capability: Chat, Effect: Deny}}},
 	} {
-		_, err := NewSnapshot(config, 0, nil)
+		_, err := NewSnapshot(config, 0, nil, nil)
 		require.Error(t, err)
 	}
 	for _, entry := range []Entry{
 		{Subject: "did:plc:alice", Capability: Viewer, Effect: Deny},
 		{Subject: "did:plc:alice", Capability: Admin, Effect: Allow},
-		{Subject: "did:plc:alice", Capability: Syndicate, Effect: Deny},
-		{Subject: "did:plc:alice", Capability: VOD, Effect: Allow},
+		{Subject: "did:plc:alice", Capability: Capability("unknown"), Effect: Allow},
 	} {
 		require.Error(t, ValidateMutation(entry))
 	}
 	require.NoError(t, ValidateMutation(Entry{Subject: "did:plc:alice", Capability: Chat, Effect: Deny}))
+}
+
+func TestStoredModesOverrideDefaultsWithoutSharingInputs(t *testing.T) {
+	defaults := Bootstrap{Authority: "did:web:node.example", Modes: map[Capability]Mode{Streamer: Allowlist}}
+	stored := map[Capability]Mode{Streamer: Open}
+	policy, err := NewSnapshot(defaults, 7, nil, stored)
+	require.NoError(t, err)
+	require.True(t, policy.Check("did:plc:alice", Streamer).Allowed)
+	require.False(t, policy.Check("did:plc:alice", VOD).Allowed, "publishing does not grant recording or uploads")
+	require.Equal(t, ModeSetting{Mode: Open, DefaultMode: Allowlist, Source: Stored}, policy.Mode(Streamer))
+	require.Equal(t, ModeSetting{Mode: Open, DefaultMode: Open, Source: Configuration}, policy.Mode(Viewer))
+	stored[Streamer] = Off
+	require.True(t, policy.Check("did:plc:alice", Streamer).Allowed, "snapshots own stored mode data")
+	for _, overrides := range []map[Capability]Mode{
+		{Admin: Allowlist}, {Viewer: Open}, {Capability("unknown"): Open}, {Streamer: Mode("invalid")},
+	} {
+		_, err := NewSnapshot(defaults, 8, nil, overrides)
+		require.ErrorIs(t, err, ErrInvalid)
+	}
+}
+
+func TestStoredEntriesSupportEditableCapabilities(t *testing.T) {
+	for _, capability := range []Capability{Streamer, Chat, Syndicate, VOD} {
+		for _, effect := range []Effect{Allow, Deny} {
+			entry := Entry{Subject: "did:plc:alice", Capability: capability, Effect: effect}
+			require.NoError(t, ValidateMutation(entry))
+			policy, err := NewSnapshot(Bootstrap{Modes: map[Capability]Mode{capability: Allowlist}}, 1, []Entry{entry}, nil)
+			require.NoError(t, err)
+			require.Equal(t, effect == Allow, policy.Check(entry.Subject, capability).Allowed)
+		}
+	}
 }

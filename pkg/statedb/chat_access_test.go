@@ -58,7 +58,7 @@ func TestQueuedChatTaskRechecksNodeRestriction(t *testing.T) {
 		case <-time.After(2 * time.Second):
 			t.Fatal("allowed chat did not reach the real webhook")
 		}
-		policy, err := access.NewSnapshot(access.Bootstrap{Authority: "did:web:node.test"}, 1, []access.Entry{{Subject: author, Capability: access.Chat, Effect: access.Deny}})
+		policy, err := access.NewSnapshot(access.Bootstrap{Authority: "did:web:node.test"}, 1, []access.Entry{{Subject: author, Capability: access.Chat, Effect: access.Deny}}, nil)
 		require.NoError(t, err)
 		state.Access = policy
 		require.NoError(t, state.processChatMessageTask(context.Background(), task))

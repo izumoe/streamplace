@@ -13,7 +13,7 @@ description: Reference for the place.stream.access.createGrant lexicon
 
 **Type:** `procedure`
 
-Create an allowance or denial for local publishing or chat. Repeating an identical entry is idempotent; changing its metadata requires revoking that exact entry first. Requires node administrator authorization.
+Create a node-local allowance or denial for publishing, chat, remote carriage or uploads and recording. Repeating an identical entry is idempotent; changing its metadata requires revoking that exact entry first. Requires node administrator authorization.
 
 **Parameters:** _(None defined)_
 
@@ -24,13 +24,13 @@ Create an allowance or denial for local publishing or chat. Repeating an identic
 
 **Schema Type:** `object`
 
-| Name         | Type     | Req'd | Description | Constraints              |
-| ------------ | -------- | ----- | ----------- | ------------------------ |
-| `subject`    | `string` | ✅    |             | Format: `did`            |
-| `capability` | `string` | ✅    |             | Enum: `streamer`, `chat` |
-| `effect`     | `string` | ✅    |             | Enum: `allow`, `deny`    |
-| `reason`     | `string` | ❌    |             | Max Length: 1024         |
-| `expiresAt`  | `string` | ❌    |             | Format: `datetime`       |
+| Name         | Type     | Req'd | Description | Constraints                                  |
+| ------------ | -------- | ----- | ----------- | -------------------------------------------- |
+| `subject`    | `string` | ✅    |             | Format: `did`                                |
+| `capability` | `string` | ✅    |             | Enum: `streamer`, `chat`, `syndicate`, `vod` |
+| `effect`     | `string` | ✅    |             | Enum: `allow`, `deny`                        |
+| `reason`     | `string` | ❌    |             | Max Length: 1024                             |
+| `expiresAt`  | `string` | ❌    |             | Format: `datetime`                           |
 
 **Output:**
 
@@ -58,7 +58,7 @@ Create an allowance or denial for local publishing or chat. Repeating an identic
   "defs": {
     "main": {
       "type": "procedure",
-      "description": "Create an allowance or denial for local publishing or chat. Repeating an identical entry is idempotent; changing its metadata requires revoking that exact entry first. Requires node administrator authorization.",
+      "description": "Create a node-local allowance or denial for publishing, chat, remote carriage or uploads and recording. Repeating an identical entry is idempotent; changing its metadata requires revoking that exact entry first. Requires node administrator authorization.",
       "input": {
         "encoding": "application/json",
         "schema": {
@@ -71,7 +71,7 @@ Create an allowance or denial for local publishing or chat. Repeating an identic
             },
             "capability": {
               "type": "string",
-              "enum": ["streamer", "chat"]
+              "enum": ["streamer", "chat", "syndicate", "vod"]
             },
             "effect": {
               "type": "string",

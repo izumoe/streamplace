@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/bluesky-social/indigo/atproto/syntax"
@@ -53,16 +54,39 @@ func (s *Server) handlePlaceStreamAccessGetStatus(ctx context.Context, subject s
 		}
 	}
 	snapshot := s.Access.Snapshot()
-	modes := snapshot.Modes()
 	out := &placestream.AccessGetStatus_Output{Revision: int64(snapshot.Revision()), Capabilities: make([]placestream.AccessDefs_Decision, 0, len(access.Capabilities))}
 	if subject != "" {
 		out.Subject = &subject
 	}
 	for _, capability := range access.Capabilities {
 		decision := snapshot.Check(subject, capability)
-		out.Capabilities = append(out.Capabilities, placestream.AccessDefs_Decision{Capability: string(capability), Mode: string(modes[capability]), Allowed: decision.Allowed, Reason: decision.Reason, Enforced: capability != access.Viewer})
+		setting := snapshot.Mode(capability)
+		defaultMode := string(setting.DefaultMode)
+		out.Capabilities = append(out.Capabilities, placestream.AccessDefs_Decision{Capability: string(capability), Mode: string(setting.Mode), DefaultMode: &defaultMode, ModeSource: &setting.Source, Allowed: decision.Allowed, Reason: decision.Reason, Enforced: capability != access.Viewer})
 	}
 	return out, nil
+}
+
+func (s *Server) handlePlaceStreamAccessSetMode(ctx context.Context, input *placestream.AccessSetMode_Input) (*placestream.AccessSetMode_Output, error) {
+	if err := s.requireAccessAdministrator(ctx); err != nil {
+		return nil, err
+	}
+	revision, err := strconv.ParseUint(input.ExpectedRevision, 10, 64)
+	if err != nil {
+		return nil, accessRPCError(http.StatusBadRequest, "InvalidRequest", "Expected revision must be the current decimal policy revision.")
+	}
+	var mode *access.Mode
+	if input.Mode != nil {
+		value := access.Mode(*input.Mode)
+		mode = &value
+	}
+	if err := s.Access.SetMode(ctx, access.Capability(input.Capability), mode, revision); err != nil {
+		if errors.Is(err, access.ErrConflict) {
+			return nil, accessRPCError(http.StatusConflict, "Conflict", "Node policy changed. Review the current settings before saving again.")
+		}
+		return nil, accessMutationError(err)
+	}
+	return &placestream.AccessSetMode_Output{Success: true}, nil
 }
 
 func accessGrantView(entry access.Entry, allowed bool) placestream.AccessDefs_Grant {

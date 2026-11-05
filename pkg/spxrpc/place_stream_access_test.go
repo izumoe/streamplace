@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -68,6 +69,7 @@ func TestNodeAccessRPCRequiresVerifiedAdministrator(t *testing.T) {
 			{http.MethodGet, "listGrants", nil},
 			{http.MethodPost, "createGrant", map[string]any{"subject": accessPublisher, "capability": "streamer", "effect": "allow"}},
 			{http.MethodPost, "deleteGrant", map[string]any{"id": "not-an-entry"}},
+			{http.MethodPost, "setMode", map[string]any{"capability": "streamer", "mode": "open", "expectedRevision": "0"}},
 		} {
 			rec := accessRequest(t, e, did, endpoint.method, endpoint.name, endpoint.input)
 			want := http.StatusForbidden
@@ -148,7 +150,7 @@ func TestNodeAccessRPCExactRevocationAndConflict(t *testing.T) {
 
 func TestNodeAccessRPCRejectsUnsupportedAndExpiredWrites(t *testing.T) {
 	_, e := accessTestServer(t)
-	for _, capability := range []string{"admin", "viewer", "syndicate", "vod", "unknown"} {
+	for _, capability := range []string{"admin", "viewer", "unknown"} {
 		rec := accessRequest(t, e, accessAdmin, http.MethodPost, "createGrant", map[string]any{"subject": accessPublisher, "capability": capability, "effect": "allow"})
 		require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 	}
@@ -160,4 +162,55 @@ func TestNodeAccessRPCRejectsUnsupportedAndExpiredWrites(t *testing.T) {
 	rec := accessRequest(t, e, accessAdmin, http.MethodPost, "createGrant", map[string]any{"subject": accessPublisher, "capability": "chat", "effect": "deny", "expiresAt": future})
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	require.Contains(t, rec.Body.String(), future)
+}
+
+func TestNodeAccessRPCPolicyMutationAndReset(t *testing.T) {
+	s, e := accessTestServer(t)
+	rec := accessRequest(t, e, accessAdmin, http.MethodPost, "setMode", map[string]any{"capability": "streamer", "mode": "open", "expectedRevision": "0"})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.True(t, s.Access.Check(accessPublisher, access.Streamer).Allowed)
+	rec = accessRequest(t, e, accessAdmin, http.MethodGet, "getStatus", nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var status struct {
+		Capabilities []struct {
+			Capability, Mode, ModeSource, DefaultMode string
+		}
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &status))
+	for _, capability := range status.Capabilities {
+		if capability.Capability == "streamer" {
+			require.Equal(t, "open", capability.Mode)
+			require.Equal(t, "stored", capability.ModeSource)
+			require.Equal(t, "allowlist", capability.DefaultMode)
+		}
+	}
+	rec = accessRequest(t, e, accessAdmin, http.MethodPost, "setMode", map[string]any{"capability": "chat", "mode": "off", "expectedRevision": "0"})
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	require.True(t, s.Access.Check(accessPublisher, access.Chat).Allowed)
+	for _, capability := range []string{"admin", "viewer", "unknown"} {
+		rec = accessRequest(t, e, accessAdmin, http.MethodPost, "setMode", map[string]any{"capability": capability, "mode": "open", "expectedRevision": strconv.FormatUint(s.Access.Snapshot().Revision(), 10)})
+		require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	}
+	rec = accessRequest(t, e, accessAdmin, http.MethodPost, "setMode", map[string]any{"capability": "streamer", "expectedRevision": strconv.FormatUint(s.Access.Snapshot().Revision(), 10)})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.False(t, s.Access.Check(accessPublisher, access.Streamer).Allowed)
+	require.True(t, s.Access.Check("", access.Viewer).Allowed)
+	require.False(t, s.Access.Check(accessPublisher, access.Admin).Allowed)
+	for _, revision := range []any{nil, "", "-1", "invalid", "18446744073709551616"} {
+		rec = accessRequest(t, e, accessAdmin, http.MethodPost, "setMode", map[string]any{"capability": "streamer", "mode": "open", "expectedRevision": revision})
+		require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	}
+}
+
+func TestNodeAccessRPCManagesCarriageAndUploadApprovals(t *testing.T) {
+	s, e := accessTestServer(t)
+	for _, capability := range []access.Capability{access.Syndicate, access.VOD} {
+		rec := accessRequest(t, e, accessAdmin, http.MethodPost, "setMode", map[string]any{
+			"capability": capability, "mode": "allowlist", "expectedRevision": strconv.FormatUint(s.Access.Snapshot().Revision(), 10),
+		})
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		rec = accessRequest(t, e, accessAdmin, http.MethodPost, "createGrant", map[string]any{"subject": accessPublisher, "capability": capability, "effect": "allow"})
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		require.True(t, s.Access.Check(accessPublisher, capability).Allowed)
+	}
 }

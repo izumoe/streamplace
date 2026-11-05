@@ -234,7 +234,12 @@ func (r *WebsocketReplicator) handleOriginMessage(ctx context.Context, view *pla
 		spmetrics.BroadcastOriginsTotal.WithLabelValues("no_url").Inc()
 		return fmt.Errorf("origin has no websocket URL author=%s", view.Author.Did)
 	}
-	syndicate := r.cli.ShouldSyndicate(origin.Streamer)
+	var syndicate bool
+	if r.mm != nil {
+		syndicate = r.mm.ShouldSyndicate(origin.Streamer)
+	} else {
+		syndicate = r.cli.ShouldSyndicate(origin.Streamer)
+	}
 	if !syndicate {
 		spmetrics.BroadcastOriginsTotal.WithLabelValues("not_syndicated").Inc()
 		log.Debug(ctx, "not replicating streamer", "streamer", origin.Streamer)
@@ -295,6 +300,9 @@ func (r *WebsocketReplicator) pull(ctx context.Context, streamer string) {
 	backoff := pullBackoffMin
 	attempts := 0
 	for {
+		if r.mm != nil && !r.mm.ShouldSyndicate(streamer) {
+			return
+		}
 		latest, ok := r.latestFor(streamer)
 		if !ok {
 			return

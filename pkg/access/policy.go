@@ -4,7 +4,6 @@ package access
 import (
 	"errors"
 	"fmt"
-	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -32,6 +31,12 @@ const (
 	Allowlist Mode = "allowlist"
 	Off       Mode = "off"
 )
+
+type ModeSetting struct {
+	Mode        Mode
+	DefaultMode Mode
+	Source      string
+}
 
 type Effect string
 
@@ -95,26 +100,38 @@ type entryKey struct {
 // Snapshot owns its inputs; callers cannot mutate the policy used for decisions.
 type Snapshot struct {
 	revision uint64
-	modes    map[Capability]Mode
+	modes    map[Capability]ModeSetting
 	entries  []Entry
 	byKey    map[entryKey][]Entry
 }
 
-func NewSnapshot(config Bootstrap, revision uint64, entries []Entry) (*Snapshot, error) {
+func NewSnapshot(config Bootstrap, revision uint64, entries []Entry, overrides map[Capability]Mode) (*Snapshot, error) {
 	if _, err := syntax.ParseDID(config.Authority); config.Authority != "" && err != nil {
 		return nil, fmt.Errorf("%w: invalid node authority: %w", ErrInvalid, err)
 	}
 	s := &Snapshot{
 		revision: revision,
-		modes: map[Capability]Mode{Admin: Allowlist, Viewer: Open, Chat: Open,
-			Streamer: Allowlist, Syndicate: Off, VOD: Allowlist},
+		modes: map[Capability]ModeSetting{Admin: {Mode: Allowlist}, Viewer: {Mode: Open}, Chat: {Mode: Open},
+			Streamer: {Mode: Allowlist}, Syndicate: {Mode: Off}, VOD: {Mode: Allowlist}},
 		byKey: map[entryKey][]Entry{},
 	}
 	for capability, mode := range config.Modes {
 		if err := ValidateMode(capability, mode); err != nil {
 			return nil, err
 		}
-		s.modes[capability] = mode
+		s.modes[capability] = ModeSetting{Mode: mode}
+	}
+	for capability, setting := range s.modes {
+		setting.DefaultMode, setting.Source = setting.Mode, Configuration
+		s.modes[capability] = setting
+	}
+	for capability, mode := range overrides {
+		if err := ValidateModeMutation(capability, mode); err != nil {
+			return nil, err
+		}
+		setting := s.modes[capability]
+		setting.Mode, setting.Source = mode, Stored
+		s.modes[capability] = setting
 	}
 	for _, source := range []struct {
 		entries []Entry
@@ -156,6 +173,13 @@ func ValidateMode(capability Capability, mode Mode) error {
 	return nil
 }
 
+func ValidateModeMutation(capability Capability, mode Mode) error {
+	if capability == Admin || capability == Viewer {
+		return fmt.Errorf("%w: %s policy is fixed", ErrInvalid, capability)
+	}
+	return ValidateMode(capability, mode)
+}
+
 func validateEntry(entry Entry) error {
 	if _, err := syntax.ParseDID(entry.Subject); err != nil {
 		return fmt.Errorf("%w: invalid subject: %w", ErrInvalid, err)
@@ -177,7 +201,7 @@ func ValidateMutation(entry Entry) error {
 	if err := validateEntry(entry); err != nil {
 		return err
 	}
-	if entry.Capability != Streamer && entry.Capability != Chat {
+	if entry.Capability == Admin || entry.Capability == Viewer {
 		return fmt.Errorf("%w: %s entries are configured at startup", ErrInvalid, entry.Capability)
 	}
 	return nil
@@ -188,10 +212,11 @@ func (s *Snapshot) Check(did string, capability Capability) Decision {
 }
 
 func (s *Snapshot) CheckAt(did string, capability Capability, now time.Time) Decision {
-	mode, known := s.modes[capability]
+	setting, known := s.modes[capability]
 	if !known {
 		return Decision{Reason: "unknown capability"}
 	}
+	mode := setting.Mode
 	if mode == Off {
 		return Decision{Reason: "capability disabled"}
 	}
@@ -222,7 +247,15 @@ func (s *Snapshot) CheckAt(did string, capability Capability, now time.Time) Dec
 
 func (s *Snapshot) Revision() uint64 { return s.revision }
 
-func (s *Snapshot) Modes() map[Capability]Mode { return maps.Clone(s.modes) }
+func (s *Snapshot) Mode(capability Capability) ModeSetting { return s.modes[capability] }
+
+func (s *Snapshot) Modes() map[Capability]Mode {
+	modes := make(map[Capability]Mode, len(s.modes))
+	for capability, setting := range s.modes {
+		modes[capability] = setting.Mode
+	}
+	return modes
+}
 
 func cloneEntry(entry Entry) Entry {
 	if entry.ExpiresAt != nil {

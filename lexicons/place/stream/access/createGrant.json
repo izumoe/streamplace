@@ -4,7 +4,7 @@
   "defs": {
     "main": {
       "type": "procedure",
-      "description": "Create an allowance or denial for local publishing or chat. Repeating an identical entry is idempotent; changing its metadata requires revoking that exact entry first. Requires node administrator authorization.",
+      "description": "Create a node-local allowance or denial for publishing, chat, remote carriage or uploads and recording. Repeating an identical entry is idempotent; changing its metadata requires revoking that exact entry first. Requires node administrator authorization.",
       "input": {
         "encoding": "application/json",
         "schema": {
@@ -17,7 +17,7 @@
             },
             "capability": {
               "type": "string",
-              "enum": ["streamer", "chat"]
+              "enum": ["streamer", "chat", "syndicate", "vod"]
             },
             "effect": {
               "type": "string",

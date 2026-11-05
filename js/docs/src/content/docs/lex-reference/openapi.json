@@ -4845,7 +4845,7 @@
     },
     "/xrpc/place.stream.access.createGrant": {
       "post": {
-        "summary": "Create an allowance or denial for local publishing or chat. Repeating an identical entry is idempotent; changing its metadata requires revoking that exact entry first. Requires node administrator authorization.",
+        "summary": "Create a node-local allowance or denial for publishing, chat, remote carriage or uploads and recording. Repeating an identical entry is idempotent; changing its metadata requires revoking that exact entry first. Requires node administrator authorization.",
         "operationId": "place.stream.access.createGrant",
         "tags": ["place.stream.access"],
         "responses": {
@@ -4909,7 +4909,7 @@
                   },
                   "capability": {
                     "type": "string",
-                    "enum": ["streamer", "chat"]
+                    "enum": ["streamer", "chat", "syndicate", "vod"]
                   },
                   "effect": {
                     "type": "string",
@@ -5140,6 +5140,94 @@
                     }
                   }
                 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/xrpc/place.stream.access.setMode": {
+      "post": {
+        "summary": "Set a persisted node-local capability mode. Omit mode to restore the startup default. Requires node administrator authorization and the current policy revision. Administrator and public-viewing policies are fixed.",
+        "operationId": "place.stream.access.setMode",
+        "tags": ["place.stream.access"],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": ["success"]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["error", "message"],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "oneOf": [
+                        {
+                          "const": "Unauthorized"
+                        },
+                        {
+                          "const": "Forbidden"
+                        },
+                        {
+                          "const": "InvalidRequest"
+                        },
+                        {
+                          "const": "Conflict"
+                        },
+                        {
+                          "const": "Unavailable"
+                        }
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "capability": {
+                    "type": "string",
+                    "enum": ["streamer", "chat", "syndicate", "vod"]
+                  },
+                  "mode": {
+                    "type": "string",
+                    "enum": ["open", "allowlist", "off"]
+                  },
+                  "expectedRevision": {
+                    "type": "string",
+                    "description": "The current getStatus revision encoded as a decimal string.",
+                    "minLength": 1,
+                    "maxLength": 20
+                  }
+                },
+                "required": ["capability", "expectedRevision"]
               }
             }
           }
@@ -8428,6 +8516,15 @@
           "mode": {
             "type": "string",
             "enum": ["open", "allowlist", "off"]
+          },
+          "defaultMode": {
+            "type": "string",
+            "description": "The startup default restored when a saved mode is removed.",
+            "enum": ["open", "allowlist", "off"]
+          },
+          "modeSource": {
+            "type": "string",
+            "description": "Whether this mode comes from startup configuration or saved node policy."
           },
           "allowed": {
             "type": "boolean"

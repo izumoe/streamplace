@@ -24,7 +24,7 @@ func nodeChatPolicy(t *testing.T, denied string) access.Checker {
 	if denied != "" {
 		entries = append(entries, access.Entry{Subject: denied, Capability: access.Chat, Effect: access.Deny, Source: access.Stored})
 	}
-	policy, err := access.NewSnapshot(access.Bootstrap{Authority: "did:web:node.test", Modes: map[access.Capability]access.Mode{access.Chat: access.Open}}, 1, entries)
+	policy, err := access.NewSnapshot(access.Bootstrap{Authority: "did:web:node.test", Modes: map[access.Capability]access.Mode{access.Chat: access.Open}}, 1, entries, nil)
 	require.NoError(t, err)
 	return policy
 }

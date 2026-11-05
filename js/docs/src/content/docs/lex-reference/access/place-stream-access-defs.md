@@ -40,13 +40,15 @@ An exact node-local capability entry. Configuration entries cannot be revoked th
 
 **Properties:**
 
-| Name         | Type      | Req'd | Description                                                                                                        | Constraints                                                     |
-| ------------ | --------- | ----- | ------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------- |
-| `capability` | `string`  | ✅    |                                                                                                                    | Enum: `admin`, `viewer`, `chat`, `streamer`, `syndicate`, `vod` |
-| `mode`       | `string`  | ✅    |                                                                                                                    | Enum: `open`, `allowlist`, `off`                                |
-| `allowed`    | `boolean` | ✅    |                                                                                                                    |                                                                 |
-| `reason`     | `string`  | ✅    |                                                                                                                    |                                                                 |
-| `enforced`   | `boolean` | ✅    | Whether this node implements this capability gate. Informational defaults do not imply restricted viewing support. |                                                                 |
+| Name          | Type      | Req'd | Description                                                                                                        | Constraints                                                     |
+| ------------- | --------- | ----- | ------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------- |
+| `capability`  | `string`  | ✅    |                                                                                                                    | Enum: `admin`, `viewer`, `chat`, `streamer`, `syndicate`, `vod` |
+| `mode`        | `string`  | ✅    |                                                                                                                    | Enum: `open`, `allowlist`, `off`                                |
+| `defaultMode` | `string`  | ❌    | The startup default restored when a saved mode is removed.                                                         | Enum: `open`, `allowlist`, `off`                                |
+| `modeSource`  | `string`  | ❌    | Whether this mode comes from startup configuration or saved node policy.                                           | Known Values: `configuration`, `stored`                         |
+| `allowed`     | `boolean` | ✅    |                                                                                                                    |                                                                 |
+| `reason`      | `string`  | ✅    |                                                                                                                    |                                                                 |
+| `enforced`    | `boolean` | ✅    | Whether this node implements this capability gate. Informational defaults do not imply restricted viewing support. |                                                                 |
 
 ---
 
@@ -122,6 +124,16 @@ An exact node-local capability entry. Configuration entries cannot be revoked th
         "mode": {
           "type": "string",
           "enum": ["open", "allowlist", "off"]
+        },
+        "defaultMode": {
+          "type": "string",
+          "enum": ["open", "allowlist", "off"],
+          "description": "The startup default restored when a saved mode is removed."
+        },
+        "modeSource": {
+          "type": "string",
+          "knownValues": ["configuration", "stored"],
+          "description": "Whether this mode comes from startup configuration or saved node policy."
         },
         "allowed": {
           "type": "boolean"

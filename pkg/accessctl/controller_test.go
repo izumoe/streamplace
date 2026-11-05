@@ -42,6 +42,51 @@ func TestRestrictionReapprovalAndReload(t *testing.T) {
 	require.ErrorIs(t, err, access.ErrInvalid)
 }
 
+func TestStoredPolicyReloadAndPublisherRevocation(t *testing.T) {
+	ctx := t.Context()
+	state, err := statedb.MakeDB(ctx, &config.CLI{DBURL: ":memory:"}, nil, nil)
+	require.NoError(t, err)
+	bootstrap := access.Bootstrap{Authority: "did:web:node.test", Modes: map[access.Capability]access.Mode{access.Streamer: access.Open}}
+	controller, err := New(ctx, bootstrap, state, nil)
+	require.NoError(t, err)
+	stale, err := New(ctx, bootstrap, state, nil)
+	require.NoError(t, err)
+	before := controller.Check("did:plc:alice", access.Streamer)
+	require.True(t, before.Allowed)
+	open, off := access.Open, access.Off
+	require.NoError(t, controller.SetMode(ctx, access.Streamer, &off, 0))
+	require.False(t, controller.Check("did:plc:alice", access.Streamer).Allowed)
+	require.NoError(t, controller.SetMode(ctx, access.Streamer, &open, controller.Snapshot().Revision()))
+	after := controller.Check("did:plc:alice", access.Streamer)
+	require.True(t, after.Allowed)
+	require.Greater(t, after.Generation, before.Generation, "reopening publishing must not revive old admitted workers")
+	require.ErrorIs(t, stale.SetMode(ctx, access.Chat, &off, 0), access.ErrConflict)
+	require.Equal(t, controller.Snapshot().Revision(), stale.Snapshot().Revision(), "a stale editor must get a refreshed snapshot before retrying")
+	bootstrap.Modes[access.Streamer] = access.Allowlist
+	reloaded, err := New(ctx, bootstrap, state, nil)
+	require.NoError(t, err)
+	require.Equal(t, after, reloaded.Check("did:plc:alice", access.Streamer), "saved policy wins over changed startup defaults")
+	require.Equal(t, access.ModeSetting{Mode: access.Open, DefaultMode: access.Allowlist, Source: access.Stored}, reloaded.Snapshot().Mode(access.Streamer))
+}
+
+func TestChatModeChangeNotifiesWithoutAccountEntries(t *testing.T) {
+	state, err := statedb.MakeDB(t.Context(), &config.CLI{DBURL: ":memory:"}, nil, nil)
+	require.NoError(t, err)
+	b := bus.NewBus()
+	controller, err := New(t.Context(), access.Bootstrap{Authority: "did:web:node.test"}, state, b)
+	require.NoError(t, err)
+	changes := b.Subscribe(access.Topic)
+	t.Cleanup(func() { b.Unsubscribe(access.Topic, changes) })
+	off := access.Off
+	require.NoError(t, controller.SetMode(t.Context(), access.Chat, &off, 0))
+	select {
+	case change := <-changes:
+		require.True(t, change.(access.Change).ChatChanged)
+	case <-time.After(time.Second):
+		t.Fatal("missing chat policy notification")
+	}
+}
+
 func TestSharedDatabaseRefreshAndConcurrentIdempotency(t *testing.T) {
 	ctx := t.Context()
 	config := &config.CLI{DBURL: "sqlite://" + t.TempDir() + "/access.db"}

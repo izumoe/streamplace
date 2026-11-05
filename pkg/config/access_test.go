@@ -11,7 +11,7 @@ func TestAccessBootstrap(t *testing.T) {
 	cli := CLI{BroadcasterHost: "node.example", AdminDIDs: []string{"did:plc:admin"}}
 	bootstrap, err := cli.AccessBootstrap()
 	require.NoError(t, err)
-	policy, err := access.NewSnapshot(bootstrap, 0, nil)
+	policy, err := access.NewSnapshot(bootstrap, 0, nil, nil)
 	require.NoError(t, err)
 	require.False(t, policy.Check("did:plc:alice", access.Streamer).Allowed)
 	require.True(t, policy.Check("did:plc:alice", access.VOD).Allowed, "bootstrap preserves existing upload eligibility independently")
@@ -23,7 +23,7 @@ func TestAccessBootstrap(t *testing.T) {
 	cli.Syndicate = []string{"did:plc:bob"}
 	bootstrap, err = cli.AccessBootstrap()
 	require.NoError(t, err)
-	policy, err = access.NewSnapshot(bootstrap, 0, nil)
+	policy, err = access.NewSnapshot(bootstrap, 0, nil, nil)
 	require.NoError(t, err)
 	require.True(t, policy.Check("did:plc:alice", access.Streamer).Allowed)
 	require.True(t, policy.Check("did:key:zTest", access.Streamer).Allowed)
@@ -41,7 +41,7 @@ func TestAccessModesAreExplicit(t *testing.T) {
 	}
 	bootstrap, err := (&CLI{AccessPolicy: "streamer=open,vod=off"}).AccessBootstrap()
 	require.NoError(t, err)
-	policy, err := access.NewSnapshot(bootstrap, 0, nil)
+	policy, err := access.NewSnapshot(bootstrap, 0, nil, nil)
 	require.NoError(t, err)
 	require.True(t, policy.Check("did:plc:alice", access.Streamer).Allowed)
 	require.False(t, policy.Check("did:key:zTest", access.Streamer).Allowed)

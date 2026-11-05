@@ -27,6 +27,9 @@ type AccessEntry struct {
 type AccessRevision struct {
 	Authority string `gorm:"primaryKey"`
 	Revision  uint64
+	Modes     map[access.Capability]access.Mode `gorm:"serializer:json"`
+	// PublisherGeneration invalidates all publishers admitted before a stricter mode.
+	PublisherGeneration uint64
 }
 
 // AccessPublisherEpoch outlives entries, including bans that have been removed.
@@ -42,7 +45,7 @@ func (entry AccessEntry) view() access.Entry {
 	return access.Entry{ID: entry.ID, Authority: entry.Authority, Subject: entry.Subject, Capability: entry.Capability, Effect: entry.Effect, Reason: entry.Reason, CreatedAt: entry.CreatedAt, ExpiresAt: entry.ExpiresAt, Source: access.Stored}
 }
 
-func (state *StatefulDB) ReadAccess(ctx context.Context, authority string) (uint64, []access.Entry, map[string]uint64, error) {
+func (state *StatefulDB) ReadAccess(ctx context.Context, authority string) (AccessRevision, []access.Entry, map[string]uint64, error) {
 	var revision AccessRevision
 	var rows []AccessEntry
 	var epochs []AccessPublisherEpoch
@@ -63,7 +66,53 @@ func (state *StatefulDB) ReadAccess(ctx context.Context, authority string) (uint
 	for _, epoch := range epochs {
 		generations[epoch.Subject] = epoch.Generation
 	}
-	return revision.Revision, entries, generations, err
+	return revision, entries, generations, err
+}
+
+// SetAccessMode saves a node-local override; nil restores the startup default.
+func (state *StatefulDB) SetAccessMode(ctx context.Context, authority string, capability access.Capability, mode *access.Mode, expectedRevision uint64, defaultMode access.Mode) error {
+	if err := access.ValidateModeMutation(capability, defaultMode); err != nil {
+		return err
+	}
+	if mode != nil {
+		if err := access.ValidateModeMutation(capability, *mode); err != nil {
+			return err
+		}
+	}
+	return state.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := lockAccess(tx, authority); err != nil {
+			return err
+		}
+		var current AccessRevision
+		if err := tx.Where("authority = ?", authority).First(&current).Error; err != nil {
+			return err
+		}
+		oldMode, stored := current.Modes[capability]
+		if mode == nil && !stored || mode != nil && stored && oldMode == *mode {
+			return nil
+		}
+		if current.Revision != expectedRevision {
+			return access.ErrConflict
+		}
+		if !stored {
+			oldMode = defaultMode
+		}
+		nextMode := defaultMode
+		if mode == nil {
+			delete(current.Modes, capability)
+		} else {
+			nextMode = *mode
+			if current.Modes == nil {
+				current.Modes = make(map[access.Capability]access.Mode)
+			}
+			current.Modes[capability] = nextMode
+		}
+		if capability == access.Streamer && oldMode != nextMode && (nextMode == access.Off || oldMode == access.Open && nextMode == access.Allowlist) {
+			current.PublisherGeneration++
+		}
+		current.Revision++
+		return tx.Save(&current).Error
+	})
 }
 
 // Lock the revision row before inspecting entries. This serializes policy writes
