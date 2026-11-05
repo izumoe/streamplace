@@ -110,8 +110,7 @@ func makeAudioOnlyAACFMP4(t *testing.T, ctx context.Context, seconds int) []byte
 // worker's core directly (no subprocess): feed it an H264+AAC fMP4, collect the
 // framed output, and verify every emitted segment is a valid signed canonical
 // .m4s. This is the contract the supervisor relies on — frames it can hand
-// straight to ValidateMP4. (The real subprocess spawn + fault injection is
-// Stage 3.)
+// straight to ValidateMP4.
 func TestRunMP4IngestWorkerProducesValidSignedFrames(t *testing.T) {
 	ctx := context.Background()
 	ms := newBareSegmentSigner(t)
@@ -121,15 +120,17 @@ func TestRunMP4IngestWorkerProducesValidSignedFrames(t *testing.T) {
 	manifest, err := ms.buildManifest(ctx, time.Now().UnixMilli())
 	require.NoError(t, err)
 
-	// Provide the node transcode signer (the same test key serves both roles
-	// here, as in the transcoder tests) so the worker completes to dual-codec.
+	node := newBareSegmentSigner(t)
+	nodeKeyPEM, err := signers.MarshalES256KPrivateKeyPEM(node.Signer)
+	require.NoError(t, err)
+	// Node-signed audio has a separate authority from the streamer's source.
 	cfg := IngestWorkerConfig{
 		StreamerDID:     ms.Streamer(),
 		KeyPEM:          keyPEM,
 		CertPEM:         ms.Cert,
 		Manifest:        manifest,
-		NodeCertPEM:     ms.Cert,
-		NodeKeyPEM:      keyPEM,
+		NodeCertPEM:     node.Cert,
+		NodeKeyPEM:      nodeKeyPEM,
 		BroadcasterHost: "test.example.com",
 	}
 
@@ -151,14 +152,30 @@ func TestRunMP4IngestWorkerProducesValidSignedFrames(t *testing.T) {
 		}
 		require.NoError(t, err)
 		require.NotEmpty(t, payload)
+		if typ == ingestframe.AudioAddendum {
+			_, tail, err := verifiedRenditions(ctx, payload)
+			require.NoError(t, err, "audio continuation verify")
+			require.True(t, tail)
+			events, err := unwrapMuxlEvents(ctx, payload)
+			require.NoError(t, err)
+			catalog := catalogFromEvents(events)
+			require.NotNil(t, catalog)
+			require.Nil(t, catalog.Video)
+			require.NotNil(t, catalog.Audio)
+			require.Len(t, catalog.Audio.Renditions, 1)
+			for _, audio := range catalog.Audio.Renditions {
+				require.True(t, isAACCodec(audio.Codec))
+			}
+			continue
+		}
 
 		valid, err := ValidateMP4MediaC2PA(ctx, payload)
 		require.NoError(t, err, "segment %d verify", segs)
 		require.NotNil(t, valid.Manifest.Label)
 		label := *valid.Manifest.Label
 
-		// With a node key the worker completes to dual-codec: every segment must
-		// carry both the source Opus and a worker-transcoded AAC track.
+		// Ingest converts input AAC to the signed source's Opus. Completion
+		// preserves that source and adds a node-signed AAC track.
 		codecs := audioCodecsOf(t, ctx, payload)
 		hasOpus, hasAAC := false, false
 		for _, c := range codecs {
