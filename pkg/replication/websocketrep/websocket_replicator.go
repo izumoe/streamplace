@@ -95,6 +95,15 @@ var (
 func (r *WebsocketReplicator) rememberOrigin(view *placestream.BroadcastDefs_BroadcastOriginView, streamer string) {
 	r.latestMutex.Lock()
 	defer r.latestMutex.Unlock()
+	if previous, ok := r.latest[streamer]; ok {
+		incoming := view.Record.Val.(*placestream.BroadcastOrigin)
+		current := previous.view.Record.Val.(*placestream.BroadcastOrigin)
+		nextTime, nextErr := time.Parse(time.RFC3339Nano, incoming.UpdatedAt)
+		currentTime, currentErr := time.Parse(time.RFC3339Nano, current.UpdatedAt)
+		if currentErr == nil && (nextErr != nil || nextTime.Before(currentTime)) {
+			return
+		}
+	}
 	r.latest[streamer] = latestOrigin{view: view, seen: time.Now()}
 }
 
@@ -225,10 +234,16 @@ func (r *WebsocketReplicator) handleOriginMessage(ctx context.Context, view *pla
 		spmetrics.BroadcastOriginsTotal.WithLabelValues("no_url").Inc()
 		return fmt.Errorf("origin has no websocket URL author=%s", view.Author.Did)
 	}
-	if !r.cli.ShouldSyndicate(origin.Streamer) {
+	syndicate := r.cli.ShouldSyndicate(origin.Streamer)
+	if !syndicate {
 		spmetrics.BroadcastOriginsTotal.WithLabelValues("not_syndicated").Inc()
 		log.Debug(ctx, "not replicating streamer", "streamer", origin.Streamer)
-		return nil
+		if len(r.cli.MoqStatsURLs) == 0 || r.mm == nil {
+			return nil
+		}
+		if _, published := r.mm.GetLiveWindow(origin.Streamer); !published {
+			return nil
+		}
 	}
 	myURL := r.getMyWebsocketURL()
 	u, err := url.Parse(*origin.WebsocketURL)
@@ -244,7 +259,11 @@ func (r *WebsocketReplicator) handleOriginMessage(ctx context.Context, view *pla
 	// Remembered before the connected check: a running pull re-reads the
 	// newest origin on every attempt (the stream may have moved nodes) and
 	// each refresh keeps it from concluding the stream is over.
+	// Relay counts need ownership even when this node must not pull the media.
 	r.rememberOrigin(view, origin.Streamer)
+	if !syndicate {
+		return nil
+	}
 	if r.hasConnection(origin.Streamer) {
 		spmetrics.BroadcastOriginsTotal.WithLabelValues("already_connected").Inc()
 		log.Debug(ctx, "already has connection")

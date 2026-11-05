@@ -12,6 +12,8 @@ import (
 
 	"golang.org/x/sync/errgroup"
 	official "moq.dev/moq"
+	"stream.place/streamplace/pkg/placestream"
+	"stream.place/streamplace/pkg/statedb"
 )
 
 // moqViewerSnapshot counts sessions, not tracks. Legacy counter spellings are
@@ -148,33 +150,80 @@ func (r *WebsocketReplicator) runMoqViewerStats(ctx context.Context) error {
 	}
 	g.Go(func() error {
 		defer r.mm.SetMoqRelayViewers(nil)
+		ticker := time.NewTicker(originPollInterval)
+		defer ticker.Stop()
 		nodes := make([]map[string]int, len(r.cli.MoqStatsURLs))
+		var owners map[string]statedb.BroadcastOrigin
+		refreshOwners := true
+		myDID := r.cli.ServerDID()
 		for {
 			select {
 			case <-gctx.Done():
 				return gctx.Err()
 			case next := <-updates:
 				nodes[next.node] = next.counts
-				counts := make(map[string]int)
-				complete := true
-				for _, values := range nodes {
-					if values == nil {
+			case <-ticker.C:
+				refreshOwners = true
+			}
+			counts := make(map[string]int)
+			complete := true
+			for _, values := range nodes {
+				if values == nil {
+					complete = false
+					break
+				}
+				for did, count := range values {
+					if count > math.MaxInt-counts[did] {
 						complete = false
 						break
 					}
-					for did, count := range values {
-						if count > math.MaxInt-counts[did] {
-							complete = false
-							break
+					counts[did] += count
+				}
+			}
+			if !complete || r.state == nil {
+				r.mm.SetMoqRelayViewers(nil)
+				continue
+			}
+			// Ownership can change without a new stats frame. Only the current
+			// origin reports a stream's relay totals.
+			if refreshOwners {
+				refreshOwners = false
+				owners = nil
+				origins, err := r.state.ListBroadcastOriginsSince(time.Now().Add(-originPollWindow))
+				if err == nil {
+					owners = make(map[string]statedb.BroadcastOrigin, len(origins))
+					for _, origin := range origins {
+						if _, known := owners[origin.StreamerRepoDID]; !known {
+							owners[origin.StreamerRepoDID] = origin
 						}
-						counts[did] += count
 					}
 				}
-				if !complete {
-					counts = nil
-				}
-				r.mm.SetMoqRelayViewers(counts)
 			}
+			if owners == nil {
+				r.mm.SetMoqRelayViewers(nil)
+				continue
+			}
+			for did := range counts {
+				origin := owners[did]
+				if origin.ServerDID != myDID {
+					delete(counts, did)
+					continue
+				}
+				// Foreign announcements also arrive without a shared database;
+				// their timestamps have whole-second precision.
+				if latest, ok := r.latestFor(did); ok {
+					foreign := latest.view.Record.Val.(*placestream.BroadcastOrigin)
+					updated, err := time.Parse(time.RFC3339Nano, foreign.UpdatedAt)
+					if err != nil || !updated.Before(origin.UpdatedAt.Truncate(time.Second)) {
+						delete(counts, did)
+						continue
+					}
+				}
+				if _, published := r.mm.GetLiveWindow(did); !published {
+					delete(counts, did)
+				}
+			}
+			r.mm.SetMoqRelayViewers(counts)
 		}
 	})
 	return g.Wait()

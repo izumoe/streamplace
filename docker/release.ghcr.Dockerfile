@@ -1,4 +1,4 @@
-# Multi-arch release image published to ghcr.io by .github/workflows/docker.yaml.
+# Multi-arch release image published to ghcr.io by .github/workflows/build.yaml.
 #
 # Unlike docker/release.Dockerfile (which curls a prebuilt tarball from a
 # package registry), the streamplace binary is baked in from the build context

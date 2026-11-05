@@ -127,6 +127,51 @@ func TestOriginViewForRow(t *testing.T) {
 	require.Equal(t, "moqt://origin.example:443?certhash=ab", *view.Record.Val.(*placestream.BroadcastOrigin).MoqURL)
 }
 
+func TestRememberOriginKeepsNewestRecord(t *testing.T) {
+	r := &WebsocketReplicator{cli: &config.CLI{}, latest: make(map[string]latestOrigin)}
+	const did = "did:plc:streamer"
+	now := time.Now().Truncate(time.Second)
+	newer := r.originViewForRow(statedb.BroadcastOrigin{StreamerRepoDID: did, ServerDID: "did:web:new.example", UpdatedAt: now})
+	older := r.originViewForRow(statedb.BroadcastOrigin{StreamerRepoDID: did, ServerDID: "did:web:old.example", UpdatedAt: now.Add(-time.Minute)})
+	r.rememberOrigin(newer, did)
+	r.rememberOrigin(older, did)
+	latest, ok := r.latestFor(did)
+	require.True(t, ok)
+	require.Same(t, newer, latest.view, "replayed announcements must not move a stream back to its old origin")
+	invalid := originView(did, "wss://old.example/xrpc/place.stream.live.subscribeSegments")
+	r.rememberOrigin(invalid, did)
+	latest, ok = r.latestFor(did)
+	require.True(t, ok)
+	require.Same(t, newer, latest.view, "a missing timestamp must not replace a known newer origin")
+	newest := r.originViewForRow(statedb.BroadcastOrigin{StreamerRepoDID: did, ServerDID: "did:web:newest.example", UpdatedAt: now.Add(time.Minute)})
+	r.rememberOrigin(newest, did)
+	latest, ok = r.latestFor(did)
+	require.True(t, ok)
+	require.Same(t, newest, latest.view, "a newer announcement must still move the stream")
+}
+
+func TestDisallowedOriginsWithoutStatsAreNotRemembered(t *testing.T) {
+	r := &WebsocketReplicator{
+		cli:    &config.CLI{ServerHost: "me.example", AccessPolicy: "syndicate=off"},
+		latest: make(map[string]latestOrigin),
+	}
+	const did = "did:plc:streamer"
+	view := r.originViewForRow(statedb.BroadcastOrigin{
+		StreamerRepoDID: did, ServerDID: "did:web:other.example", UpdatedAt: time.Now(),
+	})
+	require.False(t, r.cli.ShouldSyndicate(did))
+	require.NoError(t, r.handleOriginMessage(t.Context(), view))
+	_, ok := r.latestFor(did)
+	require.False(t, ok, "a node without relay stats must not retain disallowed origins")
+	require.False(t, r.hasConnection(did))
+	local := r.originViewForRow(statedb.BroadcastOrigin{
+		StreamerRepoDID: "did:plc:local", ServerDID: r.cli.ServerDID(), UpdatedAt: time.Now(),
+	})
+	require.NoError(t, r.handleOriginMessage(t.Context(), local))
+	_, ok = r.latestFor("did:plc:local")
+	require.False(t, ok, "local announcements must not be remembered as foreign ownership")
+}
+
 // The advertised MoQ URL is this host on the listener's port, carrying the
 // self-signed certificate's hash for peers to pin, and nothing without a
 // listener or relay.

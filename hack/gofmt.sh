@@ -9,5 +9,5 @@ while IFS= read -r -d '' path; do
   if [[ -f "$path" ]]; then files+=("$path"); fi
 done < <(git ls-files -z --cached --others --exclude-standard -- '*.go')
 if ((${#files[@]})); then
-  gofmt "$@" "${files[@]}"
+  "$(go env GOROOT)/bin/gofmt" "$@" "${files[@]}"
 fi

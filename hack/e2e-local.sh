@@ -69,7 +69,16 @@ if [ -x "$AAPT2" ] && ! "$AAPT2" dump xmltree --file AndroidManifest.xml "$APK" 
   echo "$(basename "$APK") does not trust the harness's CA — build it with 'make android-e2e'"
   exit 1
 fi
-adb_ root >/dev/null
+# adbd can close the root request while restarting; reconnect before reissuing it.
+for attempt in 1 2 3; do
+  if root_output="$(adb_ root 2>&1)"; then break; fi
+  if [[ "$root_output" != *"unable to connect for root: closed"* ]] || [ "$attempt" = 3 ]; then
+    printf '%s\n' "$root_output" >&2
+    exit 1
+  fi
+  echo "adbd disconnected during root handoff; waiting to reconnect" >&2
+  adb_ wait-for-device
+done
 adb_ wait-for-device
 if [ "$(adb_ shell id -u | tr -d '\r')" != 0 ]; then
   echo "can't get root on $DEVICE — use a Google APIs emulator image, not a Play Store one"

@@ -74,4 +74,9 @@ func (mm *MediaManager) SetMoqRelayViewers(counts map[string]int) {
 		}
 	}
 	v.relay = counts
+	available := 0.0
+	if counts != nil {
+		available = 1
+	}
+	spmetrics.MoqRelayStatsAvailable.Set(available)
 }

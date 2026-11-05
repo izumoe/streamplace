@@ -21,6 +21,11 @@ var ViewersTotal = promauto.NewGaugeVec(prometheus.GaugeOpts{
 	Help: "total number of viewers",
 }, []string{"protocol"})
 
+var MoqRelayStatsAvailable = promauto.NewGauge(prometheus.GaugeOpts{
+	Name: "streamplace_moq_relay_stats_available",
+	Help: "1 when complete relay stats determine MoQ viewer counts; 0 when using reporting-player sessions",
+})
+
 var StreamSessions = promauto.NewGaugeVec(prometheus.GaugeOpts{
 	Name: "streamplace_stream_sessions",
 	Help: "number of open stream sessions per streamer",

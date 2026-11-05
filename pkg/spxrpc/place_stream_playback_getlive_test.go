@@ -122,7 +122,7 @@ func TestLiveSegmentPathRouteParams(t *testing.T) {
 // TestResolveSession pins the session contract on playback requests: a
 // first request gets a fresh public session (and a media playlist is
 // redirected to carry it), a valid one is kept, one past half its life or
-// expired is renewed under the same id, and a forged one is refused.
+// expired public session is renewed under the same id, and a forged one is refused.
 func TestResolveSession(t *testing.T) {
 	key := []byte("0123456789abcdef0123456789abcdef")
 	s := &Server{}
@@ -198,6 +198,9 @@ func TestResolveSession(t *testing.T) {
 	owner, err := s.resolveSession(ctx, ownerSID, streamer, true)
 	require.NoError(t, err)
 	require.Equal(t, psession.ScopeOwner, owner.Scope)
+	_, expiredOwner := psession.Mint(key, streamer, psession.ScopeOwner, -time.Hour, time.Now())
+	_, err = s.resolveSession(ctx, expiredOwner, streamer, true)
+	require.Error(t, err, "expired owner access requires a fresh authenticated session")
 }
 
 // TestRedirectWithSession: the redirect keeps the request's URL and adds the

@@ -23,7 +23,10 @@ vi.mock("@tanstack/react-router", () => ({
   Link: ({ children }: { children: ReactNode }) => <a>{children}</a>,
 }));
 vi.mock("@/hooks/actor-lookup", () => ({
-  useActorLookup: () => ({ status: "found" }),
+  useActorLookup: () => ({
+    status: "found",
+    actor: { did: "did:plc:streamer" },
+  }),
 }));
 vi.mock("@/hooks/use-livestream-store", () => ({
   useLivestreamStore: () => ({ store: fixture.store, ready: true }),
@@ -35,6 +38,7 @@ vi.mock("@/hooks/use-stream-avatar", () => ({
   useStreamAvatar: () => undefined,
 }));
 vi.mock("@/hooks/use-avatars", () => ({ default: () => fixture.profiles }));
+vi.mock("@/hooks/use-bio", () => ({ useBio: () => ({ data: undefined }) }));
 vi.mock("@/contexts/fullscreen-context", () => ({
   useFullscreen: () => ({ theatre: false, fullscreen: fixture.fullscreen }),
 }));

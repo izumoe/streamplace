@@ -5,26 +5,66 @@ on:
   push:
     branches:
       - next
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY_IMAGE: ghcr.io/izumoe/streamplace
 
 jobs:
+  plan:
+    name: plan build
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.decision.outputs.build }}
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4.1.7
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Decide whether to build
+        id: decision
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          build=true
+          if [ "$EVENT_NAME" = push ] && [ "$REF_TYPE" = branch ] && [ "$REF_NAME" = next ]; then
+            if git tag --points-at HEAD | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' > /dev/null; then
+              build=false
+            fi
+          fi
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+
   linux:
-    name: ${{ matrix.name }}
+    permissions:
+      contents: read
+      packages: read
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
+    name: linux binaries and checks
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - name: linux-arm64
-            cmd: "make linux-arm64"
-          - name: windows-amd64
-            cmd: "make windows-amd64"
-          # The e2e build of the release APK (see `make android-e2e`), which
-          # android-e2e runs. Shipped releases are built by GitLab.
-          - name: android
-            cmd: "make app && make android-e2e"
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    env:
+      BUILD_CACHE_DIR: ${{ github.workspace }}/.build/ci-cache
+      CACHE_PATHS: |
+        ${{ github.workspace }}/.build/ci-cache/sccache
+        ${{ github.workspace }}/.build/ci-cache/go-mod
+        ${{ github.workspace }}/.build/ci-cache/go-build
+        ${{ github.workspace }}/.build/ci-cache/cargo/registry
+        ${{ github.workspace }}/.build/ci-cache/cargo/git
+        ${{ github.workspace }}/.build/ci-cache/pnpm
     steps:
       - name: Maximize build space
         run: |
@@ -36,99 +76,242 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha }}
 
-      - name: Log in to the Container registry
-        uses: docker/login-action@v2
+      - name: Restore build caches
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.CACHE_PATHS }}
+          key:
+            ${{ runner.os }}-${{ runner.arch }}-linux-v1-${{
+            hashFiles('.ci/dockerfile-hash.yaml', 'go.sum', 'Cargo.lock',
+            'pnpm-lock.yaml', 'subprojects/*.wrap') }}-${{ github.sha }}-${{
+            github.run_attempt }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-linux-v1-${{ hashFiles('.ci/dockerfile-hash.yaml', 'go.sum', 'Cargo.lock', 'pnpm-lock.yaml', 'subprojects/*.wrap') }}-
+            ${{ runner.os }}-${{ runner.arch }}-linux-v1-
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr.io
+        if:
+          github.event_name != 'pull_request' ||
+          github.event.pull_request.head.repo.full_name == github.repository
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
 
-      - name: make node
+      - name: Load current builder image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/build.Dockerfile
+          target: builder-no-darwin
+          load: true
+          tags: ${{ env.REGISTRY_IMAGE }}:builder-no-darwin
+          cache-from:
+            type=registry,ref=${{ env.REGISTRY_IMAGE }}:builder-buildcache
+
+      - name: Build Linux binaries and run checks
+        id: build
         run: |
-          sudo apt install podman -y
-          # Ubuntu 24.04's crun (1.14.1) rejects the OCI spec version newer
-          # podman emits ("unknown version specified", fixed in crun >= 1.14.3),
-          # and the 20260726 runner image update made that pairing fatal.
-          sudo curl -fsSL -o /usr/bin/crun https://github.com/containers/crun/releases/download/1.28/crun-1.28-linux-amd64
-          sudo chmod +x /usr/bin/crun
-          make in-container BUILDER_TARGET=builder-no-darwin DOCKER_PWD_MOUNT_PATH=/app DOCKER_BUILD_OPTS="--layers --cache-to ghcr.io/izumoe/streamplace --cache-from ghcr.io/izumoe/streamplace" DOCKER_OPTS="-e STREAMPLACE_IGNORE_LEAKS=true -e STREAMPLACE_TEST_COUNT=1 -e CI=true -e GITHUB_ACTION=true" IN_CONTAINER_CMD="${{ matrix.cmd }}"
+          mkdir -p "$BUILD_CACHE_DIR"
+          make run-in-container \
+            DOCKER_BIN=docker \
+            DOCKER_REF="${REGISTRY_IMAGE}:builder-no-darwin" \
+            DOCKER_PWD_MOUNT_PATH=/app \
+            DOCKER_OPTS="-v $BUILD_CACHE_DIR:/cache -e SCCACHE_DIR=/cache/sccache -e SCCACHE_CACHE_SIZE=2G -e RUSTC_WRAPPER=sccache -e CARGO_INCREMENTAL=0 -e CARGO_HOME=/cache/cargo -e GOMODCACHE=/cache/go-mod -e GOCACHE=/cache/go-build -e STREAMPLACE_IGNORE_LEAKS=true -e STREAMPLACE_TEST_COUNT=1 -e CI=true -e GITHUB_ACTION=true -e GITHUB_REF_TYPE -e GITHUB_REF_NAME -e GITHUB_HEAD_REF -e GITHUB_REPOSITORY" \
+            IN_CONTAINER_CMD="trap 'sccache --show-stats' EXIT; git config --global --add safe.directory /app && pnpm config set --global store-dir /cache/pnpm && make app && make linux-amd64 && make test-vod && make static-test && make check && make ci-lexicons && make linux-arm64 && go run ./pkg/config/git/git.go -v > sp-version.txt"
 
-      - name: Upload android e2e APK
-        if: matrix.name == 'android'
-        uses: actions/upload-artifact@v4
+      - name: Restore cache ownership
+        if:
+          ${{ !cancelled() && (steps.build.outcome == 'success' ||
+          steps.build.outcome == 'failure') }}
+        run: sudo chown -R "$(id -u):$(id -g)" "$BUILD_CACHE_DIR"
+      - name: Save build caches
+        if:
+          ${{ !cancelled() && (steps.build.outcome == 'success' ||
+          steps.build.outcome == 'failure') && steps.cache.outputs.cache-hit !=
+          'true' }}
+        uses: actions/cache/save@v4
         with:
-          name: android-e2e-apk-${{ github.run_id }}
-          path: ./bin/*-android-e2e.apk
-          retention-days: 1
-
-      - name: Upload bin artifacts
-        if: matrix.name == 'windows-amd64'
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-bin-${{ github.event.pull_request.head.sha }}
-          path: ./bin/
-          retention-days: 1
-
-  linux-amd64:
-    name: linux-amd64
-    runs-on: ubuntu-latest
-    steps:
-      - name: Maximize build space
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
-
-      - name: Check out code
-        uses: actions/checkout@v4.1.7
-        with:
-          fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.sha }}
-
-      - name: mise check
-        uses: jdx/mise-action@v2
-        with:
-          install: true
-
-      - name: Log in to the Container registry
-        uses: docker/login-action@v2
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ github.token }}
-
-      - name: make node
-        run: |
-          sudo apt install podman -y
-          # Ubuntu 24.04's crun (1.14.1) rejects the OCI spec version newer
-          # podman emits ("unknown version specified", fixed in crun >= 1.14.3),
-          # and the 20260726 runner image update made that pairing fatal.
-          sudo curl -fsSL -o /usr/bin/crun https://github.com/containers/crun/releases/download/1.28/crun-1.28-linux-amd64
-          sudo chmod +x /usr/bin/crun
-          make in-container BUILDER_TARGET=builder-no-darwin DOCKER_PWD_MOUNT_PATH=/app DOCKER_BUILD_OPTS="--layers --cache-to ghcr.io/izumoe/streamplace --cache-from ghcr.io/izumoe/streamplace" DOCKER_OPTS="-e STREAMPLACE_IGNORE_LEAKS=true -e STREAMPLACE_TEST_COUNT=1 -e CI=true -e GITHUB_ACTION=true" IN_CONTAINER_CMD="make linux-amd64 && make test-vod && make static-test && make check && make ci-lexicons"
+          path: ${{ env.CACHE_PATHS }}
+          key: ${{ steps.cache.outputs.cache-primary-key }}
 
       - name: Publish Test Report
         if: success() || failure()
         uses: mikepenz/action-junit-report@v5
         with:
           report_paths: "test.xml"
-          # Keep reports on this job; separate checks can attach to other workflows.
           annotate_only: true
           detailed_summary: true
           fail_on_failure: true
 
-      - name: Upload streamplace binary
+      - name: Capture version
+        id: version
+        run: echo "version=$(cat sp-version.txt)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Linux binaries
         uses: actions/upload-artifact@v4
         with:
-          name: streamplace-linux-amd64-${{ github.run_id }}
-          path: ./build-linux-amd64/streamplace
+          name: streamplace-linux-binaries
+          path: |
+            build-linux-amd64/streamplace
+            build-linux-arm64/streamplace
           retention-days: 1
+          if-no-files-found: error
 
-  # Reuse the binary built by linux-amd64 instead of provisioning another
+      - name: Upload Linux release archives
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-linux
+          path: bin/*-linux-*.tar.gz
+          if-no-files-found: error
+
+  android:
+    permissions:
+      contents: read
+      packages: read
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
+    name: android packages
+    runs-on: ubuntu-latest
+    env:
+      BUILD_CACHE_DIR: ${{ github.workspace }}/.build/ci-cache
+      CACHE_PATHS: |
+        ${{ github.workspace }}/.build/ci-cache/sccache
+        ${{ github.workspace }}/.build/ci-cache/go-mod
+        ${{ github.workspace }}/.build/ci-cache/go-build
+        ${{ github.workspace }}/.build/ci-cache/cargo/registry
+        ${{ github.workspace }}/.build/ci-cache/cargo/git
+        ${{ github.workspace }}/.build/ci-cache/pnpm
+        ${{ github.workspace }}/.build/ci-cache/gradle/wrapper
+        ${{ github.workspace }}/.build/ci-cache/gradle/caches/modules-2
+    steps:
+      - name: Maximize build space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+
+      - name: Check out code
+        uses: actions/checkout@v4.1.7
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Restore build caches
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.CACHE_PATHS }}
+          key:
+            ${{ runner.os }}-${{ runner.arch }}-android-v1-${{
+            hashFiles('.ci/dockerfile-hash.yaml', 'go.sum', 'Cargo.lock',
+            'pnpm-lock.yaml', 'subprojects/*.wrap') }}-${{ github.sha }}-${{
+            github.run_attempt }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-android-v1-${{ hashFiles('.ci/dockerfile-hash.yaml', 'go.sum', 'Cargo.lock', 'pnpm-lock.yaml', 'subprojects/*.wrap') }}-
+            ${{ runner.os }}-${{ runner.arch }}-android-v1-
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr.io
+        if:
+          github.event_name != 'pull_request' ||
+          github.event.pull_request.head.repo.full_name == github.repository
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Load current builder image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/build.Dockerfile
+          target: builder-no-darwin
+          load: true
+          tags: ${{ env.REGISTRY_IMAGE }}:builder-no-darwin
+          cache-from:
+            type=registry,ref=${{ env.REGISTRY_IMAGE }}:builder-buildcache
+
+      - name: Build Android packages
+        id: build
+        env:
+          ANDROID_KEYSTORE_BASE64:
+            ${{ startsWith(github.ref, 'refs/tags/v') &&
+            secrets.ANDROID_KEYSTORE_BASE64 || '' }}
+          ANDROID_KEYSTORE_PASSWORD:
+            ${{ startsWith(github.ref, 'refs/tags/v') &&
+            secrets.ANDROID_KEYSTORE_PASSWORD || '' }}
+          ANDROID_KEYSTORE_ALIAS:
+            ${{ startsWith(github.ref, 'refs/tags/v') &&
+            secrets.ANDROID_KEYSTORE_ALIAS || 'alias_name' }}
+          RELEASE_BUILD: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        run: |
+          mkdir -p "$BUILD_CACHE_DIR"
+          command="bash hack/test-android-signing.sh && make app && make android-e2e"
+          options="-v $BUILD_CACHE_DIR:/cache -e SCCACHE_DIR=/cache/sccache -e SCCACHE_CACHE_SIZE=2G -e RUSTC_WRAPPER=sccache -e CARGO_INCREMENTAL=0 -e CARGO_HOME=/cache/cargo -e GOMODCACHE=/cache/go-mod -e GOCACHE=/cache/go-build -e GRADLE_USER_HOME=/cache/gradle -e CI=true -e GITHUB_ACTION=true -e GITHUB_REF_TYPE -e GITHUB_REF_NAME -e GITHUB_HEAD_REF -e GITHUB_REPOSITORY"
+          if [ "$RELEASE_BUILD" = true ]; then
+            if [ -z "$ANDROID_KEYSTORE_BASE64" ] || [ -z "$ANDROID_KEYSTORE_PASSWORD" ]; then
+              echo "Tagged Android builds require ANDROID_KEYSTORE_BASE64 and ANDROID_KEYSTORE_PASSWORD secrets" >&2
+              exit 1
+            fi
+            options="$options -e ANDROID_KEYSTORE_BASE64 -e ANDROID_KEYSTORE_PASSWORD -e ANDROID_KEYSTORE_ALIAS"
+            # E2e packages must use a disposable key, including on release tags.
+            command="bash hack/test-android-signing.sh && make android && rm my-release-key.keystore && env -u ANDROID_KEYSTORE_BASE64 -u ANDROID_KEYSTORE_PASSWORD -u ANDROID_KEYSTORE_ALIAS make android-e2e"
+          fi
+          make run-in-container \
+            DOCKER_BIN=docker \
+            DOCKER_REF="${REGISTRY_IMAGE}:builder-no-darwin" \
+            DOCKER_PWD_MOUNT_PATH=/app \
+            DOCKER_OPTS="$options" \
+            IN_CONTAINER_CMD="trap 'sccache --show-stats' EXIT; git config --global --add safe.directory /app && pnpm config set --global store-dir /cache/pnpm && $command"
+
+      - name: Restore cache ownership
+        if:
+          ${{ !cancelled() && (steps.build.outcome == 'success' ||
+          steps.build.outcome == 'failure') }}
+        run: sudo chown -R "$(id -u):$(id -g)" "$BUILD_CACHE_DIR"
+      - name: Save build caches
+        if:
+          ${{ !cancelled() && (steps.build.outcome == 'success' ||
+          steps.build.outcome == 'failure') && steps.cache.outputs.cache-hit !=
+          'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.CACHE_PATHS }}
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+
+      - name: Upload Android e2e APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-e2e-apk-${{ github.run_id }}
+          path: bin/*-android-e2e.apk
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Upload Android release packages
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-android
+          path: |
+            bin/*-android-debug.apk
+            bin/*-android-debug.aab
+            bin/*-android-release.apk
+            bin/*-android-release.aab
+          if-no-files-found: error
+
+  # Reuse the binary built by linux instead of provisioning another
   # frontend and native build just to run Playwright.
   e2e-web:
     name: e2e-web
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    needs: linux-amd64
+    needs: linux
     steps:
       - name: Check out code
         uses: actions/checkout@v4.1.7
@@ -150,8 +333,8 @@ jobs:
       - name: Download streamplace binary
         uses: actions/download-artifact@v4
         with:
-          name: streamplace-linux-amd64-${{ github.run_id }}
-          path: ./build-linux-amd64
+          name: streamplace-linux-binaries
+          path: .
 
       - name: Prepare e2e runner
         run: |
@@ -186,7 +369,7 @@ jobs:
     name: android-e2e
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    needs: [linux, linux-amd64]
+    needs: [linux, android]
     steps:
       # full history: pnpm install's prepare steps derive the version from it
       - uses: actions/checkout@v4.1.7
@@ -205,8 +388,8 @@ jobs:
       - name: download streamplace binary
         uses: actions/download-artifact@v4
         with:
-          name: streamplace-linux-amd64-${{ github.run_id }}
-          path: ./build-linux-amd64
+          name: streamplace-linux-binaries
+          path: .
 
       - name: download android e2e APK
         uses: actions/download-artifact@v4
@@ -234,7 +417,7 @@ jobs:
           path: |
             ~/.android/avd/*
             ~/.android/adb*
-          key: avd-pixel-6-api-34-google-apis-v1
+          key: avd-pixel-6-api-34-google-apis-4cpu-6144m-576m-v2
 
       # A Google APIs image, not Play Store: hack/e2e-local.sh needs root to
       # point the emulator at the harness and install its CA.
@@ -247,6 +430,9 @@ jobs:
           arch: x86_64
           profile: pixel_6
           force-avd-creation: false
+          cores: 4
+          ram-size: 6144M
+          heap-size: 576M
           emulator-options:
             -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
             -camera-back none
@@ -287,6 +473,8 @@ jobs:
           if-no-files-found: warn
 
   darwin:
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runs-on }}
     strategy:
@@ -304,12 +492,48 @@ jobs:
             runs-on: macos-15-intel
             cmd: make
             xcode-version: "16.4"
+    env:
+      BUILD_CACHE_DIR: ${{ github.workspace }}/.build/ci-cache
+      CACHE_PATHS: |
+        ${{ github.workspace }}/.build/ci-cache/sccache
+        ${{ github.workspace }}/.build/ci-cache/go-mod
+        ${{ github.workspace }}/.build/ci-cache/go-build
+        ${{ github.workspace }}/.build/ci-cache/cargo/registry
+        ${{ github.workspace }}/.build/ci-cache/cargo/git
+        ${{ github.workspace }}/.build/ci-cache/pnpm
+        ~/Library/Caches/CocoaPods
+      SCCACHE_DIR: ${{ github.workspace }}/.build/ci-cache/sccache
+      SCCACHE_CACHE_SIZE: 2G
+      RUSTC_WRAPPER: sccache
+      CARGO_INCREMENTAL: "0"
+      CARGO_HOME: ${{ github.workspace }}/.build/ci-cache/cargo
+      GOMODCACHE: ${{ github.workspace }}/.build/ci-cache/go-mod
+      GOCACHE: ${{ github.workspace }}/.build/ci-cache/go-build
     steps:
       - name: Check out code
         uses: actions/checkout@v4.1.7
         with:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Restore build caches
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.CACHE_PATHS }}
+          key:
+            ${{ runner.os }}-${{ runner.arch }}-darwin-v1-${{ matrix.name }}-${{
+            matrix.xcode-version }}-${{ hashFiles('.ci/dockerfile-hash.yaml',
+            'go.sum', 'Cargo.lock', 'pnpm-lock.yaml', 'subprojects/*.wrap')
+            }}-${{ github.sha }}-${{ github.run_attempt }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-darwin-v1-${{ matrix.name }}-${{ matrix.xcode-version }}-${{ hashFiles('.ci/dockerfile-hash.yaml', 'go.sum', 'Cargo.lock', 'pnpm-lock.yaml', 'subprojects/*.wrap') }}-
+            ${{ runner.os }}-${{ runner.arch }}-darwin-v1-${{ matrix.name }}-${{ matrix.xcode-version }}-
+
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.11
+        with:
+          version: v0.19.0
 
       - uses: actions/setup-node@v4
         with:
@@ -320,6 +544,7 @@ jobs:
           xcode-version: ${{ matrix.xcode-version }}
 
       - name: Build Streamplace
+        id: build
         env:
           STREAMPLACE_TEST_COUNT: "1"
           STREAMPLACE_IGNORE_LEAKS: "true"
@@ -327,6 +552,7 @@ jobs:
         run: |
           npm install -g corepack@latest \
           && corepack enable \
+          && pnpm config set --global store-dir "$BUILD_CACHE_DIR/pnpm" \
           && export GOTOOLCHAIN=go1.26.10 \
           && brew install go llvm \
           && rustup target add wasm32-wasip1 \
@@ -337,3 +563,155 @@ jobs:
           && python -m pip install meson \
           && PATH="/opt/homebrew/opt/llvm/bin:$PATH" \
           && ${{ matrix.cmd }}
+
+      - name: Save build caches
+        if:
+          ${{ !cancelled() && (steps.build.outcome == 'success' ||
+          steps.build.outcome == 'failure') && steps.cache.outputs.cache-hit !=
+          'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.CACHE_PATHS }}
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+
+      - name: Stage macOS release archive
+        if: startsWith(github.ref, 'refs/tags/v') && matrix.name != 'ios'
+        env:
+          PLATFORM: ${{ matrix.name }}
+        run: |
+          version=$(go run ./pkg/config/git/git.go -v)
+          mkdir -p bin
+          tar -czf "bin/streamplace-${version}-${PLATFORM}.tar.gz" -C "build-${PLATFORM}" streamplace
+
+      - name: Upload release artifacts
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.name }}
+          path: bin/*.tar.gz
+          if-no-files-found: error
+
+  # Assemble and publish the product images from the freshly-built binaries.
+  images:
+    name: ${{ matrix.image }} image
+    runs-on: ubuntu-latest
+    needs: [linux, e2e-web, android-e2e]
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: release
+            file: docker/release.ghcr.Dockerfile
+            platforms: linux/amd64,linux/arm64
+            suffix: ""
+          - image: mistserver
+            file: docker/mistserver.ghcr.Dockerfile
+            platforms: linux/amd64
+            suffix: "-mistserver"
+          - image: bunny
+            file: docker/bunny.Dockerfile
+            platforms: linux/amd64
+            suffix: "-bunny"
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4.1.7
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: streamplace-linux-binaries
+          path: .
+
+      - name: Stage build context
+        run: |
+          mkdir -p stage/build-linux-amd64 stage/build-linux-arm64
+          cp build-linux-amd64/streamplace stage/build-linux-amd64/streamplace
+          cp build-linux-arm64/streamplace stage/build-linux-arm64/streamplace
+          cp docker/mistserver.json stage/mistserver.json
+          cp docker/bunny.sh stage/bunny.sh
+
+      - uses: docker/setup-qemu-action@v3
+        if: contains(matrix.platforms, 'arm64')
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr.io
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Compute image tags
+        id: tags
+        env:
+          SUFFIX: ${{ matrix.suffix }}
+          VERSION: ${{ needs.linux.outputs.version }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          PR_NUMBER: ${{ github.event.number }}
+          IMAGE: ${{ matrix.image }}
+        run: |
+          set -euo pipefail
+          tags=("${REGISTRY_IMAGE}:${VERSION}${SUFFIX}")
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            tags+=("${REGISTRY_IMAGE}:pr-${PR_NUMBER}${SUFFIX}")
+          elif [ "$REF_TYPE" = "tag" ]; then
+            tags+=("${REGISTRY_IMAGE}:latest${SUFFIX}")
+          else
+            tags+=("${REGISTRY_IMAGE}:${REF_NAME}${SUFFIX}")
+          fi
+          # bunny gets a stable, version-independent tag (its contents never change).
+          if [ "$IMAGE" = "bunny" ]; then
+            tags+=("${REGISTRY_IMAGE}:bunny")
+          fi
+          printf -v joined '%s,' "${tags[@]}"
+          echo "tags=${joined%,}" >> "$GITHUB_OUTPUT"
+          echo "tags: ${joined%,}"
+
+      - name: Build and push ${{ matrix.image }}
+        uses: docker/build-push-action@v6
+        with:
+          context: stage
+          file: ${{ matrix.file }}
+          platforms: ${{ matrix.platforms }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.tags.outputs.tags }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: >-
+            ${{ github.event_name != 'pull_request' &&
+            format('type=gha,mode=max,scope={0}', matrix.image) || '' }}
+
+  release:
+    name: GitHub release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [linux, android, darwin, e2e-web, android-e2e, images]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: release
+          merge-multiple: true
+
+      - name: Create checksums
+        working-directory: release
+        run: sha256sum streamplace-* > SHA256SUMS
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run:
+          gh release create "$GITHUB_REF_NAME" release/* --repo
+          "$GITHUB_REPOSITORY" --verify-tag --generate-notes

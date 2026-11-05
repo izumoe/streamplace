@@ -253,6 +253,8 @@ origin avoids counting a peer's player again alongside the origin's relay total.
 The endpoint uses the existing stream-bound signed playback sessions and live
 publication/ban gates. The player closes its lease on unmount or ordinary page
 navigation; missed closes expire after 30 seconds plus the five-second sweep.
+Expired owner-preview sessions require a new authenticated session; public
+sessions can renew without changing the viewer's session ID.
 Reporting failures never gate playback. A paused or stalled player eventually
 stops counting. Older discovery responses without `sessionUrl` remain playable.
 
@@ -307,11 +309,21 @@ sum replaces player sessions. Zero is authoritative; a closed, refused or
 invalid feed restores the warm player-session fallback. Unchanged live feeds
 remain valid without new frames. The two MoQ sources are never added together.
 
-Configure one Streamplace node to report a relay namespace's totals, and keep
-the node list complete as relay topology changes. Shared reporting owners or a
-tier containing cluster traffic would overcount; an incomplete node list would
-undercount. Anonymous relay access often does not grant stats access, so leave
-stats URLs unset until the appropriate project credentials are available.
+Each node reports relay totals only for published live streams it currently
+originates. The existing origin records identify the reporting owner, including
+newer foreign announcements when a stream moves between independent nodes.
+Ownership is refreshed every ten seconds, independently of stats frames; unknown,
+stale, foreign and unpublished streams are excluded. Origin database failures
+restore player-session fallback.
+
+`streamplace_moq_relay_stats_available` is 1 when complete relay stats determine
+the count and 0 when reporting-player sessions are used. This also distinguishes
+a known zero from unavailable stats without exposing private connection URLs.
+
+Keep the node list complete as relay topology changes. A tier containing cluster
+traffic would overcount; an incomplete node list would undercount. Anonymous
+relay access often does not grant stats access, so leave stats URLs unset until
+the appropriate project credentials are available.
 
 ## Track layout and peer replication
 

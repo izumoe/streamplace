@@ -33,8 +33,6 @@ import (
 	"github.com/piprate/json-gold/ld"
 
 	irohStreamplace "stream.place/streamplace/pkg/iroh/generated/iroh_streamplace"
-
-	_ "stream.place/streamplace/pkg/streamplacedeps"
 )
 
 const CertFile = "cert.pem"

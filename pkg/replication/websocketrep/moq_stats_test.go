@@ -3,15 +3,20 @@ package websocketrep
 import (
 	"context"
 	"fmt"
+	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 	official "moq.dev/moq"
 	"stream.place/streamplace/pkg/bus"
 	"stream.place/streamplace/pkg/config"
 	"stream.place/streamplace/pkg/media"
 	"stream.place/streamplace/pkg/moq"
+	"stream.place/streamplace/pkg/muxl"
+	"stream.place/streamplace/pkg/statedb"
 )
 
 func TestMoqViewerSnapshot(t *testing.T) {
@@ -45,13 +50,39 @@ func TestMoqViewerSnapshot(t *testing.T) {
 }
 
 func TestMoqStatsRequireEveryNode(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), 25*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 40*time.Second)
 	defer cancel()
 	const did = "did:plc:moq-cluster"
 	b := bus.NewBus()
-	cli := &config.CLI{MoqRelayURL: "https://relay.example/tenant", MoqStatsTier: "viewer"}
+	cli := &config.CLI{ServerHost: "origin.example", MoqRelayURL: "https://relay.example/tenant", MoqStatsTier: "viewer", AccessPolicy: "syndicate=off"}
 	mm, err := media.MakeMediaManager(ctx, cli, nil, nil, b, nil, nil)
 	require.NoError(t, err)
+	state, err := statedb.MakeDB(ctx, &config.CLI{DBURL: ":memory:"}, nil, nil)
+	require.NoError(t, err)
+	var queries atomic.Int64
+	require.NoError(t, state.DB.Callback().Query().Before("gorm:query").Register("count-origin-queries", func(tx *gorm.DB) {
+		if tx.Statement.Table == "broadcast_origins" {
+			queries.Add(1)
+		}
+	}))
+	fixture, err := os.ReadFile("../../../test/fixtures/h264-opus-frag.mp4")
+	require.NoError(t, err)
+	canonical, err := muxl.RunMuxlCanonicalize(ctx, fixture, nil)
+	require.NoError(t, err)
+	for _, stream := range []string{did, "did:plc:foreign", "did:plc:unknown", "did:plc:preview", "did:plc:stale"} {
+		require.NoError(t, mm.FeedLiveRenditions(ctx, stream, canonical, time.Now(), stream != "did:plc:preview"))
+		if stream == "did:plc:unknown" {
+			continue
+		}
+		owner, updated := cli.ServerDID(), time.Now()
+		if stream == "did:plc:foreign" {
+			owner = "did:web:other.example"
+		}
+		if stream == "did:plc:stale" {
+			updated = updated.Add(-time.Hour)
+		}
+		require.NoError(t, state.UpsertBroadcastOrigin(stream, owner, cli.MoqRelayURL, updated))
+	}
 	mm.TouchMoqSession(did, "player")
 	defer mm.CloseMoqSession(did, "player")
 	cert, err := moq.NewSelfSignedCert()
@@ -84,19 +115,52 @@ func TestMoqStatsRequireEveryNode(t *testing.T) {
 		}()
 		cli.MoqStatsURLs = append(cli.MoqStatsURLs, fmt.Sprintf("moqt://%s/.stats/node/%d?certhash=%s", server.LocalAddr(), node, cert.Hash()))
 	}
-	r := &WebsocketReplicator{cli: cli, mm: mm}
+	r := &WebsocketReplicator{cli: cli, mm: mm, state: state, latest: make(map[string]latestOrigin)}
 	done := make(chan error, 1)
 	go func() { done <- r.runMoqViewerStats(ctx) }()
 	defer func() { cancel(); require.ErrorIs(t, <-done, context.Canceled) }()
 	publish := func(node, count int) {
 		t.Helper()
-		require.NoError(t, tracks[node].Update(map[string]any{"tenant/playback/" + did: map[string]int{"broadcasts_started": count}}))
+		require.NoError(t, tracks[node].Update(map[string]any{
+			"tenant/playback/" + did:          map[string]int{"broadcasts_started": count},
+			"tenant/playback/did:plc:foreign": map[string]int{"broadcasts_started": 7},
+			"tenant/playback/did:plc:unknown": map[string]int{"broadcasts_started": 7},
+			"tenant/playback/did:plc:preview": map[string]int{"broadcasts_started": 7},
+			"tenant/playback/did:plc:stale":   map[string]int{"broadcasts_started": 7},
+		}))
 	}
 	publish(0, 5)
 	// A node with no initial snapshot cannot contribute an authoritative zero.
 	require.Never(t, func() bool { return b.GetViewerCount(did) != 1 }, 200*time.Millisecond, 10*time.Millisecond)
 	publish(1, 3)
 	require.Eventually(t, func() bool { return b.GetViewerCount(did) == 8 }, 5*time.Second, 10*time.Millisecond)
+	for _, stream := range []string{"did:plc:foreign", "did:plc:unknown", "did:plc:preview", "did:plc:stale"} {
+		require.Zero(t, b.GetViewerCount(stream), "relay stats must not claim another origin or an unpublished stream: %s", stream)
+	}
+	oldForeign := r.originViewForRow(statedb.BroadcastOrigin{
+		StreamerRepoDID: did, ServerDID: "did:web:other.example", UpdatedAt: time.Now().Add(-time.Hour),
+	})
+	require.NoError(t, r.handleOriginMessage(ctx, oldForeign))
+	unrelated := r.originViewForRow(statedb.BroadcastOrigin{
+		StreamerRepoDID: "did:plc:never-local", ServerDID: "did:web:other.example", UpdatedAt: time.Now(),
+	})
+	require.NoError(t, r.handleOriginMessage(ctx, unrelated))
+	_, remembered := r.latestFor("did:plc:never-local")
+	require.False(t, remembered, "disallowed global announcements must not accumulate in the origin cache")
+	started, before := time.Now(), queries.Load()
+	for count := 6; count <= 9; count++ {
+		publish(0, count)
+		require.Eventually(t, func() bool { return b.GetViewerCount(did) == count+3 }, 5*time.Second, 10*time.Millisecond)
+	}
+	require.LessOrEqual(t, queries.Load()-before, int64(time.Since(started)/originPollInterval)+1,
+		"stats updates must not scan the origin database on every frame")
+	// An external node's origin announcement does not write our local database.
+	require.NoError(t, r.handleOriginMessage(ctx, r.originViewForRow(statedb.BroadcastOrigin{
+		StreamerRepoDID: did, ServerDID: "did:web:other.example", UpdatedAt: time.Now(),
+	})))
+	require.False(t, r.hasConnection(did), "remembering ownership must not start a disallowed pull")
+	require.Eventually(t, func() bool { return b.GetViewerCount(did) == 0 }, 15*time.Second, 10*time.Millisecond,
+		"ownership changes must clear totals even when the relay snapshot is unchanged")
 	stops[1]()
 	require.Eventually(t, func() bool { return b.GetViewerCount(did) == 1 }, 5*time.Second, 10*time.Millisecond)
 }
