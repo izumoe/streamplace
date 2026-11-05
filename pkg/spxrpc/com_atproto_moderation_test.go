@@ -185,11 +185,16 @@ func TestCreateReportRouting(t *testing.T) {
 						break
 					}
 					require.NoError(t, err)
-					if typ == ingestframe.SourceSegment {
+					switch typ {
+					case ingestframe.SourceSegment:
 						continue
+					case ingestframe.CompletedSourceSegment:
+						require.NoError(t, mm.ValidateMP4(ctx, bytes.NewReader(segment), true))
+					case ingestframe.AudioAddendum:
+						require.NoError(t, mm.ReceiveAudioAddendum(ctx, streamerDID, segment))
+					default:
+						t.Fatalf("unexpected worker frame %s", typ)
 					}
-					require.Equal(t, ingestframe.CompletedSourceSegment, typ)
-					require.NoError(t, mm.ValidateMP4(ctx, bytes.NewReader(segment), true))
 				}
 			}
 			mod := newTestModel(t)

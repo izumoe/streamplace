@@ -383,33 +383,62 @@ test("MoQ plays real video and audio, pauses, and releases resources on transpor
         );
       });
     const deadline = performance.now() + 2000;
-    let buffer: NonNullable<Window["moqAudioBuffers"]>[number] | undefined;
+    type AudioBuffer = NonNullable<Window["moqAudioBuffers"]>[number];
+    let buffer: AudioBuffer | undefined;
     let headroomMs: number | undefined;
+    // @moq/watch 0.6.6 shares WRITE/STALLED/TIMELINE in control and packs
+    // the mutation epoch and READ into the high/low halves of state.
+    const sharedPosition = (shared: NonNullable<AudioBuffer["shared"]>) => ({
+      read: Number(Atomics.load(shared.state, 0) & 0xffffffffn) | 0,
+      write: Atomics.load(shared.control, 0),
+      stalled: Atomics.load(shared.control, 2) !== 0,
+      timeline: Atomics.load(shared.control, 3),
+    });
     do {
-      buffer = window.moqAudioBuffers!.find(
-        (output) =>
-          output.context.state === "running" &&
+      buffer = window.moqAudioBuffers!.find((output) => {
+        if (output.context.state !== "running") return false;
+        if (output.shared) {
+          const position = sharedPosition(output.shared);
+          return !position.stalled && position.timeline > 0;
+        }
+        return (
           !output.stalled &&
           output.end !== undefined &&
-          output.positions.length > 0,
-      );
-      headroomMs = buffer
-        ? (buffer.end! - buffer.positions.at(-1)!.timestamp) / 1000
-        : undefined;
+          output.positions.length > 0
+        );
+      });
+      if (buffer?.shared) {
+        const position = sharedPosition(buffer.shared);
+        headroomMs =
+          (((position.write - position.read) | 0) / buffer.shared.rate) * 1000;
+      } else {
+        headroomMs = buffer
+          ? (buffer.end! - buffer.positions.at(-1)!.timestamp) / 1000
+          : undefined;
+      }
       if (headroomMs !== undefined && headroomMs <= 150) break;
       await new Promise((resolve) => setTimeout(resolve, 5));
     } while (performance.now() < deadline);
     if (!buffer) throw new Error("No active native MoQ audio buffer");
     const positionCount = buffer.positions.length;
     const before = audible();
+    const sharedBefore = buffer.shared
+      ? sharedPosition(buffer.shared)
+      : undefined;
     const start = performance.now();
     while (performance.now() - start < 200) {
       // Native audio keeps rendering through actual main-thread pressure.
     }
     const after = audible();
     const blockedMs = performance.now() - start;
-    // Deliver the worklet's native cursor reports queued during the stall.
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    const sharedAfter = buffer.shared
+      ? sharedPosition(buffer.shared)
+      : undefined;
+    // The shared path updates Atomics directly and sends no cursor messages.
+    // Only the postMessage path has native reports queued during the stall.
+    if (!buffer.shared) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
     return {
       before,
       after,
@@ -417,6 +446,17 @@ test("MoQ plays real video and audio, pauses, and releases resources on transpor
       startedAt: performance.timeOrigin + start,
       headroomMs,
       positions: buffer.positions.slice(positionCount),
+      shared:
+        sharedBefore && sharedAfter && buffer.shared
+          ? {
+              before: sharedBefore,
+              after: sharedAfter,
+              advancedMs:
+                (((sharedAfter.read - sharedBefore.read) | 0) /
+                  buffer.shared.rate) *
+                1000,
+            }
+          : undefined,
     };
   });
   await testInfo.attach("native-audio-main-thread-stall", {
@@ -425,15 +465,25 @@ test("MoQ plays real video and audio, pauses, and releases resources on transpor
   });
   expect(audioDuringStall.before).toBe(true);
   expect(audioDuringStall.after).toBe(true);
-  expect(audioDuringStall.positions.length).toBeGreaterThan(5);
-  expect(
-    audioDuringStall.positions.every(
-      (position, index, positions) =>
-        !position.stalled &&
-        (index === 0 || position.timestamp > positions[index - 1].timestamp),
-    ),
-    "the native audio cursor advances throughout receiver pressure",
-  ).toBe(true);
+  if (audioDuringStall.shared) {
+    expect(audioDuringStall.shared.after.timeline).toBe(
+      audioDuringStall.shared.before.timeline,
+    );
+    expect(audioDuringStall.shared.after.stalled).toBe(false);
+    expect(audioDuringStall.shared.advancedMs).toBeGreaterThanOrEqual(
+      audioDuringStall.blockedMs - 50,
+    );
+  } else {
+    expect(audioDuringStall.positions.length).toBeGreaterThan(5);
+    expect(
+      audioDuringStall.positions.every(
+        (position, index, positions) =>
+          !position.stalled &&
+          (index === 0 || position.timestamp > positions[index - 1].timestamp),
+      ),
+      "the native audio cursor advances throughout receiver pressure",
+    ).toBe(true);
+  }
   const decoded = await page.evaluate(() =>
     window.moqVideoDecoders!.map(({ maxPending, queues, outputs, errors }) => ({
       maxPending,

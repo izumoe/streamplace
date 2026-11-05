@@ -1,8 +1,7 @@
-# Running the GitLab pipeline locally
+# Running the supported builds locally
 
-`make all` runs the build jobs from `.gitlab-ci.yml` in the pinned builder
-container, in the same order the CI jobs produce them, and leaves artifacts in
-`bin/`.
+`make all` runs the supported build targets in the pinned builder container
+and leaves artifacts in `bin/`. It does not publish releases.
 
 ```sh
 make all
@@ -20,18 +19,69 @@ is `hack/all.sh`.
   `make ci-lexicons` compares the whole diff). The test build uses
   `build-test-linux-amd64` so that it does not share a build directory with the
   static release build.
-- `linux-amd64`, `linux-arm64`, `windows-amd64`, `darwin-amd64`,
+- `linux-amd64`, `linux-arm64`, `darwin-amd64`,
   `darwin-arm64`: the node build, `test-vod` (where the binary can run),
-  and `pkg-$TARGET`.
-- `android-debug` and `android-release`: `make ci-android-debug` and
-  `make ci-android-release`.
+  and local Debian packages for the Linux targets.
+- `android-debug` and `android-release`: local APK and AAB builds.
 - `build-ios`: `make ios` on a macOS machine. This is the only job that cannot
-  run on Linux, because it needs Xcode. GitLab's `build-ios` job is commented
-  out until a macOS runner exists; build it locally and upload by hand.
+  run on Linux, because it needs Xcode. The archive is unsigned and must be
+  signed and exported separately for installation on devices.
 
-The tag-only publishing jobs (`npm-release`, `release`, `deb-release`,
-`homebrew-release`) are not run: they need CI credentials and should not fire
-by accident.
+GitHub Actions publishes version-tag releases. npm, apt repository and Homebrew
+publishing are not part of this fork's release pipeline.
+
+## GitHub builds and releases
+
+`.github/workflows/build.yaml` owns the build graph for pull requests, `next`
+and stable `vX.Y.Z` tags. A single Linux job builds amd64 and arm64 binaries
+and runs the existing native, VOD, lint and lexicon checks. Web tests, Android
+tests and container images reuse those binaries. `docker-builder.yaml` is the
+single publisher of the pinned toolchain image. It runs for toolchain input
+changes or manual dispatch; PRs only validate it. Topic branches receive the
+full checks when a PR is opened. When a `next` push already has a stable tag at
+its HEAD, the tag run owns the platform builds instead of building them twice.
+
+After all platform builds, browser/mobile tests and image jobs pass, a version
+tag publishes a GitHub Release in the current repository with:
+
+- Linux and macOS amd64/arm64 node tarballs;
+- Android debug/release APKs and AABs, excluding the e2e packages;
+- an unsigned iOS `.xcarchive.tar.gz` for later signing and export;
+- `SHA256SUMS` for the downloaded assets.
+
+The macOS tarballs contain the native CI binaries. Developer ID signing and
+notarization remain available through the separate signing commands below.
+Container images are published to `ghcr.io/izumoe/streamplace` on `next` and
+stable version tags. PRs do not publish images or write registry caches.
+
+Tagged Android builds require the repository secrets `ANDROID_KEYSTORE_BASE64`
+and `ANDROID_KEYSTORE_PASSWORD`. `ANDROID_KEYSTORE_ALIAS` defaults to
+`alias_name`. Reuse the same signing identity across releases so installed apps
+can be upgraded. Gradle and bundletool use that identity, and the build verifies
+each AAB against the expected alias before it can be uploaded. PR e2e builds
+continue to use a generated test key.
+
+Push a stable version tag to this fork to release it. The workflow requires the
+tag to exist and derives release download URLs from `GITHUB_REPOSITORY`; it does
+not create tags or contact the former GitLab package registry. A new tag starts
+a release; rerunning an already published tag does not replace its assets.
+
+## Build caches
+
+CI loads the builder through Buildx using the toolchain workflow's registry layer
+cache. It still evaluates the current Dockerfile, so a PR does not depend on its
+new pinned image already being published.
+
+Build jobs retain a bounded sccache disk cache for C/C++ and Rust, plus Go, Cargo
+and pnpm caches. Android also retains Gradle dependencies and distributions.
+Caches exclude final frontend bundles, native build trees and signing keys.
+Source and compiler changes are checked by the compiler caches; frontend exports
+are rebuilt from the current checkout. The first run populates these caches.
+
+The builder includes sccache. For local Rust builds, set `RUSTC_WRAPPER=sccache`;
+Meson detects it automatically for native C/C++, and the cross files use it when
+available. Existing local setups still build without sccache. Use
+`sccache --show-stats` to check whether a rebuild actually reused compilation.
 
 ## Building and signing separately
 
