@@ -27,6 +27,11 @@ let root: ReturnType<typeof createRoot>;
 let container: HTMLDivElement;
 let admin = true;
 let revoked = false;
+let policyMode = "allowlist";
+let policySource = "configuration";
+let rejectPolicy = false;
+let revision = 1;
+let queryClient: QueryClient;
 let requests: { method: string; input?: Record<string, unknown> }[];
 const subject = "did:plc:publisher";
 const serverMetadata: OAuthSession["serverMetadata"] = {
@@ -53,6 +58,10 @@ beforeEach(() => {
   });
   admin = true;
   revoked = false;
+  policyMode = "allowlist";
+  policySource = "configuration";
+  rejectPolicy = false;
+  revision = 1;
   requests = [];
   const session: OAuthSession = vi.mockObject(OAuthSession.prototype);
   vi.spyOn(session, "did", "get").mockReturnValue("did:plc:admin");
@@ -67,13 +76,39 @@ beforeEach(() => {
       requests.push({ method, input: body });
       const decisions = ["admin", "streamer", "chat"].map((capability) => ({
         capability,
-        mode: capability === "chat" ? "open" : "allowlist",
+        mode:
+          capability === "streamer"
+            ? policyMode
+            : capability === "chat"
+              ? "open"
+              : "allowlist",
+        defaultMode: "allowlist",
+        modeSource: capability === "streamer" ? policySource : "configuration",
         allowed: capability === "admin" && admin,
         enforced: true,
         reason: "test node policy",
       }));
       if (method === "getStatus")
-        return Response.json({ revision: 1, capabilities: decisions });
+        return Response.json({ revision, capabilities: decisions });
+      if (method === "setMode") {
+        if (rejectPolicy || body.expectedRevision !== String(revision))
+          return Response.json(
+            { error: "Conflict", message: "Node policy changed." },
+            { status: 409 },
+          );
+        policyMode = body.mode ?? "allowlist";
+        policySource = body.mode ? "stored" : "configuration";
+        return Response.json({ success: true });
+      }
+      if (method === "searchActorsTypeahead")
+        return Response.json({
+          actors: [
+            {
+              did: subject,
+              handle: "publisher.test",
+            },
+          ],
+        });
       const base = {
         authority: "did:web:node.example",
         subject,
@@ -138,14 +173,14 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 async function render() {
-  const client = new QueryClient({
+  queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   await act(async () =>
     root.render(
       createElement(
         QueryClientProvider,
-        { client },
+        { client: queryClient },
         createElement(Route.options.component as ComponentType),
       ),
     ),
@@ -240,4 +275,195 @@ it("uses the session issuer rather than a client's allowed callback origins", as
   await render();
   await expectText("Reload to sign in to this node before managing access.");
   expect(requests).toEqual([]);
+});
+
+async function changeValue(
+  input: HTMLInputElement | HTMLSelectElement,
+  value: string,
+) {
+  await act(async () => {
+    const prototype =
+      input instanceof HTMLSelectElement
+        ? HTMLSelectElement.prototype
+        : HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(prototype, "value")!.set!.call(
+      input,
+      value,
+    );
+    input.dispatchEvent(
+      new Event(input instanceof HTMLSelectElement ? "change" : "input", {
+        bubbles: true,
+      }),
+    );
+  });
+}
+
+it("saves streaming policy against the displayed revision and can restore the startup default", async () => {
+  await render();
+  await expectText("Streaming policy");
+  const select = container.querySelector<HTMLSelectElement>(
+    '[aria-label="Who can stream"]',
+  )!;
+  await changeValue(select, "open");
+  await act(async () =>
+    container
+      .querySelector<HTMLButtonElement>('[data-policy-save="streamer"]')!
+      .click(),
+  );
+  await expectText("Saved on this node");
+  expect(requests.find((r) => r.method === "setMode")?.input).toEqual({
+    capability: "streamer",
+    mode: "open",
+    expectedRevision: "1",
+  });
+  await act(async () =>
+    container
+      .querySelector<HTMLButtonElement>('[data-policy-reset="streamer"]')!
+      .click(),
+  );
+  await vi.waitFor(() =>
+    expect(
+      requests.filter((r) => r.method === "setMode").at(-1)?.input,
+    ).toEqual({ capability: "streamer", expectedRevision: "1" }),
+  );
+});
+
+it("discards a rejected draft and shows the effective policy", async () => {
+  rejectPolicy = true;
+  await render();
+  await expectText("Streaming policy");
+  await changeValue(
+    container.querySelector<HTMLSelectElement>(
+      '[aria-label="Who can stream"]',
+    )!,
+    "off",
+  );
+  await act(async () =>
+    container
+      .querySelector<HTMLButtonElement>('[data-policy-save="streamer"]')!
+      .click(),
+  );
+  await expectText("Node policy changed.");
+  expect(policyMode).toBe("allowlist");
+  expect(
+    container.querySelector<HTMLSelectElement>('[aria-label="Who can stream"]')!
+      .value,
+  ).toBe("allowlist");
+});
+
+it("finds an account by handle and submits its DID for approval", async () => {
+  await render();
+  await expectText("Streaming policy");
+  await changeValue(
+    container.querySelector<HTMLInputElement>(
+      '[aria-label="Find an account"]',
+    )!,
+    "publisher",
+  );
+  await expectText("publisher.test");
+  const person = Array.from(
+    container.querySelectorAll<HTMLButtonElement>("button"),
+  ).find((b) => b.textContent?.includes("publisher.test"))!;
+  await act(async () => person.click());
+  await act(async () =>
+    container.querySelector<HTMLFormElement>("form")!.requestSubmit(),
+  );
+  await vi.waitFor(() =>
+    expect(requests.find((r) => r.method === "createGrant")?.input).toEqual({
+      subject,
+      capability: "streamer",
+      effect: "allow",
+    }),
+  );
+});
+
+it("does not rebase an unsaved draft onto a newer policy revision", async () => {
+  await render();
+  await expectText("Streaming policy");
+  await changeValue(
+    container.querySelector<HTMLSelectElement>(
+      '[aria-label="Who can stream"]',
+    )!,
+    "off",
+  );
+  revision = 2;
+  policyMode = "open";
+  await act(async () => {
+    await queryClient.invalidateQueries({ queryKey: ["node-access"] });
+  });
+  await vi.waitFor(async () => {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(
+      queryClient.getQueryData<{ revision: number }>([
+        "node-access",
+        "https://node.example",
+        "did:plc:admin",
+      ])?.revision,
+    ).toBe(2);
+  });
+  await act(async () =>
+    container
+      .querySelector<HTMLButtonElement>('[data-policy-save="streamer"]')!
+      .click(),
+  );
+  await expectText("Node policy changed.");
+  expect(
+    requests.find((r) => r.method === "setMode")?.input?.expectedRevision,
+  ).toBe("1");
+  expect(policyMode).toBe("open");
+});
+
+it("discards the previous node's policy draft and selected account after switching sign-ins", async () => {
+  await render();
+  await expectText("Streaming policy");
+  await changeValue(
+    container.querySelector<HTMLSelectElement>(
+      '[aria-label="Who can stream"]',
+    )!,
+    "off",
+  );
+  await changeValue(
+    container.querySelector<HTMLInputElement>(
+      '[aria-label="Find an account"]',
+    )!,
+    subject,
+  );
+  const session: OAuthSession = vi.mockObject(OAuthSession.prototype);
+  vi.spyOn(session, "did", "get").mockReturnValue("did:plc:another-admin");
+  vi.spyOn(session, "serverMetadata", "get").mockReturnValue({
+    ...serverMetadata,
+    issuer: "https://another-node.example",
+  });
+  await act(async () => {
+    useStore.setState({
+      url: "https://another-node.example",
+      oauthSession: session,
+      pdsAgent: new StreamplaceAgent("https://another-node.example"),
+    });
+  });
+  await expectText("Streaming policy");
+  expect(
+    container.querySelector<HTMLSelectElement>('[aria-label="Who can stream"]')!
+      .value,
+  ).toBe("allowlist");
+  expect(
+    container.querySelector<HTMLInputElement>('[aria-label="Find an account"]')!
+      .value,
+  ).toBe("");
+  expect(requests.filter((r) => r.method === "setMode")).toEqual([]);
+});
+
+it("groups independent permissions under one account without hiding denials", async () => {
+  await render();
+  await expectText("Publishing denied");
+  const person = container.querySelector(
+    '[data-access-subject="did:plc:publisher"]',
+  );
+  expect(person).not.toBeNull();
+  expect(person!.querySelectorAll("[data-entry-id]")).toHaveLength(2);
+  expect(person!.querySelector('[data-entry-id="allow-id"]')).not.toBeNull();
+  expect(person!.querySelector('[data-entry-id="deny-id"]')).not.toBeNull();
+  expect(container.querySelectorAll("[data-access-subject]")).toHaveLength(2);
 });

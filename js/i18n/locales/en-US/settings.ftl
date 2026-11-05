@@ -470,3 +470,59 @@ node-access-configuration = Configuration entry
 node-access-expiry = Expiry
 node-access-wrong-node = Reload to sign in to this node before managing access.
 node-access-reload = Reload
+
+node-access-admin-setup = Ask the operator to add your DID to SP_ADMIN_DIDS and restart the node. Signing in alone does not grant administrator access.
+
+node-access-policy = Streaming policy
+
+node-access-policy-help = Saved policies take effect without a restart and override startup defaults. Restrictions disconnect existing publishers; reopening requires them to reconnect.
+
+node-access-who-streams = Who can stream
+
+node-access-who-chats = Who can chat
+
+node-access-remote-streams = Remote streams carried here
+
+node-access-uploads = Who can start uploads and recordings
+
+node-access-approved-only = Approved accounts only
+
+node-access-any-account = Any authenticated account
+
+node-access-any-source = Any account
+
+node-access-disabled = Disabled
+
+node-access-startup-default = Using startup default
+
+node-access-save-policy = Save policy
+
+node-access-reset-policy = Use startup default
+
+node-access-policy-limits = Explicit denials still apply in open mode. Public viewing stays open. Network services disabled at startup remain disabled.
+
+node-access-people = People and approvals
+
+node-access-find-account = Find an account
+
+node-access-account-placeholder = Handle or DID
+
+node-access-searching = Searching accounts…
+
+node-access-search-error = Search is unavailable. You can paste an account DID instead.
+
+node-access-no-accounts = No matching accounts. You can paste a DID instead.
+
+node-access-approve = Approve account
+
+node-access-deny = Deny account
+
+node-access-entry-options = Reason and expiry (optional)
+
+node-access-carriage = Remote carriage
+
+node-access-vod = Uploads and recordings
+
+node-access-administration = Node administration
+
+node-access-public-viewing = Public viewing

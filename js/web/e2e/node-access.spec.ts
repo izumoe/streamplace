@@ -69,7 +69,7 @@ test("node administrators approve publishing and restrict chat independently of 
     exact: true,
   });
   await expect(configuration.first()).toBeDisabled();
-  await page.getByLabel("Account DID", { exact: true }).fill(did!);
+  await page.getByLabel("Find an account", { exact: true }).fill(did!);
   async function save(
     capability: "streamer" | "chat",
     effect: "allow" | "deny",
@@ -119,4 +119,67 @@ test("node administrators approve publishing and restrict chat independently of 
   await expect(
     page.locator('header a[href="/settings/account"]'),
   ).toBeVisible();
+});
+
+test("administrator saves policy, reloads it, approves an account, and restores defaults", async ({
+  page,
+}) => {
+  test.skip(!httpsServer, "requires the real TLS OAuth harness");
+  await loginThroughPds(page);
+  await page.goto(`${httpsServer}/settings/access`);
+  const policy = page.getByRole("combobox", {
+    name: "Who can stream",
+    exact: true,
+  });
+  await expect(policy).toHaveValue("allowlist");
+  await policy.selectOption("open");
+  const saved = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/xrpc/place.stream.access.setMode") &&
+      response.request().method() === "POST",
+  );
+  await page.locator('[data-policy-save="streamer"]').click();
+  expect((await saved).ok()).toBe(true);
+  await expect(page.locator('[data-policy-reset="streamer"]')).toBeVisible();
+  await page.reload();
+  await expect(policy).toHaveValue("open");
+  await page
+    .getByRole("textbox", { name: "Find an account", exact: true })
+    .fill(process.env.ACCOUNT_DID!);
+  const created = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/xrpc/place.stream.access.createGrant") &&
+      response.request().method() === "POST",
+  );
+  await page
+    .getByRole("button", { name: "Save access entry", exact: true })
+    .click();
+  const response = await created;
+  expect(response.ok()).toBe(true);
+  const entry = await response.json();
+  const row = page.locator(`[data-entry-id="${entry.id}"]`);
+  await expect(row).toContainText("Publishing permitted");
+  await row
+    .getByRole("button", { name: "Revoke approval", exact: true })
+    .click();
+  await expect(row).toHaveCount(0);
+  await expect(page.getByText("Configuration entry").first()).toBeVisible();
+  await page.screenshot({
+    path: test.info().outputPath("node-access-desktop.png"),
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(policy).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  await page.screenshot({
+    path: test.info().outputPath("node-access-phone.png"),
+    fullPage: true,
+  });
+  await page.locator('[data-policy-reset="streamer"]').click();
+  await expect(policy).toHaveValue("allowlist");
+  await expect(page.locator('[data-policy-reset="streamer"]')).toHaveCount(0);
 });
