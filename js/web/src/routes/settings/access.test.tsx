@@ -206,9 +206,8 @@ it("shows effective denials and revokes only their exact entry without editing c
   await render();
   await expectText("Publishing denied");
   const config = container.querySelector('[data-entry-id="config-id"]')!;
-  expect((config.querySelector("button") as HTMLButtonElement).disabled).toBe(
-    true,
-  );
+  expect(config.textContent).toContain("Read-only");
+  expect(config.querySelector("button")).toBeNull();
   const denial = container.querySelector('[data-entry-id="deny-id"]')!;
   await act(async () =>
     (denial.querySelector("button") as HTMLButtonElement).click(),
@@ -455,13 +454,24 @@ it("discards the previous node's policy draft and selected account after switchi
   expect(requests.filter((r) => r.method === "setMode")).toEqual([]);
 });
 
-it("groups independent permissions under one account without hiding denials", async () => {
+it("shows a table with grouped accounts and independent permission actions", async () => {
   await render();
   await expectText("Publishing denied");
   const person = container.querySelector(
     '[data-access-subject="did:plc:publisher"]',
   );
   expect(person).not.toBeNull();
+  expect(
+    container.querySelector<HTMLDetailsElement>("[data-access-editor]")?.open,
+  ).toBe(false);
+  const table = container.querySelector("table");
+  expect(table?.querySelector("caption")?.textContent).toBe("Access entries");
+  expect(
+    Array.from(table!.querySelectorAll("thead th"), (cell) => cell.textContent),
+  ).toEqual(["Account", "Permission", "Details", "Actions"]);
+  expect(
+    person!.querySelector('th[scope="rowgroup"]')?.getAttribute("rowspan"),
+  ).toBe("2");
   expect(person!.querySelectorAll("[data-entry-id]")).toHaveLength(2);
   expect(person!.querySelector('[data-entry-id="allow-id"]')).not.toBeNull();
   expect(person!.querySelector('[data-entry-id="deny-id"]')).not.toBeNull();

@@ -64,11 +64,12 @@ test("node administrators approve publishing and restrict chat independently of 
   await expect(
     page.getByRole("heading", { name: "Node access", exact: true }),
   ).toBeVisible();
-  const configuration = page.getByRole("button", {
-    name: "Configuration entry",
-    exact: true,
-  });
-  await expect(configuration.first()).toBeDisabled();
+  const configuration = page
+    .getByRole("row")
+    .filter({ hasText: "Configuration entry" });
+  await expect(configuration.first()).toContainText("Read-only");
+  await expect(configuration.first().getByRole("button")).toHaveCount(0);
+  await page.getByText("Add account", { exact: true }).click();
   await page.getByLabel("Find an account", { exact: true }).fill(did!);
   async function save(
     capability: "streamer" | "chat",
@@ -143,6 +144,7 @@ test("administrator saves policy, reloads it, approves an account, and restores 
   await expect(page.locator('[data-policy-reset="streamer"]')).toBeVisible();
   await page.reload();
   await expect(policy).toHaveValue("open");
+  await page.getByText("Add account", { exact: true }).click();
   await page
     .getByRole("textbox", { name: "Find an account", exact: true })
     .fill(process.env.ACCOUNT_DID!);
@@ -159,11 +161,7 @@ test("administrator saves policy, reloads it, approves an account, and restores 
   const entry = await response.json();
   const row = page.locator(`[data-entry-id="${entry.id}"]`);
   await expect(row).toContainText("Publishing permitted");
-  await row
-    .getByRole("button", { name: "Revoke approval", exact: true })
-    .click();
-  await expect(row).toHaveCount(0);
-  await expect(page.getByText("Configuration entry").first()).toBeVisible();
+  await page.getByText("Add account", { exact: true }).click();
   await page.screenshot({
     path: test.info().outputPath("node-access-desktop.png"),
     fullPage: true,
@@ -175,6 +173,16 @@ test("administrator saves policy, reloads it, approves an account, and restores 
       () => document.documentElement.scrollWidth <= window.innerWidth,
     ),
   ).toBe(true);
+  await row
+    .getByRole("button", { name: "Revoke approval", exact: true })
+    .click();
+  await expect(row).toHaveCount(0);
+  await expect(page.getByText("Configuration entry").first()).toBeVisible();
+  await page
+    .getByRole("table", { name: "Access entries", exact: true })
+    .evaluate((table) => {
+      table.parentElement!.scrollLeft = 0;
+    });
   await page.screenshot({
     path: test.info().outputPath("node-access-phone.png"),
     fullPage: true,

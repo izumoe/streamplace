@@ -526,3 +526,9 @@ node-access-vod = Uploads and recordings
 node-access-administration = Node administration
 
 node-access-public-viewing = Public viewing
+
+node-access-permission = Permission
+node-access-details = Details
+node-access-actions = Actions
+node-access-read-only = Read-only
+node-access-add-account = Add account

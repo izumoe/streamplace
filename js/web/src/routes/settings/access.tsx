@@ -191,7 +191,7 @@ function NodeAccessEditor() {
       </div>
     );
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 space-y-6">
       <h1 className="font-display text-xl font-semibold">
         {t("node-access-title", "Node access")}
       </h1>
@@ -312,11 +312,23 @@ function NodeAccessEditor() {
           )}
         </p>
       </Card>
-      <Card className="p-4">
+      <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold">
           {t("node-access-people", "People and approvals")}
         </h2>
-        <form onSubmit={create} className="space-y-4">
+        <Button
+          variant="outline"
+          disabled={busy || grants.isFetching}
+          onClick={() => void refresh()}
+        >
+          {t("node-access-refresh", "Refresh")}
+        </Button>
+      </div>
+      <details data-access-editor className="rounded-md border p-4">
+        <summary className="cursor-pointer font-medium">
+          {t("node-access-add-account", "Add account")}
+        </summary>
+        <form onSubmit={create} className="space-y-4 pt-4">
           <label className="block space-y-2">
             <span>{t("node-access-find-account", "Find an account")}</span>
             <Input
@@ -460,32 +472,38 @@ function NodeAccessEditor() {
             {t("node-access-save", "Save access entry")}
           </Button>
         </form>
-      </Card>
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">
-          {t("node-access-entries", "Access entries")}
-        </h2>
-        <Button
-          variant="outline"
-          disabled={busy || grants.isFetching}
-          onClick={() => void refresh()}
-        >
-          {t("node-access-refresh", "Refresh")}
-        </Button>
-      </div>
+      </details>
       {grants.isPending && (
         <p role="status">{t("node-access-loading", "Loading node access…")}</p>
       )}
-      <div className="space-y-4">
-        {[...people].map(([subject, entries]) => (
-          <Card
-            key={subject}
-            data-access-subject={subject}
-            className="gap-2 p-4"
-          >
-            <p className="font-mono text-sm break-all">{subject}</p>
-            <div className="divide-border divide-y">
-              {entries.map((entry) => {
+      <div className="max-w-full overflow-x-auto rounded-md border">
+        <table className="w-full text-left text-sm">
+          <caption className="sr-only">
+            {t("node-access-entries", "Access entries")}
+          </caption>
+          <thead className="bg-muted text-muted-foreground">
+            <tr className="border-b">
+              <th scope="col" className="px-3 py-2 font-medium">
+                {t("account", "Account")}
+              </th>
+              <th scope="col" className="px-3 py-2 font-medium">
+                {t("node-access-permission", "Permission")}
+              </th>
+              <th scope="col" className="px-3 py-2 font-medium">
+                {t("node-access-details", "Details")}
+              </th>
+              <th scope="col" className="px-3 py-2 text-right font-medium">
+                {t("node-access-actions", "Actions")}
+              </th>
+            </tr>
+          </thead>
+          {[...people].map(([subject, entries]) => (
+            <tbody
+              key={subject}
+              data-access-subject={subject}
+              className="divide-y border-b last:border-b-0"
+            >
+              {entries.map((entry, index) => {
                 const capabilityLabel =
                   capabilityLabels[entry.capability] ?? entry.capability;
                 const decision = entry.effectiveAllowed
@@ -498,55 +516,76 @@ function NodeAccessEditor() {
                       ? t("node-access-remove-denial", "Remove denial")
                       : t("node-access-revoke-approval", "Revoke approval");
                 return (
-                  <div
+                  <tr
                     key={
                       entry.id ||
                       `${entry.source}:${entry.subject}:${entry.capability}:${entry.effect}`
                     }
                     data-entry-id={entry.id}
-                    className="flex flex-wrap items-start justify-between gap-2 py-4"
                   >
-                    <div className="min-w-0 space-y-2">
-                      <p>
+                    {index === 0 && (
+                      <th
+                        scope="rowgroup"
+                        rowSpan={entries.length}
+                        className="max-w-40 min-w-24 px-3 py-3 align-top font-mono font-normal break-all"
+                      >
+                        {subject}
+                      </th>
+                    )}
+                    <th scope="row" className="px-3 py-3 align-top font-normal">
+                      <p className="font-medium">
                         {capabilityLabel} {decision}
                       </p>
-                      <p className="text-muted-foreground text-sm">
+                      <p className="text-muted-foreground">
                         {entry.effect === "allow"
                           ? t("node-access-allowance", "Allowance")
-                          : t("node-access-denial", "Denial")}{" "}
-                        ·{" "}
+                          : t("node-access-denial", "Denial")}
+                      </p>
+                    </th>
+                    <td className="text-muted-foreground min-w-28 px-3 py-3 align-top">
+                      <p>
                         {entry.source === "stored"
                           ? t("node-access-stored", "Saved on this node")
                           : t(
                               "node-access-configuration",
                               "Configuration entry",
                             )}
-                        {entry.reason ? ` · ${entry.reason}` : ""}
                       </p>
+                      {entry.reason && (
+                        <p className="max-w-64 break-words">{entry.reason}</p>
+                      )}
                       {entry.expiresAt && (
-                        <p className="text-muted-foreground text-sm">
+                        <p>
                           {t("node-access-expiry", "Expiry")}:{" "}
                           <time dateTime={entry.expiresAt}>
                             {new Date(entry.expiresAt).toLocaleString()}
                           </time>
                         </p>
                       )}
-                    </div>
-                    <Button
-                      variant="outline"
-                      disabled={busy || entry.source !== "stored"}
-                      onClick={() => void revoke(entry)}
-                    >
-                      {entry.source !== "stored"
-                        ? t("node-access-configuration", "Configuration entry")
-                        : revokeLabel}
-                    </Button>
-                  </div>
+                    </td>
+                    <td className="px-3 py-3 text-right align-top">
+                      {entry.source === "stored" ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-auto whitespace-normal"
+                          disabled={busy}
+                          onClick={() => void revoke(entry)}
+                        >
+                          {revokeLabel}
+                        </Button>
+                      ) : (
+                        <span className="text-muted-foreground">
+                          {t("node-access-read-only", "Read-only")}
+                        </span>
+                      )}
+                    </td>
+                  </tr>
                 );
               })}
-            </div>
-          </Card>
-        ))}
+            </tbody>
+          ))}
+        </table>
       </div>
     </div>
   );
