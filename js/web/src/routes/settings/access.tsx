@@ -515,7 +515,19 @@ function NodeAccessEditor() {
       {grants.isPending && (
         <p role="status">{t("node-access-loading", "Loading node access…")}</p>
       )}
-      <div className="max-h-screen max-w-full overflow-auto rounded-md border">
+      <div
+        className="max-h-screen max-w-full overflow-auto rounded-md border md:scroll-pl-56"
+        onFocusCapture={(event) => {
+          if (
+            event.target !== event.currentTarget &&
+            event.target.matches(":focus-visible")
+          )
+            event.target.scrollIntoView({
+              block: "nearest",
+              inline: "nearest",
+            });
+        }}
+      >
         <table className="w-full border-separate border-spacing-0 text-left text-sm">
           <caption className="sr-only">
             {t("node-access-entries", "Access entries")}

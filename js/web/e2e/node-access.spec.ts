@@ -38,6 +38,52 @@ test("uses the available width for the permissions grid", async ({ page }) => {
   ).toBeLessThanOrEqual(576);
 });
 
+test("keeps permission controls unobscured when tabbing backward across a scrolled grid", async ({
+  page,
+}) => {
+  test.skip(!httpsServer, "requires the real TLS OAuth harness");
+  await loginThroughPds(page);
+  await page.goto(`${httpsServer}/settings/access`);
+  const row = page.locator(
+    `[data-access-subject="${process.env.ACCOUNT_DID}"]`,
+  );
+  const capabilities = ["streamer", "chat", "syndicate", "vod", "admin"];
+  for (const width of [768, 1024, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    const controls = capabilities.map((capability) =>
+      row
+        .locator(`[data-access-capability="${capability}"]`)
+        .locator("summary, button")
+        .first(),
+    );
+    await expect(controls[4]).toBeVisible();
+    await row.evaluate((element) => {
+      const scroller = element.closest("table")!.parentElement!;
+      scroller.scrollLeft = scroller.scrollWidth;
+    });
+    await controls[4].focus();
+    for (let index = 3; index >= 0; index--) {
+      await page.keyboard.press("Shift+Tab");
+      await expect(controls[index]).toBeFocused();
+      await expect(controls[index]).toBeInViewport({ ratio: 1 });
+      expect(
+        await controls[index].evaluate((element) => {
+          const bounds = element.getBoundingClientRect();
+          const covering = document.elementFromPoint(
+            bounds.left + bounds.width / 2,
+            bounds.top + bounds.height / 2,
+          );
+          return (
+            covering !== null &&
+            (covering === element || element.contains(covering))
+          );
+        }),
+        `focused ${capabilities[index]} control must be unobscured at ${width}px`,
+      ).toBe(true);
+    }
+  }
+});
+
 test("node administrators approve publishing and restrict chat independently of public viewing", async ({
   page,
   request,
