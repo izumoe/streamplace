@@ -571,8 +571,13 @@ function ProfileCardContent({
   const backButtonRef = useRef<HTMLButtonElement | null>(null);
   const detailWasOpenRef = useRef(false);
   const lastSelectedBadgeIndexRef = useRef(0);
-  const handle = formatHandle(author);
-  const name = author.displayName || handle;
+  const profiles = useAvatars([author.did]);
+  const profile = profiles[author.did];
+  const identity = profile ?? author;
+  const handle = formatHandle(identity);
+  const name = identity.displayName || handle;
+  const avatar = identity.avatar;
+  const pronouns = identity.pronouns?.trim();
 
   useLayoutEffect(() => {
     const detailIsOpen = selectedBadgeIndex !== null;
@@ -627,21 +632,38 @@ function ProfileCardContent({
               }
             : { background: "var(--color-muted)" }
         }
-      />
+      >
+        {profile?.banner && (
+          <img
+            key={profile.banner}
+            src={profile.banner}
+            alt=""
+            className="h-full w-full object-cover"
+            onError={(event) => {
+              event.currentTarget.style.display = "none";
+            }}
+          />
+        )}
+      </div>
 
       <div className="relative px-3 pt-1">
-        <img
-          src={author.avatar ?? undefined}
-          alt=""
-          className="absolute -top-6 left-3 h-12 w-12 rounded-full border-2 border-(--color-bg-elevated) bg-(--color-bg)"
-          onError={(e) => {
-            (e.currentTarget as HTMLImageElement).style.display = "none";
-          }}
-        />
+        <div className="absolute -top-6 left-3 h-12 w-12 overflow-hidden rounded-full border-2 border-(--color-bg-elevated) bg-(--color-bg)">
+          {avatar && (
+            <img
+              key={avatar}
+              src={avatar}
+              alt=""
+              className="h-full w-full object-cover"
+              onError={(event) => {
+                event.currentTarget.style.display = "none";
+              }}
+            />
+          )}
+        </div>
 
         <div className="flex items-center justify-between gap-2 pt-7 pb-2">
           <div className="min-w-0">
-            {name !== handle && (
+            <div className="flex flex-wrap items-baseline gap-x-2">
               <div
                 className="truncate font-medium"
                 style={
@@ -652,13 +674,20 @@ function ProfileCardContent({
                     : undefined
                 }
               >
-                {name}
+                {name !== handle ? name : formatHandleWithAt(identity)}
               </div>
+              {pronouns && (
+                <span className="min-w-0 text-sm break-words text-(--color-fg-muted)">
+                  {pronouns}
+                </span>
+              )}
+            </div>
+            {name !== handle && (
+              <div className="truncate">{formatHandleWithAt(identity)}</div>
             )}
-            <div className="truncate">{formatHandleWithAt(author)}</div>
           </div>
           <a
-            href={`https://bsky.app/profile/${handle}`}
+            href={`https://bsky.app/profile/${author.did}`}
             target="_blank"
             rel="noopener noreferrer"
             className="shrink-0 rounded-sm text-[#0F73FF] hover:opacity-80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--color-accent)"
@@ -668,6 +697,14 @@ function ProfileCardContent({
           </a>
         </div>
 
+        {profile?.description && (
+          <p
+            tabIndex={0}
+            className="max-h-40 overflow-y-auto pb-3 text-sm break-words whitespace-pre-wrap"
+          >
+            {profile.description}
+          </p>
+        )}
         {badges.length > 0 && (
           <div className="space-y-1 pb-2">
             {badges.map((badge, index) => (

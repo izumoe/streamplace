@@ -93,6 +93,7 @@ async function seedLongHandleMessage(text: string) {
   const { rkey } = await postChatMessage(pds, accessJwt, did, text);
   return {
     pds,
+    did: String(did),
     handle,
     cleanup: () => deleteChatMessage(pds, accessJwt, did, rkey),
   };
@@ -202,5 +203,50 @@ test("chat-long-handle: an unbreakable word in the body stays inside the column"
     }
   } finally {
     await pds.dispose();
+  }
+});
+
+test("chat-profile: opening a card requests Bluesky data and preserves the chat identity fallback", async ({
+  page,
+}) => {
+  const message = `profile card ${Date.now()}`;
+  const author = await seedLongHandleMessage(message);
+  const profileRequests: string[] = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (
+      url.hostname === "public.api.bsky.app" &&
+      url.pathname === "/xrpc/app.bsky.actor.getProfiles" &&
+      url.searchParams.getAll("actors").includes(author.did)
+    ) {
+      profileRequests.push(request.url());
+    }
+  });
+  try {
+    const list = await openStreamChat(page, message);
+    expect(profileRequests).toEqual([]);
+    await list
+      .getByRole("button", { name: author.handle, exact: true })
+      .click();
+    const card = page.getByRole("dialog");
+    await expect(card).toBeVisible();
+    await expect(card).toContainText(`@${author.handle}`);
+    await expect(card.getByRole("link")).toHaveAttribute(
+      "href",
+      `https://bsky.app/profile/${author.did}`,
+    );
+    await expect.poll(() => profileRequests.length).toBe(1);
+    await expect(card.locator('img:not([src]), img[src=""]')).toHaveCount(0);
+    const bounds = (await card.boundingBox())!;
+    expect(bounds.x).toBeGreaterThanOrEqual(0);
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(340);
+    await page.screenshot({
+      path: test.info().outputPath("chat-profile-phone.png"),
+    });
+    await page.keyboard.press("Escape");
+    await expect(card).not.toBeVisible();
+  } finally {
+    await author.cleanup();
+    await author.pds.dispose();
   }
 });
