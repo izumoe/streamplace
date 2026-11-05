@@ -256,6 +256,29 @@ navigation; missed closes expire after 30 seconds plus the five-second sweep.
 Reporting failures never gate playback. A paused or stalled player eventually
 stops counting. Older discovery responses without `sessionUrl` remain playable.
 
+The session endpoint has its own per-client-IP token bucket: **20 requests per
+second with a burst of 100** by default. This budget covers reports and closes;
+media, discovery and other API routes do not consume it. Excess requests return
+HTTP 429 with `Retry-After: 1`. Tune it with `SP_MOQ_SESSION_RATE_LIMIT` and
+`SP_MOQ_SESSION_RATE_BURST` (or `--moq-session-rate-limit` and
+`--moq-session-rate-burst`). Setting the rate to zero explicitly disables it.
+These controls are separate from the optional global HTTP limiter.
+
+Only the TCP peer's IP is used by default. Behind a reverse proxy, set
+`SP_MOQ_SESSION_TRUSTED_PROXIES` to its actual CIDRs (or repeat
+`--moq-session-trusted-proxies`). For a proxy connecting over loopback:
+
+```sh
+SP_MOQ_SESSION_TRUSTED_PROXIES=127.0.0.1/32,::1/128
+```
+
+The proxy must overwrite or append the actual connecting client's address to
+`X-Forwarded-For`. The limiter walks the chain from the trusted proxy toward the
+first untrusted address. It ignores forwarded headers from other peers and
+never implicitly trusts private or loopback networks. Configure only proxy
+addresses you control; otherwise a shared proxy bucket can throttle unrelated
+viewers, or an overly broad trust range can permit spoofing.
+
 This fallback is approximate: it cannot see third-party clients that do not
 report sessions. When authorized relay stats are available, configure the
 private connection URLs of every contributing stats broadcast:

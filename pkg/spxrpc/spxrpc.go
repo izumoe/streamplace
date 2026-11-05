@@ -74,6 +74,10 @@ func (s *Server) vodCDN() vodCDN { return s.cdn }
 
 func NewServer(ctx context.Context, cli *config.CLI, model model.Model, statefulDB *statedb.StatefulDB, op *oatproxy.OATProxy, mdlw middleware.Middleware, atsync *atproto.ATProtoSynchronizer, bus *bus.Bus, ldb localdb.LocalDB, mm *media.MediaManager, um *upload.Manager, playbackStore blob.Store, viewLog *viewlog.Writer, aliases map[string]string) (*Server, error) {
 	e := echo.New()
+	moqLimiter, err := moqSessionLimiter(cli)
+	if err != nil {
+		return nil, err
+	}
 	provider, err := providers.FromConfig(cli)
 	if err != nil {
 		return nil, err
@@ -153,7 +157,7 @@ func NewServer(ctx context.Context, cli *config.CLI, model model.Model, stateful
 	// Live HLS, same override rationale (Range + mpegurl), served from the
 	// in-memory live window instead of a stored metafile.
 	e.GET("/xrpc/place.stream.playback.getLivePlaylist", s.HandleGetLivePlaylist)
-	e.POST("/api/moq/session", s.HandleMoqSession)
+	e.POST("/api/moq/session", s.HandleMoqSession, moqLimiter)
 	e.GET("/xrpc/place.stream.playback.getLiveSegment", s.HandleGetLiveSegment)
 	// The same segments under a path-shaped URL, for a CDN pulling from
 	// this node (see liveCDN): one cacheable, signable path per segment.

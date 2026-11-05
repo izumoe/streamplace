@@ -159,6 +159,9 @@ type CLI struct {
 	MoqRelayURL                 string
 	MoqStatsURLs                []string
 	MoqStatsTier                string
+	MoqSessionRateLimit         int
+	MoqSessionRateBurst         int
+	MoqSessionTrustedProxies    []string
 	BehindHTTPSProxy            bool
 	SegmentDebugDir             string
 	AdminDIDs                   []string
@@ -1093,6 +1096,26 @@ func (cli *CLI) NewCommand(name string) *urfavecli.Command {
 				Destination: &cli.MoqStatsTier,
 				Sources:     urfavecli.EnvVars("SP_MOQ_STATS_TIER"),
 			},
+			&urfavecli.IntFlag{
+				Name:        "moq-session-rate-limit",
+				Usage:       "MoQ player-session requests per second per client IP; zero disables this endpoint's limiter",
+				Value:       20,
+				Destination: &cli.MoqSessionRateLimit,
+				Sources:     urfavecli.EnvVars("SP_MOQ_SESSION_RATE_LIMIT"),
+			},
+			&urfavecli.IntFlag{
+				Name:        "moq-session-rate-burst",
+				Usage:       "maximum burst of MoQ player-session requests per client IP",
+				Value:       100,
+				Destination: &cli.MoqSessionRateBurst,
+				Sources:     urfavecli.EnvVars("SP_MOQ_SESSION_RATE_BURST"),
+			},
+			&urfavecli.StringSliceFlag{
+				Name:        "moq-session-trusted-proxies",
+				Usage:       "proxy CIDRs allowed to supply X-Forwarded-For for MoQ session limits; empty trusts only the TCP peer",
+				Destination: &cli.MoqSessionTrustedProxies,
+				Sources:     urfavecli.EnvVars("SP_MOQ_SESSION_TRUSTED_PROXIES"),
+			},
 			&urfavecli.StringFlag{
 				Name:        "moq-url",
 				Usage:       "override the moqt:// url peers use to reach this node's Media over QUIC listener (default: server-host on moq-addr's port)",
@@ -1492,6 +1515,17 @@ func (cli *CLI) CheckConfig() error {
 	}
 	if len(cli.MoqStatsURLs) > 0 && cli.MoqRelayURL == "" {
 		errs = append(errs, fmt.Errorf("--moq-stats-url requires --moq-relay-url"))
+	}
+	if cli.MoqSessionRateLimit < 0 {
+		errs = append(errs, fmt.Errorf("--moq-session-rate-limit must be non-negative"))
+	}
+	if cli.MoqSessionRateBurst < 0 || (cli.MoqSessionRateLimit > 0 && cli.MoqSessionRateBurst == 0) {
+		errs = append(errs, fmt.Errorf("--moq-session-rate-burst must be non-negative, and positive when the limiter is enabled"))
+	}
+	for _, cidr := range cli.MoqSessionTrustedProxies {
+		if _, _, err := net.ParseCIDR(cidr); err != nil {
+			errs = append(errs, fmt.Errorf("--moq-session-trusted-proxies: invalid CIDR %q", cidr))
+		}
 	}
 	seenStats := make(map[string]bool)
 	for _, raw := range cli.MoqStatsURLs {

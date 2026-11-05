@@ -49,3 +49,30 @@ func TestMoqStatsConfiguration(t *testing.T) {
 	require.Equal(t, []string{stats, "https://relay.example/.stats/node/lhr"}, parsed.MoqStatsURLs)
 	require.Equal(t, "viewer", parsed.MoqStatsTier)
 }
+
+func TestMoqSessionLimitConfiguration(t *testing.T) {
+	defaults := flagRun(t)
+	require.Equal(t, 20, defaults.MoqSessionRateLimit)
+	require.Equal(t, 100, defaults.MoqSessionRateBurst)
+	require.Empty(t, defaults.MoqSessionTrustedProxies)
+	custom := flagRun(t, "--moq-session-rate-limit", "40", "--moq-session-rate-burst", "200", "--moq-session-trusted-proxies", "127.0.0.1/32", "--moq-session-trusted-proxies", "::1/128")
+	require.Equal(t, 40, custom.MoqSessionRateLimit)
+	require.Equal(t, 200, custom.MoqSessionRateBurst)
+	require.Equal(t, []string{"127.0.0.1/32", "::1/128"}, custom.MoqSessionTrustedProxies)
+	for _, cli := range []*CLI{
+		{MoqSessionRateLimit: -1},
+		{MoqSessionRateLimit: 20, MoqSessionRateBurst: 0},
+		{MoqSessionRateLimit: 20, MoqSessionRateBurst: -1},
+		{MoqSessionTrustedProxies: []string{"not-a-cidr"}},
+	} {
+		cli.DataDir = t.TempDir()
+		require.ErrorContains(t, cli.CheckConfig(), "--moq-session-")
+	}
+	t.Setenv("SP_MOQ_SESSION_RATE_LIMIT", "0")
+	t.Setenv("SP_MOQ_SESSION_RATE_BURST", "250")
+	t.Setenv("SP_MOQ_SESSION_TRUSTED_PROXIES", "10.0.0.0/24,::1/128")
+	fromEnv := flagRun(t)
+	require.Zero(t, fromEnv.MoqSessionRateLimit, "an operator can explicitly disable the limiter")
+	require.Equal(t, 250, fromEnv.MoqSessionRateBurst)
+	require.Equal(t, []string{"10.0.0.0/24", "::1/128"}, fromEnv.MoqSessionTrustedProxies)
+}
