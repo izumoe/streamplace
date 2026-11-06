@@ -17,6 +17,7 @@ import (
 	"stream.place/streamplace/pkg/config"
 	"stream.place/streamplace/pkg/gstpipeline"
 	"stream.place/streamplace/pkg/log"
+	"stream.place/streamplace/pkg/muxl"
 	"stream.place/streamplace/pkg/spmetrics"
 )
 
@@ -171,7 +172,9 @@ func (mm *MediaManager) SegmentAndSignElem(ctx context.Context, ms MediaSigner, 
 	onSegment := func(ctx context.Context, segment []byte) error {
 		return mm.receiveSignedSegment(ctx, streamer, segment)
 	}
-	elem, done, err := muxlSignSegmentElem(ctx, mm.cli, ms.SignSegmentStream, videoTrackCount, onSegment)
+	elem, done, err := muxlSignSegmentElem(ctx, mm.cli, func(ctx context.Context, input io.Reader, events chan *muxl.MuxlEvent) error {
+		return ms.SignSegmentStream(ctx, input, events, nil)
+	}, videoTrackCount, onSegment)
 	if err != nil {
 		return nil, err
 	}

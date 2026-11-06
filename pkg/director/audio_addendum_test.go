@@ -44,7 +44,7 @@ func audioDeliveryFixture(t *testing.T) (source, audio []byte) {
 	events := make(chan *muxl.MuxlEvent, 16)
 	done := make(chan error, 1)
 	go func() {
-		done <- signer.SignSegmentStream(t.Context(), bytes.NewReader(input), events)
+		done <- signer.SignSegmentStream(t.Context(), bytes.NewReader(input), events, nil)
 		close(events)
 	}()
 	var segments [][]byte

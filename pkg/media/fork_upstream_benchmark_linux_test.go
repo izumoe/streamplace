@@ -59,7 +59,7 @@ func forkBenchmarkSigner(tb testing.TB, role string) *MediaSignerLocal {
 
 func forkBenchmarkSign(ctx context.Context, signer *MediaSignerLocal, input []byte) ([][]byte, error) {
 	events, err := collectMuxlEvents(func(ch chan *muxl.MuxlEvent) error {
-		return signer.SignSegmentStream(ctx, bytes.NewReader(input), ch)
+		return signer.SignSegmentStream(ctx, bytes.NewReader(input), ch, nil)
 	})
 	if err != nil {
 		return nil, err

@@ -248,7 +248,7 @@ func concatTracksByID(tracks map[string][]byte) []byte {
 // segment, bytes and signatures verbatim, keyed by the track's MUXL
 // rendition name ("video1", "audio2").
 func MuxlTracks(ctx context.Context, seg []byte) (map[string][]byte, error) {
-	cat, tracks, err := readMuxlTracks(ctx, seg, 0, "")
+	cat, tracks, _, err := readMuxlTracks(ctx, seg, 0, "")
 	if err != nil {
 		return nil, err
 	}
@@ -256,47 +256,54 @@ func MuxlTracks(ctx context.Context, seg []byte) (map[string][]byte, error) {
 }
 
 // H264ReplicationSource selects the largest H264 video for single-video peers,
-// retaining all signed audio and the selected video unchanged.
-func H264ReplicationSource(ctx context.Context, seg []byte) ([]byte, error) {
-	_, tracks, err := readMuxlTracks(ctx, seg, 0, "avc1")
-	if err != nil {
-		return nil, err
-	}
-	return concatTracksByID(tracks), nil
-}
-
-// H264ReplicationTracks avoids joining and splitting those same signed assets
-// when the replication transport publishes each track separately. ID zero picks
-// the largest video; an explicit ID never switches to another source track.
-func H264ReplicationTracks(ctx context.Context, seg []byte, videoID uint32) (map[string][]byte, error) {
-	cat, tracks, err := readMuxlTracks(ctx, seg, videoID, "avc1")
-	if err != nil {
-		return nil, err
-	}
-	return namedMuxlTracks(cat, tracks), nil
-}
-
-func readMuxlTracks(ctx context.Context, seg []byte, videoID uint32, videoCodec string) (*muxl.MuxlCatalog, map[string][]byte, error) {
-	events, err := unwrapMuxlEvents(ctx, seg)
+// retaining all signed audio and the selected video unchanged. The remaining
+// H264 assets travel separately through the peer's rendition-addendum path.
+func H264ReplicationSource(ctx context.Context, seg []byte) (source, addendum []byte, err error) {
+	_, tracks, renditions, err := readMuxlTracks(ctx, seg, 0, "avc1")
 	if err != nil {
 		return nil, nil, err
 	}
+	return concatTracksByID(tracks), concatTracksByID(renditions), nil
+}
+
+// H264ReplicationTracks avoids joining and splitting those same signed assets
+// when the transport publishes source and rendition tracks separately. ID zero
+// picks the largest video; an explicit ID never switches to another source track.
+func H264ReplicationTracks(ctx context.Context, seg []byte, videoID uint32) (source, renditions map[string][]byte, err error) {
+	cat, tracks, extra, err := readMuxlTracks(ctx, seg, videoID, "avc1")
+	if err != nil {
+		return nil, nil, err
+	}
+	return namedMuxlTracks(cat, tracks), namedMuxlTracks(cat, extra), nil
+}
+
+func readMuxlTracks(ctx context.Context, seg []byte, videoID uint32, videoCodec string) (*muxl.MuxlCatalog, map[string][]byte, map[string][]byte, error) {
+	events, err := unwrapMuxlEvents(ctx, seg)
+	if err != nil {
+		return nil, nil, nil, err
+	}
 	cat, tracks := catalogAndTracks(events)
 	if cat == nil || len(tracks) == 0 {
-		return nil, nil, fmt.Errorf("segment has no MUXL tracks")
+		return nil, nil, nil, fmt.Errorf("segment has no MUXL tracks")
 	}
+	var renditions map[string][]byte
 	if videoCodec != "" {
 		video, ok := primaryVideoTrack(cat, videoID, videoCodec)
 		if !ok {
-			return nil, nil, fmt.Errorf("source has no H264 replication track %d", videoID)
+			return nil, nil, nil, fmt.Errorf("source has no H264 replication track %d", videoID)
 		}
+		renditions = map[string][]byte{}
 		for _, other := range cat.Video.Renditions {
 			if other.TrackID() != video.TrackID() {
-				delete(tracks, strconv.FormatUint(uint64(other.TrackID()), 10))
+				id := strconv.FormatUint(uint64(other.TrackID()), 10)
+				if strings.HasPrefix(other.Codec, videoCodec) && other.TrackID() >= renditionTrackBase {
+					renditions[id] = tracks[id]
+				}
+				delete(tracks, id)
 			}
 		}
 	}
-	return cat, tracks, nil
+	return cat, tracks, renditions, nil
 }
 
 func namedMuxlTracks(cat *muxl.MuxlCatalog, tracks map[string][]byte) map[string][]byte {

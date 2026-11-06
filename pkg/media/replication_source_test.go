@@ -23,12 +23,16 @@ func TestH264ReplicationSourcePreservesSignedTracksAndAudioTail(t *testing.T) {
 	require.NoError(t, err)
 	_, tracks := catalogAndTracks(events)
 	for i, size := range [][2]int{{240, 180}, {160, 120}, {80, 60}} {
-		canonical, err := muxl.RunMuxlCanonicalize(ctx, renditionMP4(t, size[0], size[1]), map[uint32]uint32{1: uint32(i + 2)})
+		id := uint32(i + 2)
+		if i > 0 {
+			id |= 1 << 16
+		}
+		canonical, err := muxl.RunMuxlCanonicalize(ctx, renditionMP4(t, size[0], size[1]), map[uint32]uint32{1: id})
 		require.NoError(t, err)
 		events, err := unwrapMuxlEvents(ctx, canonical)
 		require.NoError(t, err)
 		_, video := catalogAndTracks(events)
-		tracks[fmt.Sprint(i+2)] = video[fmt.Sprint(i+2)]
+		tracks[fmt.Sprint(id)] = video[fmt.Sprint(id)]
 	}
 	var input bytes.Buffer
 	require.NoError(t, muxl.RunMuxlWrap(ctx, bytes.NewReader(concatTracksByID(tracks)), "fmp4", &input))
@@ -61,8 +65,16 @@ func TestH264ReplicationSourcePreservesSignedTracksAndAudioTail(t *testing.T) {
 			require.Len(t, fullCat.Video.Renditions, 4)
 			require.Len(t, fullCat.Audio.Renditions, 2)
 
-			selected, err := H264ReplicationSource(ctx, completed)
+			selected, addendum, err := H264ReplicationSource(ctx, completed)
 			require.NoError(t, err)
+			extra, err := MuxlTracks(ctx, addendum)
+			require.NoError(t, err)
+			require.Len(t, extra, 2, "all remaining AVC renditions are sent without AV1 or duplicate audio")
+			for _, id := range []string{"65539", "65540"} {
+				require.Equal(t, fullTracks[id], extra["video"+id], "additional renditions retain their signed track IDs and bytes")
+			}
+			_, err = ValidateMP4MediaC2PA(ctx, addendum)
+			require.NoError(t, err, "the original rendition signatures verify without re-signing")
 			selectedEvents, err := unwrapMuxlEvents(ctx, selected)
 			require.NoError(t, err)
 			cat, actual := catalogAndTracks(selectedEvents)
@@ -87,6 +99,10 @@ func TestH264ReplicationSourcePreservesSignedTracksAndAudioTail(t *testing.T) {
 			require.Equal(t, *selectedVideo.Manifest.Label, *valid.Manifest.Label)
 			require.Equal(t, public, valid.Meta.Published)
 			require.NotEqual(t, *original.Manifest.Label, *valid.Manifest.Label, "omitting AV1 changes the primary asset, not its signed identity")
+			single, extraVideo, err := H264ReplicationSource(ctx, selected)
+			require.NoError(t, err)
+			require.Equal(t, selected, single)
+			require.Empty(t, extraVideo, "a single-video source does not create a duplicate rendition")
 
 			mm := NewOffline(&config.CLI{BroadcasterHost: "node.test"})
 			did := signer.Streamer()
@@ -111,7 +127,8 @@ func TestH264ReplicationSourcePreservesSignedTracksAndAudioTail(t *testing.T) {
 func TestH264ReplicationSourceRejectsAV1Only(t *testing.T) {
 	sources := allSignedBareSegments(t, t.Context(), audioSignerForTest(t), getFixture("av1-aac-frag.mp4"))
 	require.NotEmpty(t, sources)
-	selected, err := H264ReplicationSource(t.Context(), sources[0])
+	selected, addendum, err := H264ReplicationSource(t.Context(), sources[0])
 	require.Error(t, err)
 	require.Empty(t, selected, "an incompatible source must not be advertised as H264")
+	require.Empty(t, addendum)
 }

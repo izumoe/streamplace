@@ -126,7 +126,7 @@ func allSignedBareSegments(t testing.TB, ctx context.Context, ms *MediaSignerLoc
 	eventCh := make(chan *muxl.MuxlEvent, 16)
 	errCh := make(chan error, 1)
 	go func() {
-		err := ms.SignSegmentStream(ctx, bytes.NewReader(frag), eventCh)
+		err := ms.SignSegmentStream(ctx, bytes.NewReader(frag), eventCh, nil)
 		close(eventCh)
 		errCh <- err
 	}()

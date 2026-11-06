@@ -114,7 +114,7 @@ func signedAudioSourceAt(t *testing.T, ctx context.Context, fixture string, orig
 	output := make(chan *muxl.MuxlEvent, 16)
 	done := make(chan error, 1)
 	go func() {
-		done <- signer.SignSegmentStream(ctx, bytes.NewReader(presentation.Bytes()), output)
+		done <- signer.SignSegmentStream(ctx, bytes.NewReader(presentation.Bytes()), output, nil)
 		close(output)
 	}()
 	var source [][]byte
@@ -226,4 +226,42 @@ func canonicalAudioPackets(t *testing.T, ctx context.Context, data []byte, codec
 		}
 	}
 	return packets
+}
+
+func TestStreamTranscoderKeepsAudioInSourceNamespace(t *testing.T) {
+	ctx := t.Context()
+	input, err := os.ReadFile(getFixture("av1-aac-frag.mp4"))
+	require.NoError(t, err)
+	signer := audioSignerForTest(t)
+	events := make(chan *muxl.MuxlEvent, 16)
+	done := make(chan error, 1)
+	go func() {
+		done <- signer.SignSegmentStream(ctx, bytes.NewReader(input), events, map[uint32]uint32{1: 65537})
+		close(events)
+	}()
+	var sources [][]byte
+	for event := range events {
+		if event.Type == "signed-segment" {
+			sources = append(sources, concatTracksByID(event.Tracks))
+		}
+	}
+	require.NoError(t, <-done)
+	cert, key := nodeSignerForTest(t)
+	mm := NewOffline(&config.CLI{BroadcasterHost: "node.test"})
+	var completed [][]byte
+	tr := mm.newStreamTranscoder(ctx, "opus", cert, key, func(_ any, data []byte, _ bool) { completed = append(completed, data) })
+	for _, source := range sources {
+		require.NoError(t, tr.Feed(source, nil))
+	}
+	require.NoError(t, tr.Close())
+	require.NotEmpty(t, completed)
+	for _, data := range completed {
+		events, err := unwrapMuxlEvents(ctx, data)
+		require.NoError(t, err)
+		cat := catalogFromEvents(events)
+		require.NotNil(t, cat.Audio)
+		for _, audio := range cat.Audio.Renditions {
+			require.Less(t, audio.TrackID(), uint32(100), "high video rendition IDs must not move the source audio into the addendum namespace")
+		}
+	}
 }

@@ -225,7 +225,10 @@ func audioSourcePartsForTest(t *testing.T, ctx context.Context, signer *MediaSig
 		require.NoError(t, part.Marshal(&input))
 		output := make(chan *muxl.MuxlEvent, 4)
 		done := make(chan error, 1)
-		go func() { done <- signer.SignSegmentStream(ctx, bytes.NewReader(input.Bytes()), output); close(output) }()
+		go func() {
+			done <- signer.SignSegmentStream(ctx, bytes.NewReader(input.Bytes()), output, nil)
+			close(output)
+		}()
 		var signed [][]byte
 		for event := range output {
 			if event.Type == "signed-segment" {

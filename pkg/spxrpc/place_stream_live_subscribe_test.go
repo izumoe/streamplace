@@ -32,11 +32,11 @@ func TestSubscribeSegmentsSelectsCompatibleSource(t *testing.T) {
 	require.NoError(t, err)
 	tracks, err := media.MuxlTracks(ctx, base)
 	require.NoError(t, err)
-	other, err := muxl.RunMuxlCanonicalize(ctx, fixture, map[uint32]uint32{1: 2, 2: 3})
+	other, err := muxl.RunMuxlCanonicalize(ctx, fixture, map[uint32]uint32{1: 65538, 2: 3})
 	require.NoError(t, err)
 	extra, err := media.MuxlTracks(ctx, other)
 	require.NoError(t, err)
-	combined := bytes.Join([][]byte{tracks["video1"], extra["video2"], tracks["audio3"]}, nil)
+	combined := bytes.Join([][]byte{tracks["video1"], extra["video65538"], tracks["audio3"]}, nil)
 	var input bytes.Buffer
 	require.NoError(t, muxl.RunMuxlWrap(ctx, bytes.NewReader(combined), "fmp4", &input))
 	streamer, source := signedWebsocketSource(t, ctx, input.Bytes())
@@ -81,6 +81,14 @@ func TestSubscribeSegmentsSelectsCompatibleSource(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, websocket.BinaryMessage, kind)
 			require.True(t, bytes.Equal(tc.want, got), "private media stays withheld and published signed tracks match the requested source (%d bytes, got %d)", len(tc.want), len(got))
+			if tc.sourceHeader == "" {
+				kind, message, err := conn.ReadMessage()
+				require.NoError(t, err)
+				require.Equal(t, websocket.BinaryMessage, kind)
+				addendum, ok := media.UnframeRenditions(message)
+				require.True(t, ok, "the remaining AVC follows its source through the existing rendition path")
+				require.Equal(t, tracks["video65538"], addendum)
+			}
 			require.NoError(t, conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), time.Now().Add(time.Second)))
 			select {
 			case err := <-finished:
@@ -139,7 +147,7 @@ func signedWebsocketSource(t *testing.T, ctx context.Context, input []byte) (str
 	events := make(chan *muxl.MuxlEvent, 16)
 	signed := make(chan error, 1)
 	go func() {
-		signed <- signer.SignSegmentStream(ctx, bytes.NewReader(input), events)
+		signed <- signer.SignSegmentStream(ctx, bytes.NewReader(input), events, nil)
 		close(events)
 	}()
 	var source []byte

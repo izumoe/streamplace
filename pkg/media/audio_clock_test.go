@@ -171,7 +171,10 @@ func roundedAudioSource(t *testing.T, ctx context.Context, fixture string, gap t
 		require.NoError(t, part.Marshal(&input))
 		output := make(chan *muxl.MuxlEvent, 8)
 		done := make(chan error, 1)
-		go func() { done <- signer.SignSegmentStream(ctx, bytes.NewReader(input.Bytes()), output); close(output) }()
+		go func() {
+			done <- signer.SignSegmentStream(ctx, bytes.NewReader(input.Bytes()), output, nil)
+			close(output)
+		}()
 		var signed []byte
 		for event := range output {
 			if event.Type == "signed-segment" {

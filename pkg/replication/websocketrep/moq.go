@@ -348,6 +348,7 @@ func (ts moqTracks) finishGroups() error {
 // the signed bytes.
 func (ts moqTracks) publish(ctx context.Context, broadcast *official.BroadcastProducer, seg []byte, h264Only bool, group func(*official.CMAFProducer) (*official.CMAFGroupProducer, error)) error {
 	var tracks map[string][]byte
+	var renditions map[string][]byte
 	var err error
 	if h264Only {
 		var videoID uint32
@@ -360,7 +361,7 @@ func (ts moqTracks) publish(ctx context.Context, broadcast *official.BroadcastPr
 				}
 			}
 		}
-		tracks, err = media.H264ReplicationTracks(ctx, seg, videoID)
+		tracks, renditions, err = media.H264ReplicationTracks(ctx, seg, videoID)
 	} else {
 		tracks, err = media.MuxlTracks(ctx, seg)
 	}
@@ -369,6 +370,11 @@ func (ts moqTracks) publish(ctx context.Context, broadcast *official.BroadcastPr
 	}
 	for name, data := range tracks {
 		if err := ts.publishTrack(ctx, broadcast, name, data, group); err != nil {
+			return err
+		}
+	}
+	for name, data := range renditions {
+		if err := ts.publishTrack(ctx, broadcast, name, data, (*official.CMAFProducer).AppendGroup); err != nil {
 			return err
 		}
 	}

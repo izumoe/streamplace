@@ -39,7 +39,7 @@ func signedSegmentsWithSigner(t *testing.T, ctx context.Context, ms *media.Media
 	events := make(chan *muxl.MuxlEvent, 16)
 	signed := make(chan error, 1)
 	go func() {
-		signed <- ms.SignSegmentStream(ctx, bytes.NewReader(frag), events)
+		signed <- ms.SignSegmentStream(ctx, bytes.NewReader(frag), events, nil)
 		close(events)
 	}()
 	var segments [][]byte
@@ -107,7 +107,7 @@ func TestMoqPlaybackGroupsFollowVideoSyncFrames(t *testing.T) {
 		events := make(chan *muxl.MuxlEvent, 16)
 		done := make(chan error, 1)
 		go func() {
-			done <- signer.SignSegmentStream(ctx, bytes.NewReader(input), events)
+			done <- signer.SignSegmentStream(ctx, bytes.NewReader(input), events, nil)
 			close(events)
 		}()
 		var signed []*muxl.MuxlEvent

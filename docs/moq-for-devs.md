@@ -32,6 +32,15 @@ sources need a multitrack-capable peer; the compatibility path requires H264.
 A compatibility broadcast keeps its selected video for its lifetime and ends
 when that track ends, allowing the peer to rediscover the stream.
 
+Direct multitrack RTMP ingest assigns the other AVC videos IDs starting at
+`65536` before signing. The largest AVC, AV1 tracks and source audio keep their
+source IDs. Older nodes discover these additional AVC assets through their
+existing rendition path, which requires signed video IDs of at least `100`.
+The compatibility route sends them as addenda, preserving their signed bytes;
+it does not rewrite IDs or signatures during replication. Audio completion stays
+below `100`, so peers continue to assemble it with the source. Existing streams
+need a new ingest session to receive this layout.
+
 Nodes request the full source first and use the older path only after an explicit
 404 broadcast rejection. Authorization failures, other server errors and catalog
 timeouts remain failures. WebSocket subscribers opt into the full source with

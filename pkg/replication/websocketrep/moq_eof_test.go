@@ -31,7 +31,7 @@ func TestMoqDrainsPartialEOF(t *testing.T) {
 		events := make(chan *muxl.MuxlEvent, 16)
 		finished := make(chan error, 1)
 		go func() {
-			finished <- signer.SignSegmentStream(ctx, bytes.NewReader(input), events)
+			finished <- signer.SignSegmentStream(ctx, bytes.NewReader(input), events, nil)
 			close(events)
 		}()
 		var segments [][]byte

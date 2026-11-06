@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"sort"
-	"strconv"
 
 	"github.com/go-gst/go-gst/pkg/gst"
 	app "github.com/go-gst/go-gst/pkg/gstapp"
@@ -32,7 +31,9 @@ type SignSegmentStreamFunc func(ctx context.Context, input io.Reader, eventCh ch
 // produced here. Presentation headers are synthesized downstream (ValidateMP4
 // / playback) only when needed.
 func MuxlSignSegmentElem(ctx context.Context, cli *config.CLI, ms MediaSigner, videoTrackCount int, onSegment func(ctx context.Context, segment []byte) error) (gst.Element, error) {
-	elem, _, err := muxlSignSegmentElem(ctx, cli, ms.SignSegmentStream, videoTrackCount, onSegment)
+	elem, _, err := muxlSignSegmentElem(ctx, cli, func(ctx context.Context, input io.Reader, events chan *muxl.MuxlEvent) error {
+		return ms.SignSegmentStream(ctx, input, events, nil)
+	}, videoTrackCount, onSegment)
 	return elem, err
 }
 
@@ -127,6 +128,7 @@ func muxlSignSegmentElem(ctx context.Context, cli *config.CLI, signStream SignSe
 		defer close(done)
 		var pending []map[string][]byte
 		var contributed [MaxRTMPVideoTracks + 1]bool
+		var trackIDs [MaxRTMPVideoTracks + 1]string
 		publish := func() {
 			segment := concatTracksSorted(pending...)
 			clear(pending)
@@ -138,6 +140,16 @@ func muxlSignSegmentElem(ctx context.Context, cli *config.CLI, signStream SignSe
 			}
 		}
 		for ev := range eventCh {
+			if ev.Type == "init" {
+				i := 0
+				for id := range ev.TrackInits {
+					if i == len(trackIDs) {
+						break
+					}
+					trackIDs[i] = id
+					i++
+				}
+			}
 			if ev.Type != "signed-segment" {
 				continue
 			}
@@ -147,9 +159,9 @@ func muxlSignSegmentElem(ctx context.Context, cli *config.CLI, signStream SignSe
 			// track has contributed, retaining their signed bytes verbatim.
 			ready := true
 			if videoTrackCount > 1 {
-				for id := 1; id <= videoTrackCount+1; id++ {
-					contributed[id-1] = contributed[id-1] || len(ev.Tracks[strconv.Itoa(id)]) > 0
-					ready = ready && contributed[id-1]
+				for i := range videoTrackCount + 1 {
+					contributed[i] = contributed[i] || len(ev.Tracks[trackIDs[i]]) > 0
+					ready = ready && contributed[i]
 				}
 			}
 			if ready {

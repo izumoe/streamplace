@@ -138,26 +138,29 @@ func TestMoqSourceRoutesPreserveFullLadder(t *testing.T) {
 	require.NoError(t, err)
 	base, err := media.MuxlTracks(ctx, canonical)
 	require.NoError(t, err)
-	relabelled, err := muxl.RunMuxlCanonicalize(ctx, fixture, map[uint32]uint32{1: 2, 2: 3})
+	relabelled, err := muxl.RunMuxlCanonicalize(ctx, fixture, map[uint32]uint32{1: 65538, 2: 3})
 	require.NoError(t, err)
 	extra, err := media.MuxlTracks(ctx, relabelled)
 	require.NoError(t, err)
 	require.NotEmpty(t, base["video1"])
 	require.NotEmpty(t, base["audio3"])
-	require.NotEmpty(t, extra["video2"])
+	require.NotEmpty(t, extra["video65538"])
 	var flat bytes.Buffer
-	require.NoError(t, muxl.RunMuxlWrap(ctx, bytes.NewReader(bytes.Join([][]byte{base["video1"], extra["video2"], base["audio3"]}, nil)), "fmp4", &flat))
+	require.NoError(t, muxl.RunMuxlWrap(ctx, bytes.NewReader(bytes.Join([][]byte{base["video1"], extra["video65538"], base["audio3"]}, nil)), "fmp4", &flat))
 	signer, err := media.NewEphemeralMediaSigner("compat-routing")
 	require.NoError(t, err)
 	events := make(chan *muxl.MuxlEvent, 16)
 	signed := make(chan error, 1)
-	go func() { signed <- signer.SignSegmentStream(ctx, bytes.NewReader(flat.Bytes()), events); close(events) }()
+	go func() {
+		signed <- signer.SignSegmentStream(ctx, bytes.NewReader(flat.Bytes()), events, nil)
+		close(events)
+	}()
 	var source []byte
 	for event := range events {
 		if event.Type != "signed-segment" {
 			continue
 		}
-		for _, id := range []string{"1", "2", "3"} {
+		for _, id := range []string{"1", "65538", "3"} {
 			source = append(source, event.Tracks[id]...)
 		}
 	}
@@ -169,8 +172,8 @@ func TestMoqSourceRoutesPreserveFullLadder(t *testing.T) {
 	for name := range tracks {
 		sourceNames = append(sourceNames, name)
 	}
-	require.ElementsMatch(t, []string{"audio3", "video1", "video2"}, sourceNames, "the fixture carries both signed video assets")
-	source = bytes.Join([][]byte{tracks["video1"], tracks["video2"], tracks["audio3"]}, nil)
+	require.ElementsMatch(t, []string{"audio3", "video1", "video65538"}, sourceNames, "the fixture carries both signed video assets")
+	source = bytes.Join([][]byte{tracks["video1"], tracks["video65538"], tracks["audio3"]}, nil)
 	legacy := bytes.Join([][]byte{tracks["video1"], tracks["audio3"]}, nil)
 	b := bus.NewBus()
 	const streamer = "did:plc:routing"
@@ -201,10 +204,11 @@ func TestMoqSourceRoutesPreserveFullLadder(t *testing.T) {
 	for _, tc := range []struct {
 		path       string
 		want       []byte
+		addendum   []byte
 		videoCount int
 	}{
-		{streamer, legacy, 1},
-		{"source/" + streamer, source, 2},
+		{streamer, legacy, tracks["video65538"], 2},
+		{"source/" + streamer, legacy, tracks["video65538"], 2},
 	} {
 		broadcast, err := requestMoqBroadcast(ctx, client, tc.path)
 		require.NoError(t, err)
@@ -212,9 +216,10 @@ func TestMoqSourceRoutesPreserveFullLadder(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, catalog.Video, tc.videoCount, tc.path)
 		received := make(chan []byte, 1)
+		addenda := make(chan []byte, 1)
 		done := make(chan error, 1)
 		go func() {
-			done <- consumeBroadcast(ctx, broadcast, func(segment []byte) error { received <- segment; return nil }, func(context.Context, []byte) error { return nil })
+			done <- consumeBroadcast(ctx, broadcast, func(segment []byte) error { received <- segment; return nil }, func(_ context.Context, data []byte) error { addenda <- data; return nil })
 		}()
 		select {
 		case got := <-received:
@@ -223,6 +228,16 @@ func TestMoqSourceRoutesPreserveFullLadder(t *testing.T) {
 			t.Fatalf("%s ended before its source arrived: %v", tc.path, err)
 		case <-ctx.Done():
 			t.Fatal("source did not arrive")
+		}
+		if tc.addendum != nil {
+			select {
+			case got := <-addenda:
+				require.Equal(t, tc.addendum, got, "legacy rendition transport preserves the original signed asset")
+			case err := <-done:
+				t.Fatalf("rendition ended before arrival: %v", err)
+			case <-ctx.Done():
+				t.Fatal("legacy rendition did not arrive")
+			}
 		}
 		ended = append(ended, done)
 	}
@@ -253,7 +268,7 @@ func TestMoqLegacyRejectsAV1OnlySource(t *testing.T) {
 	require.NoError(t, err)
 	events := make(chan *muxl.MuxlEvent, 16)
 	signed := make(chan error, 1)
-	go func() { signed <- signer.SignSegmentStream(ctx, bytes.NewReader(fixture), events); close(events) }()
+	go func() { signed <- signer.SignSegmentStream(ctx, bytes.NewReader(fixture), events, nil); close(events) }()
 	var source []byte
 	for event := range events {
 		if event.Type == "signed-segment" {
@@ -328,7 +343,7 @@ func TestMoqLegacySourceDoesNotSwitchVideoAfterPartialEOF(t *testing.T) {
 	defer cancel()
 	fixture, err := os.ReadFile("../../../test/fixtures/h264-opus-frag.mp4")
 	require.NoError(t, err)
-	canonical, err := muxl.RunMuxlCanonicalize(ctx, fixture, map[uint32]uint32{1: 2, 2: 3})
+	canonical, err := muxl.RunMuxlCanonicalize(ctx, fixture, map[uint32]uint32{1: 65538, 2: 3})
 	require.NoError(t, err)
 	signer, err := media.NewEphemeralMediaSigner("legacy-partial-eof")
 	require.NoError(t, err)
@@ -338,11 +353,14 @@ func TestMoqLegacySourceDoesNotSwitchVideoAfterPartialEOF(t *testing.T) {
 		require.NoError(t, muxl.RunMuxlWrap(ctx, bytes.NewReader(canonical), "fmp4", &input))
 		events := make(chan *muxl.MuxlEvent, 16)
 		signed := make(chan error, 1)
-		go func() { signed <- signer.SignSegmentStream(ctx, bytes.NewReader(input.Bytes()), events); close(events) }()
+		go func() {
+			signed <- signer.SignSegmentStream(ctx, bytes.NewReader(input.Bytes()), events, nil)
+			close(events)
+		}()
 		var segments [][]byte
 		for event := range events {
 			if event.Type == "signed-segment" {
-				segments = append(segments, bytes.Join([][]byte{event.Tracks["1"], event.Tracks["2"], event.Tracks["3"]}, nil))
+				segments = append(segments, bytes.Join([][]byte{event.Tracks["1"], event.Tracks["65538"], event.Tracks["3"]}, nil))
 			}
 		}
 		require.NoError(t, <-signed)
@@ -355,12 +373,12 @@ func TestMoqLegacySourceDoesNotSwitchVideoAfterPartialEOF(t *testing.T) {
 	lower := sign(lowerCanonical)
 	otherTracks, err := media.MuxlTracks(ctx, other[0])
 	require.NoError(t, err)
-	first := append(bytes.Clone(lower[0]), otherTracks["video2"]...)
+	first := append(bytes.Clone(lower[0]), otherTracks["video65538"]...)
 	tail := other[1]
 	tailTracks, err := media.MuxlTracks(ctx, tail)
 	require.NoError(t, err)
 	require.Empty(t, tailTracks["video1"])
-	require.NotEmpty(t, tailTracks["video2"])
+	require.NotEmpty(t, tailTracks["video65538"])
 	require.NotEmpty(t, tailTracks["audio3"])
 	broadcast, err := official.NewBroadcastProducer()
 	require.NoError(t, err)
@@ -378,13 +396,13 @@ func TestMoqLegacySourceDoesNotSwitchVideoAfterPartialEOF(t *testing.T) {
 	catalog, err := consumer.Catalog(ctx)
 	require.NoError(t, err)
 	require.Contains(t, catalog.Video, "video1")
-	require.Len(t, catalog.Video, 1)
+	require.Len(t, catalog.Video, 2, "the second AVC remains available as an addendum")
 	err = publish(tail, 1)
 	require.Error(t, err, "a finished selected source cannot silently replace the legacy peer's video")
 	catalog, err = consumer.Catalog(ctx)
 	require.NoError(t, err)
 	require.Contains(t, catalog.Video, "video1")
-	require.Len(t, catalog.Video, 1, "a legacy session has one fixed source track")
+	require.Len(t, catalog.Video, 2, "a legacy session never switches its fixed source track")
 }
 
 func newMoqTestClient(t *testing.T, ctx context.Context, origin *official.OriginProducer) *official.Client {

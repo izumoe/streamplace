@@ -190,12 +190,19 @@ func (mm *MediaManager) signAudioChunk(ctx context.Context, header []byte, packe
 	var want uint32
 	cat := catalogFromEvents(sourceEvents)
 	for _, v := range cat.Video.Renditions {
-		want = max(want, v.TrackID())
+		if v.TrackID() < renditionTrackBase {
+			want = max(want, v.TrackID())
+		}
 	}
 	for _, a := range cat.Audio.Renditions {
-		want = max(want, a.TrackID())
+		if a.TrackID() < renditionTrackBase {
+			want = max(want, a.TrackID())
+		}
 	}
 	want++
+	if want >= renditionTrackBase {
+		return nil, fmt.Errorf("no source track ID available for encoded audio")
+	}
 	samples := make([]*fmp4.Sample, 0, len(packets))
 	for i, p := range packets {
 		end := p.pts + p.duration

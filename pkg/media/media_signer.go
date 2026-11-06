@@ -33,7 +33,7 @@ type MediaSigner interface {
 	// signer, emitting one signed-segment event per GoP on eventCh. The
 	// segment bytes routed in each event are bare canonical .m4s
 	// ([c2pa-uuid][muxl-uuid][moof][mdat] per track) — no flat wrapper.
-	SignSegmentStream(ctx context.Context, input io.Reader, eventCh chan *muxl.MuxlEvent) error
+	SignSegmentStream(ctx context.Context, input io.Reader, eventCh chan *muxl.MuxlEvent, trackRemap map[uint32]uint32) error
 	Pub() aqpub.Pub
 	Streamer() string
 	DID() string
@@ -199,7 +199,7 @@ func (ms *MediaSignerLocal) buildManifest(ctx context.Context, start int64) ([]b
 // it signs. Signing backend: an *ecdsa.PrivateKey is marshaled to PEM and
 // signed in-wasm, otherwise the host-callback path keeps the key out of the
 // sandbox.
-func (ms *MediaSignerLocal) SignSegmentStream(ctx context.Context, input io.Reader, eventCh chan *muxl.MuxlEvent) error {
+func (ms *MediaSignerLocal) SignSegmentStream(ctx context.Context, input io.Reader, eventCh chan *muxl.MuxlEvent, trackRemap map[uint32]uint32) error {
 	ctx, span := signerTracer.Start(ctx, "SignSegmentStream", trace.WithAttributes(
 		attribute.String("streamer", ms.StreamerName),
 	))
@@ -212,6 +212,7 @@ func (ms *MediaSignerLocal) SignSegmentStream(ctx context.Context, input io.Read
 		return ms.buildManifest(ctx, time.Now().UnixMilli())
 	}
 	in := muxl.SignerInput{
+		TrackRemap:        trackRemap,
 		CertPEM:           ms.Cert,
 		TrackManifestFn:   fetchManifest,
 		WrapperManifestFn: fetchManifest,

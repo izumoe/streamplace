@@ -201,10 +201,13 @@ func TestRTMPDirectIngestSignsOriginalVideoTracks(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		videos []rtmpFixture
+		remap  map[uint32]uint32
 	}{
-		{"H264", []rtmpFixture{h264Fixture}},
-		{"AV1 sequence-start config", []rtmpFixture{av1Fixture}},
-		{"mixed H264 AV1", []rtmpFixture{h264Fixture, av1Fixture}},
+		{"H264", []rtmpFixture{h264Fixture}, nil},
+		{"AV1 sequence-start config", []rtmpFixture{av1Fixture}, nil},
+		{"mixed H264 AV1", []rtmpFixture{h264Fixture, av1Fixture}, nil},
+		{"H264 ladder", []rtmpFixture{h264Fixture, h264Fixture, h264Fixture}, map[uint32]uint32{2: 65538, 3: 65539}},
+		{"AV1 and H264 ladder", []rtmpFixture{av1Fixture, h264Fixture, h264Fixture}, map[uint32]uint32{3: 65539}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
@@ -229,15 +232,20 @@ func TestRTMPDirectIngestSignsOriginalVideoTracks(t *testing.T) {
 				require.NotNil(t, cat.Video)
 				for _, v := range cat.Video.Renditions {
 					require.Positive(t, v.TrackID())
-					require.LessOrEqual(t, v.TrackID(), uint32(len(tc.videos)))
-					require.Less(t, v.TrackID(), uint32(100))
-					require.Equal(t, strings.HasPrefix(v.Codec, "av01"), tc.videos[v.TrackID()-1].video.AV1Config != nil)
+					originalID := v.TrackID() & 0xffff
+					require.LessOrEqual(t, originalID, uint32(len(tc.videos)))
+					wantID := originalID
+					if mapped, ok := tc.remap[originalID]; ok {
+						wantID = mapped
+					}
+					require.Equal(t, wantID, v.TrackID())
+					require.Equal(t, strings.HasPrefix(v.Codec, "av01"), tc.videos[originalID-1].video.AV1Config != nil)
 					if strings.HasPrefix(v.Codec, "av01") {
 						var init, description bytes.Buffer
 						require.NoError(t, muxl.RunMuxlWrapInit(ctx, bytes.NewReader(segment), &init))
 						_, err := mp4.Marshal(&description, rtmpAVConfig(t, init.Bytes(), mp4.BoxTypeAv01(), mp4.BoxTypeAv1C()), mp4.Context{})
 						require.NoError(t, err)
-						require.Equal(t, tc.videos[v.TrackID()-1].video.AV1Config, description.Bytes())
+						require.Equal(t, tc.videos[originalID-1].video.AV1Config, description.Bytes())
 						for _, event := range unwrapped {
 							for _, cts := range event.Samples[strconv.FormatUint(uint64(v.TrackID()), 10)].CtsOffsets {
 								require.InDelta(t, float64(33*time.Millisecond), float64(cts)*float64(time.Second)/float64(v.Timescale()), float64(time.Microsecond))
@@ -252,7 +260,11 @@ func TestRTMPDirectIngestSignsOriginalVideoTracks(t *testing.T) {
 				}
 			}
 			for id, fixture := range tc.videos {
-				require.EqualValues(t, len(fixture.frames), counts[strconv.Itoa(id+1)], "track %d loses no encoded frames", id)
+				out := uint32(id + 1)
+				if mapped, ok := tc.remap[out]; ok {
+					out = mapped
+				}
+				require.EqualValues(t, len(fixture.frames), counts[strconv.FormatUint(uint64(out), 10)], "track %d loses no encoded frames", id)
 			}
 			require.EqualValues(t, len(av1Fixture.audioFrames), counts[strconv.Itoa(len(tc.videos)+1)], "source AAC is copied intact")
 		})
@@ -308,7 +320,7 @@ func assertRTMPPlayableBatches(t *testing.T, audio rtmpFixture, videos []rtmpFix
 		events := make(chan *muxl.MuxlEvent, 16)
 		signed := make(chan error, 1)
 		go func() {
-			signed <- session.MediaSigner.SignSegmentStream(ctx, input, events)
+			signed <- session.MediaSigner.SignSegmentStream(ctx, input, events, nil)
 			close(events)
 		}()
 		for event := range events {
@@ -553,7 +565,7 @@ func TestRTMPMultitrackCompletionAndExtraction(t *testing.T) {
 			require.NoError(t, err)
 		}
 		for i, fixture := range []rtmpFixture{red, blue, green} {
-			require.EqualValues(t, len(fixture.frames), counts[strconv.Itoa(i+1)])
+			require.EqualValues(t, len(fixture.frames), counts[[]string{"1", "65538", "3"}[i]])
 		}
 		require.EqualValues(t, len(red.audioFrames), counts["4"])
 	})
@@ -811,4 +823,17 @@ func BenchmarkRTMPAV1Packets(b *testing.B) {
 			})
 		})
 	}
+}
+
+func TestRTMPTrackRemapKeepsLargestAVCAsSource(t *testing.T) {
+	small := readRTMPFixture(t, "ertmp-red-h264.mp4")
+	large := readRTMPFixture(t, "h264-opus-frag.mp4")
+	av1 := readRTMPFixture(t, "av1-aac-frag.mp4")
+	session := rtmpSessionForFixtures(t, small, small, av1, large)
+	remap, err := rtmpReplicationTrackRemap(session)
+	require.NoError(t, err)
+	require.Equal(t, map[uint32]uint32{1: 65537}, remap, "AV1 and the largest AVC keep their source IDs; only the smaller AVC becomes a rendition")
+	session.VideoTracks[0].Track = &gortmplib.Track{Codec: &codecs.H264{SPS: []byte{1}}}
+	_, err = rtmpReplicationTrackRemap(session)
+	require.Error(t, err, "malformed H264 configuration is rejected before signing")
 }

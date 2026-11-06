@@ -379,11 +379,12 @@ func (s *Server) handlePlaceStreamLiveSubscribeSegments(c echo.Context) error {
 				// Ship the bare canonical MUXL segment; the receiver
 				// re-validates it via ValidateMP4 (which accepts bare .m4s).
 				data := file.Muxl
+				var addendum []byte
 				if file.AudioOnly {
 					data = media.FrameRenditions(data)
 				} else if !fullSource {
 					var err error
-					data, err = media.H264ReplicationSource(ctx, data)
+					data, addendum, err = media.H264ReplicationSource(ctx, data)
 					if err != nil {
 						log.Warn(ctx, "could not select H264 replication source", "error", err)
 						cancel()
@@ -395,6 +396,13 @@ func (s *Server) handlePlaceStreamLiveSubscribeSegments(c echo.Context) error {
 					log.Error(ctx, "could not write message", "error", err)
 					cancel()
 					return
+				}
+				if len(addendum) > 0 {
+					if err := ws.WriteMessage(websocket.BinaryMessage, media.FrameRenditions(addendum)); err != nil {
+						log.Error(ctx, "could not write source renditions", "error", err)
+						cancel()
+						return
+					}
 				}
 			case ren := <-renChan.C:
 				if !ren.Published {

@@ -80,8 +80,12 @@ func (mm *MediaManager) rtmpIngestSession(ctx context.Context, session *RTMPSess
 			once.Do(func() { firstErr = err; cancel() })
 		}
 	}
+	remap, err := rtmpReplicationTrackRemap(session)
+	if err != nil {
+		return err
+	}
 	signer, done, err := muxlSignSegmentElem(signCtx, mm.cli, func(ctx context.Context, input io.Reader, events chan *muxl.MuxlEvent) error {
-		err := session.MediaSigner.SignSegmentStream(ctx, input, events)
+		err := session.MediaSigner.SignSegmentStream(ctx, input, events, remap)
 		fail(err)
 		return err
 	}, len(session.VideoTracks), func(ctx context.Context, segment []byte) error {
@@ -413,7 +417,7 @@ func RTMPIngestUnpublished(ctx context.Context, cli *config.CLI, rtmpURL string,
 		}
 	}
 	signStream := func(c context.Context, input io.Reader, events chan *muxl.MuxlEvent) error {
-		err := ms.SignSegmentStream(c, input, events)
+		err := ms.SignSegmentStream(c, input, events, nil)
 		fail(err)
 		return err
 	}
@@ -500,4 +504,39 @@ func runRTMPIngestPipeline(ctx context.Context, pipeline gst.Pipeline) error {
 	}()
 
 	return <-busErr
+}
+
+// rtmpReplicationTrackRemap reserves rendition IDs before the original signer
+// hashes the media. Older peers discover only one source video and video IDs
+// >=100 as qualities. Keep AV1 and the largest AVC as sources; the other AVC
+// tracks use a separate range from node-generated renditions (100 and up).
+func rtmpReplicationTrackRemap(session *RTMPSession) (map[uint32]uint32, error) {
+	var primary uint32
+	var largest uint64
+	for i, video := range session.VideoTracks {
+		codec, ok := video.Track.Codec.(*codecs.H264)
+		if !ok {
+			continue
+		}
+		var sps h264.SPS
+		if err := sps.Unmarshal(codec.SPS); err != nil {
+			return nil, fmt.Errorf("H264 track %d SPS: %w", i, err)
+		}
+		area := uint64(sps.Width()) * uint64(sps.Height())
+		if primary == 0 || area > largest {
+			primary = uint32(i + 1)
+			largest = area
+		}
+	}
+	var remap map[uint32]uint32
+	for i, video := range session.VideoTracks {
+		id := uint32(i + 1)
+		if _, ok := video.Track.Codec.(*codecs.H264); ok && id != primary {
+			if remap == nil {
+				remap = map[uint32]uint32{}
+			}
+			remap[id] = 1<<16 | id
+		}
+	}
+	return remap, nil
 }
