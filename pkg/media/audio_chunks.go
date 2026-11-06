@@ -42,7 +42,7 @@ type audioIngredient struct {
 // only the initialization segment, preserving the encoder's actual codec data.
 func installAudioOutput(pipeline gst.Pipeline, emit func(audioOutput) bool) {
 	demux := pipeline.GetByName("demux")
-	demux.GetStaticPad("sink").AddProbe(gst.PadProbeTypeEventDownstream, func(_ gst.Pad, info *gst.PadProbeInfo) gst.PadProbeReturn {
+	demux.GetStaticPad("sink").AddProbe(gst.PadProbeTypeEventDownstream, func(sink gst.Pad, info *gst.PadProbeInfo) gst.PadProbeReturn {
 		event := info.GetEvent()
 		if event == nil {
 			return gst.PadProbeOK
@@ -53,7 +53,13 @@ func installAudioOutput(pipeline gst.Pipeline, emit func(audioOutput) bool) {
 		}
 		// qtdemux does not forward application byte-boundary events. Its chain
 		// has already queued the preceding source's audio at this point.
-		pad := demux.GetStaticPad("audio_0")
+		// Capturing the demux wrapper here would form a native-pad/Go closure cycle.
+		parent := sink.GetParentElement()
+		if parent == nil {
+			emit(audioOutput{err: fmt.Errorf("audio boundary demux is unavailable")})
+			return gst.PadProbeDrop
+		}
+		pad := parent.GetStaticPad("audio_0")
 		if pad == nil || !pad.PushEvent(gst.NewEventCustom(gst.EventCustomDownstream, gst.NewStructureEmpty(audioBoundaryEvent))) {
 			emit(audioOutput{err: fmt.Errorf("audio boundary could not reach the audio queue")})
 		}
