@@ -19,8 +19,8 @@ func TestReplicatedDistributionPairsAudioWhileHLSBusy(t *testing.T) {
 	original := bytes.Clone(segment)
 	var presentation bytes.Buffer
 	require.NoError(t, muxl.RunMuxlWrap(ctx, bytes.NewReader(segment), "flat", &presentation))
-	mm := NewOffline(&config.CLI{})
 	const did = "did:test:replicated-distribution"
+	mm := NewOffline(&config.CLI{Syndicate: []string{did}})
 	started := time.Now()
 	mm.feedLiveWindow(ctx, did, segment, started, true)
 	window, _ := mm.GetLiveWindow(did)
@@ -91,7 +91,7 @@ func TestDistributionFeedsHLSAfterRequestCancellation(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			const did = "did:plc:cancelled-distribution"
-			mm := NewOffline(&config.CLI{AllowedStreams: []string{did}})
+			mm := NewOffline(&config.CLI{AllowedStreams: []string{did}, Syndicate: []string{did}})
 			ctx, cancel := context.WithCancel(t.Context())
 			cancel()
 			require.NoError(t, mm.distributeSegment(ctx, &validatedSegment{
@@ -118,7 +118,7 @@ func BenchmarkReplicatedDistribution(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		mm := NewOffline(&config.CLI{})
+		mm := NewOffline(&config.CLI{Syndicate: []string{vs.repoDID}})
 		require.NoError(b, mm.distributeSegment(ctx, vs, segment, presentation.Bytes()))
 		for {
 			window, _ := mm.GetLiveWindow(vs.repoDID)

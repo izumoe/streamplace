@@ -14,8 +14,8 @@ func TestAudioAddendumCannotOvertakeSourceDistribution(t *testing.T) {
 	signer := audioSignerForTest(t)
 	completed, tail := audioAddendumSourceForTest(t, signer)
 	require.GreaterOrEqual(t, len(completed), 2)
-	mm := NewOffline(&config.CLI{BroadcasterHost: "node.test"})
 	did := signer.Streamer()
+	mm := NewOffline(&config.CLI{BroadcasterHost: "node.test", Syndicate: []string{did}})
 	for _, source := range completed[:len(completed)-1] {
 		valid, err := ValidateMP4MediaC2PA(ctx, source)
 		require.NoError(t, err)

@@ -85,9 +85,9 @@ func TestAdmittedVideoOnlySourceKeepsHLSRenditions(t *testing.T) {
 	var flat bytes.Buffer
 	require.NoError(t, muxl.RunMuxlWrap(ctx, bytes.NewReader(source), "flat", &flat))
 	cert, key := nodeSignerForTest(t)
-	mm := NewOffline(&config.CLI{BroadcasterHost: "node.test"})
-	mm.bus = bus.NewBus()
 	did := ms.Streamer()
+	mm := NewOffline(&config.CLI{BroadcasterHost: "node.test", Syndicate: []string{did}})
+	mm.bus = bus.NewBus()
 	name := RenditionName(video.CodedWidth, video.CodedHeight)
 	sub := mm.bus.SubscribeSegment(ctx, did, name)
 	t.Cleanup(func() { mm.bus.UnsubscribeSegment(ctx, did, name, sub) })
