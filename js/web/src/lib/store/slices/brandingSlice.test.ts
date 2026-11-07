@@ -1,6 +1,18 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { storage } from "../../storage";
 import { createBrandingSlice } from "./brandingSlice";
+
+const { importWarning } = vi.hoisted(() => ({
+  importWarning: vi.spyOn(console, "warn").mockImplementation(() => {}),
+}));
+beforeAll(() => {
+  try {
+    for (const [message] of importWarning.mock.calls)
+      expect(String(message)).toMatch(/ponyfill implementation/);
+  } finally {
+    importWarning.mockRestore();
+  }
+});
 
 function makeBrandingState(agent: unknown) {
   let state: Record<string, any> = {};
@@ -38,4 +50,36 @@ describe("fetchBranding", () => {
       expect.any(Error),
     );
   });
+});
+
+it("does not install the previous node's branding after a node switch", async () => {
+  let complete:
+    | ((value: {
+        assets: { key: string; mimeType: string; data: string }[];
+      }) => void)
+    | undefined;
+  const state = makeBrandingState({
+    client: {
+      call: () =>
+        new Promise((resolve) => {
+          complete = resolve;
+        }),
+    },
+  });
+  vi.spyOn(storage, "getItem").mockResolvedValue(null);
+  const write = vi.spyOn(storage, "setItem").mockResolvedValue(undefined);
+  const loading = state.fetchBranding({ force: true });
+  await vi.waitFor(() => expect(complete).toBeTypeOf("function"));
+  // Let the asynchronous storage lookup finish before resolving the old node.
+  await Promise.resolve();
+  Object.assign(state, { url: "https://other.example", branding: null });
+  complete!({
+    assets: [
+      { key: "siteTitle", mimeType: "text/plain", data: "Previous node" },
+    ],
+  });
+  expect(await loading).toBe(false);
+  expect(state.branding).toBeNull();
+  expect(write).not.toHaveBeenCalled();
+  vi.restoreAllMocks();
 });

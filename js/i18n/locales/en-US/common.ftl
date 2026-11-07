@@ -577,3 +577,6 @@ ertmp-requires-obs = Requires OBS 32 or newer
 ertmp-1440-unavailable = 1440p · AV1 (needs an AV1 encoder)
 ertmp-high-upload = High upload demand. Check your sustained upload speed before using this preset live.
 ertmp-obs-setup = Set up in OBS
+
+site-social-links = Social links
+site-legal-links = Legal links

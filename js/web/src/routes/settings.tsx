@@ -57,6 +57,13 @@ type NavItem =
 const NAV_ITEMS: NavItem[] = [
   {
     role: "link",
+    to: "/settings/branding",
+    icon: Palette,
+    labelKey: "site-branding-title",
+    requiresAdmin: true,
+  },
+  {
+    role: "link",
     to: "/settings/access",
     icon: Lock,
     labelKey: "node-access-title",

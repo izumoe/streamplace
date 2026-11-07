@@ -49,12 +49,15 @@ export const createBrandingSlice: StateCreator<
   fetchBroadcasterDID: async () => {
     try {
       const agent = get().pdsAgent ?? get().anonPDSAgent;
+      const url = get().url;
       if (!agent) {
         throw new Error("Streamplace agent not available");
       }
       const result = await agent.client.call(
         place.stream.broadcast.getBroadcaster,
       );
+      if (get().url !== url || (get().pdsAgent ?? get().anonPDSAgent) !== agent)
+        return;
       set({ broadcasterDID: result.broadcaster });
       if (result.server) {
         set({ serverDID: result.server });
@@ -69,16 +72,18 @@ export const createBrandingSlice: StateCreator<
     if (!broadcasterDID) {
       // If we don't know the broadcaster yet, resolve it first.
       await get().fetchBroadcasterDID();
-      if (!get().broadcasterDID) return false;
+      if (get().url !== url || !get().broadcasterDID) return false;
     }
     const did = get().broadcasterDID as string;
+    const currentNode = () => get().url === url && get().broadcasterDID === did;
 
     try {
       set({ brandingLoading: true });
 
       // check localStorage first
-      const cacheKey = `branding:${did}`;
+      const cacheKey = `branding:${url}:${did}`;
       const cached = await storage.getItem(cacheKey);
+      if (!currentNode()) return false;
       if (!force && cached) {
         try {
           const parsed = JSON.parse(cached);
@@ -120,10 +125,13 @@ export const createBrandingSlice: StateCreator<
           // for images, construct full URL and fetch blob
           const fullUrl = `${url}${asset.url}`;
           const blobRes = await fetch(fullUrl);
+          if (!blobRes.ok) throw new Error("Failed to load branding image");
           const blob = await blobRes.blob();
           brandingMap[asset.key].data = await blobToBase64(blob);
         }
       }
+
+      if (!currentNode()) return false;
 
       // cache in localStorage
       storage
@@ -143,6 +151,7 @@ export const createBrandingSlice: StateCreator<
       });
       return true;
     } catch (err: any) {
+      if (!currentNode()) return false;
       console.error("Failed to fetch branding:", err);
       set({
         brandingLoading: false,

@@ -8,6 +8,7 @@ import {
   Video,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { brandingLinks } from "../lib/branding";
 import { useSession } from "../lib/session";
 import { useStore } from "../lib/store";
 import {
@@ -28,6 +29,10 @@ export default function SidebarComponent() {
   const { state } = useSession();
   const isAuthenticated = state.status === "authenticated";
   const matchRoute = useMatchRoute();
+  const socialData = useStore((state) => state.branding?.socialLinks?.data);
+  const legalData = useStore((state) => state.branding?.legalLinks?.data);
+  const socialLinks = brandingLinks(socialData);
+  const legalLinks = brandingLinks(legalData);
 
   // Active state follows the current route. Home matches exactly (the
   // root route is an ancestor of every page); the others match their
@@ -120,7 +125,46 @@ export default function SidebarComponent() {
         </SidebarGroup>
       </SidebarContent>
 
-      <SidebarFooter></SidebarFooter>
+      {(socialLinks.length > 0 || legalLinks.length > 0) && (
+        <SidebarFooter className="group-data-[collapsible=icon]:hidden">
+          {socialLinks.length > 0 && (
+            <nav
+              aria-label={t("site-social-links", "Social links")}
+              className="flex flex-wrap gap-x-4 gap-y-2 px-2 text-sm"
+            >
+              {socialLinks.map((link, index) => (
+                <a
+                  key={index}
+                  href={link.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="focus-visible:outline-ring hover:underline focus-visible:outline"
+                >
+                  {link.label}
+                </a>
+              ))}
+            </nav>
+          )}
+          {legalLinks.length > 0 && (
+            <nav
+              aria-label={t("site-legal-links", "Legal links")}
+              className="text-muted-foreground flex flex-wrap gap-x-4 gap-y-2 px-2 text-xs"
+            >
+              {legalLinks.map((link, index) => (
+                <a
+                  key={index}
+                  href={link.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="focus-visible:outline-ring hover:underline focus-visible:outline"
+                >
+                  {link.label}
+                </a>
+              ))}
+            </nav>
+          )}
+        </SidebarFooter>
+      )}
     </Sidebar>
   );
 }
