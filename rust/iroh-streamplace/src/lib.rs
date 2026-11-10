@@ -852,10 +852,12 @@ impl Node {
 
     /// Shutdown the node, including the streaming system and the metadata db.
     pub async fn shutdown(&self) -> Result<(), ShutdownError> {
-        // shut down both the streams and the db concurrently, even if one fails
-        let (res1, res2) = tokio::join!(self.shutdown_streams(), self.client.shutdown());
-        res1?;
-        res2?;
+        // The streaming actor owns the gossip router used by the database.
+        // Stop the database first, and attempt both shutdowns even if one fails.
+        let database = self.client.shutdown().await;
+        let streams = self.shutdown_streams().await;
+        streams?;
+        database?;
         Ok(())
     }
 }
