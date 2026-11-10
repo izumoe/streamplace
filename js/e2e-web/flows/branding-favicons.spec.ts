@@ -18,14 +18,16 @@ const SERVER_URL = process.env.SERVER_URL!;
 test.skip(!HTTPS_URL, "harness started without its HTTPS hostnames");
 
 const ICONS: Record<string, string> = {
-  favicon: `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" fill="#808080"/></svg>`,
+  // A solid 32 × 32 gray PNG exercises the editor’s supported upload format.
+  favicon:
+    "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAALElEQVR4nO3OoQEAAAwCIE/38+0MC4FO2t5SBAQEBAQEBAQEBAQEBAQE1oEHja/8iFN0ofMAAAAASUVORK5CYII=",
   faviconLight: `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><circle cx="16" cy="16" r="12" fill="#ffd000"/></svg>`,
   faviconDark: `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><circle cx="16" cy="16" r="12" fill="#2040ff"/></svg>`,
 };
 
 type Icon = { type: string; body: string };
 const icon = (key: string): Icon => ({
-  type: "image/svg+xml",
+  type: key === "favicon" ? "image/png" : "image/svg+xml",
   body: ICONS[key],
 });
 
@@ -163,8 +165,11 @@ async function updateIcon(
       ? { key }
       : {
           key,
-          data: Buffer.from(ICONS[key]).toString("base64"),
-          mimeType: "image/svg+xml",
+          data:
+            key === "favicon"
+              ? ICONS[key]
+              : Buffer.from(ICONS[key]).toString("base64"),
+          mimeType: icon(key).type,
         },
   });
   expect(remove ? [200, 404] : [200]).toContain(response.status());
@@ -177,18 +182,10 @@ async function uploadIcon(page: Page, request: APIRequestContext, key: string) {
   }
   await page.goto(`${HTTPS_URL}/settings/branding`);
   const updated = page.waitForResponse(xrpc("updateBlob"));
-  const chooser = page.waitForEvent("filechooser");
-  await page
-    .getByText("Default favicon", { exact: true })
-    .locator("..")
-    .getByRole("button", { name: "Upload", exact: true })
-    .click();
-  await (
-    await chooser
-  ).setFiles({
-    name: `${key}.svg`,
-    mimeType: "image/svg+xml",
-    buffer: Buffer.from(ICONS[key]),
+  await page.getByLabel("Favicon", { exact: true }).setInputFiles({
+    name: `${key}.png`,
+    mimeType: "image/png",
+    buffer: Buffer.from(ICONS[key], "base64"),
   });
   expect((await updated).ok()).toBe(true);
 }
@@ -237,10 +234,12 @@ test("branding-favicons: light and dark favicons follow the color scheme", async
   );
   expect(publicStream.ok()).toBe(true);
   const html = await publicStream.text();
-  for (const body of Object.values(ICONS)) {
-    expect(html).toContain(
-      `href="data:image/svg+xml;base64,${Buffer.from(body).toString("base64")}"`,
-    );
+  for (const key of Object.keys(ICONS)) {
+    const data =
+      key === "favicon"
+        ? ICONS[key]
+        : Buffer.from(ICONS[key]).toString("base64");
+    expect(html).toContain(`href="data:${icon(key).type};base64,${data}"`);
   }
   await page.goto(`${HTTPS_URL}/${process.env.ACCOUNT_DID}`);
   await readICO(page, [128, 128, 128, 255]);
@@ -267,9 +266,7 @@ test("branding-favicons: light and dark favicons follow the color scheme", async
   await page.goto(`${HTTPS_URL}/settings/branding`);
   const deleted = page.waitForResponse(xrpc("deleteBlob"));
   await page
-    .getByText("Default favicon", { exact: true })
-    .locator("..")
-    .getByRole("button", { name: "Delete", exact: true })
+    .getByRole("button", { name: "Reset favicon", exact: true })
     .click();
   expect((await deleted).ok()).toBe(true);
   await page.goto(`${HTTPS_URL}/${process.env.ACCOUNT_DID}`);

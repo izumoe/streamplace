@@ -103,21 +103,23 @@ test.describe("embedded web frontend", () => {
 
     try {
       await page.goto(`${httpsServer}/settings/branding`);
-      const title = page.getByPlaceholder("Enter new site title");
+      const title = page.getByRole("textbox", {
+        name: "Site name",
+        exact: true,
+      });
       await title.fill("browser cutover branding");
       const saved = page.waitForResponse((response) =>
         response.url().endsWith("/xrpc/place.stream.branding.updateBlob"),
       );
-      await title
-        .locator("..")
-        .getByRole("button", { name: "Update", exact: true })
+      await page
+        .getByRole("button", { name: "Save site name", exact: true })
         .click();
       expect((await saved).ok()).toBe(true);
 
       await page.goto(`${httpsServer}/`);
       await expect(page).toHaveTitle("browser cutover branding");
     } finally {
-      // The text editor only saves nonempty values. Restore the exact baseline through the real admin API.
+      // Restore the exact baseline through the real admin API.
       const pds = process.env.PDS_HTTP_URL!;
       const session = await request.post(
         `${pds}/xrpc/com.atproto.server.createSession`,
