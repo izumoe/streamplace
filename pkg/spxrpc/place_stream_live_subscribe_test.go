@@ -89,6 +89,18 @@ func TestSubscribeSegmentsSelectsCompatibleSource(t *testing.T) {
 				require.True(t, ok, "the remaining AVC follows its source through the existing rendition path")
 				require.Equal(t, tracks["video65538"], addendum)
 			}
+
+			b.PublishSegment(ctx, streamer, "source", &bus.Seg{Muxl: tracks["audio3"], Published: true, AudioOnly: true})
+			b.PublishSegment(ctx, streamer, "source", &bus.Seg{Muxl: source, Published: true})
+			_, next, err := conn.ReadMessage()
+			require.NoError(t, err)
+			if tc.sourceHeader == "full" {
+				tail, ok := media.UnframeRenditions(next)
+				require.True(t, ok)
+				require.Equal(t, tracks["audio3"], tail, "full peers retain audio continuations")
+			} else {
+				require.Equal(t, compatible, next, "legacy peers omit node audio continuations and keep receiving sources")
+			}
 			require.NoError(t, conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), time.Now().Add(time.Second)))
 			select {
 			case err := <-finished:

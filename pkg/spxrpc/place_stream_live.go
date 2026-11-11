@@ -381,6 +381,9 @@ func (s *Server) handlePlaceStreamLiveSubscribeSegments(c echo.Context) error {
 				data := file.Muxl
 				var addendum []byte
 				if file.AudioOnly {
+					if !fullSource {
+						continue // legacy peers complete audio with their own signer
+					}
 					data = media.FrameRenditions(data)
 				} else if !fullSource {
 					var err error

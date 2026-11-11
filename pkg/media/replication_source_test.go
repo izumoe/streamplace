@@ -3,6 +3,7 @@ package media
 import (
 	"bytes"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"testing"
@@ -79,8 +80,8 @@ func TestH264ReplicationSourcePreservesSignedTracksAndAudioTail(t *testing.T) {
 			require.NoError(t, err)
 			cat, actual := catalogAndTracks(selectedEvents)
 			require.Len(t, cat.Video.Renditions, 1)
-			require.Len(t, cat.Audio.Renditions, 2, "keep original AAC parents and already completed Opus")
-			require.Len(t, actual, 3)
+			require.Len(t, cat.Audio.Renditions, 1, "legacy peers complete audio with their own trusted signer")
+			require.Len(t, actual, 2)
 			for _, video := range cat.Video.Renditions {
 				require.Equal(t, uint32(2), video.TrackID())
 				require.Equal(t, uint32(240), video.CodedWidth)
@@ -104,21 +105,25 @@ func TestH264ReplicationSourcePreservesSignedTracksAndAudioTail(t *testing.T) {
 			require.Equal(t, selected, single)
 			require.Empty(t, extraVideo, "a single-video source does not create a duplicate rendition")
 
-			mm := NewOffline(&config.CLI{BroadcasterHost: "node.test"})
 			did := signer.Streamer()
-			mm.bufferSegment(did, valid.Meta.StartTime.Time(), public, false, selected, 0, *valid.Manifest.Label)
+			legacy := NewOffline(&config.CLI{BroadcasterHost: "node.test"})
+			legacy.bufferSegment(did, valid.Meta.StartTime.Time(), public, false, selected, 0, *valid.Manifest.Label)
+			require.ErrorIs(t, legacy.ReceiveAudioAddendum(ctx, did, tail), ErrAudioSourceMissing, "legacy projection cannot admit a continuation for the omitted codec")
+
+			mm := NewOffline(&config.CLI{BroadcasterHost: "node.test"})
+			mm.bufferSegment(did, original.Meta.StartTime.Time(), public, false, completed, 0, *original.Manifest.Label)
 			notifications := mm.NewSegment()
-			require.NoError(t, mm.ReceiveAudioAddendum(ctx, did, tail), "the original audio ingredients bind even though AV1 is omitted")
+			require.NoError(t, mm.ReceiveAudioAddendum(ctx, did, tail), "full source peers retain the completed codec's EOS tail")
 			select {
 			case notification := <-notifications:
 				require.True(t, notification.AudioOnly)
-				require.Equal(t, *valid.Manifest.Label, notification.Segment.ID)
+				require.Equal(t, *original.Manifest.Label, notification.Segment.ID)
 				require.Equal(t, public, notification.Metadata.Published)
 				require.Equal(t, tail, notification.Muxl)
 			case <-time.After(time.Second):
 				t.Fatal("the projected source's EOS tail was not queued")
 			}
-			require.Equal(t, append(bytes.Clone(selected), tail...), mm.BufferedSegments(did)[0].Data)
+			require.Equal(t, append(bytes.Clone(completed), tail...), mm.BufferedSegments(did)[0].Data)
 			require.Error(t, mm.ReceiveAudioAddendum(ctx, did, tail), "tail replay must not duplicate encoded samples")
 		})
 	}
@@ -131,4 +136,43 @@ func TestH264ReplicationSourceRejectsAV1Only(t *testing.T) {
 	require.Error(t, err)
 	require.Empty(t, selected, "an incompatible source must not be advertised as H264")
 	require.Empty(t, addendum)
+}
+
+func TestH264ReplicationSourceKeepsOriginalAudio(t *testing.T) {
+	for _, tc := range []struct{ fixture, target string }{
+		{"ertmp-red-h264.mp4", "opus"},
+		{"h264-opus-frag.mp4", "aac"},
+	} {
+		t.Run(tc.target, func(t *testing.T) {
+			ctx := t.Context()
+			source := allSignedBareSegments(t, ctx, audioSignerForTest(t), getFixture(tc.fixture))[0]
+			expected, err := MuxlTracks(ctx, source)
+			require.NoError(t, err)
+			cert, key := nodeSignerForTest(t)
+			encoder := NewOffline(&config.CLI{BroadcasterHost: "node.test"})
+			var completed []byte
+			tr := encoder.newStreamTranscoder(ctx, tc.target, cert, key, func(_ any, data []byte, tail bool) {
+				if !tail {
+					completed = append(completed, data...)
+				}
+			})
+			require.NoError(t, tr.Feed(source, nil))
+			require.NoError(t, tr.Close())
+			full, err := MuxlTracks(ctx, completed)
+			require.NoError(t, err)
+			require.Len(t, full, len(expected)+1, "local playback retains codec completion")
+			selected, extra, err := H264ReplicationSource(ctx, completed)
+			require.NoError(t, err)
+			require.Empty(t, extra)
+			got, err := MuxlTracks(ctx, selected)
+			require.NoError(t, err)
+			require.True(t, maps.EqualFunc(expected, got, bytes.Equal), "legacy peers receive original signed video and audio, without node-signed additions")
+			_, err = ValidateMP4MediaC2PA(ctx, selected)
+			require.NoError(t, err)
+			named, renditions, err := H264ReplicationTracks(ctx, completed, 0)
+			require.NoError(t, err)
+			require.True(t, maps.EqualFunc(expected, named, bytes.Equal), "MoQ and WebSocket select the same signed assets")
+			require.Empty(t, renditions)
+		})
+	}
 }

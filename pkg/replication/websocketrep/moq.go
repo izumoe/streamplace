@@ -240,6 +240,9 @@ func (r *WebsocketReplicator) serveTracks(ctx context.Context, streamer, sourceC
 			return
 		case seg := <-source.C:
 			if seg.AudioOnly {
+				if h264Only {
+					continue // legacy peers complete audio with their own signer
+				}
 				if !seg.Published || sequence == 0 || seg.Filepath == "" || seg.Filepath != sourceID {
 					continue
 				}

@@ -256,7 +256,7 @@ func MuxlTracks(ctx context.Context, seg []byte) (map[string][]byte, error) {
 }
 
 // H264ReplicationSource selects the largest H264 video for single-video peers,
-// retaining all signed audio and the selected video unchanged. The remaining
+// retaining original audio and the selected video unchanged. The remaining
 // H264 assets travel separately through the peer's rendition-addendum path.
 func H264ReplicationSource(ctx context.Context, seg []byte) (source, addendum []byte, err error) {
 	_, tracks, renditions, err := readMuxlTracks(ctx, seg, 0, "avc1")
@@ -291,6 +291,22 @@ func readMuxlTracks(ctx context.Context, seg []byte, videoID uint32, videoCodec 
 		video, ok := primaryVideoTrack(cat, videoID, videoCodec)
 		if !ok {
 			return nil, nil, nil, fmt.Errorf("source has no H264 replication track %d", videoID)
+		}
+		// Codec completion allocates after the source track IDs. Legacy peers
+		// must encode their own additional codec: they may not trust our node's
+		// audio signer. Keep the single original audio, including Opus inputs.
+		if cat.Audio != nil {
+			var original uint32
+			for _, audio := range cat.Audio.Renditions {
+				if original == 0 || audio.TrackID() < original {
+					original = audio.TrackID()
+				}
+			}
+			for _, audio := range cat.Audio.Renditions {
+				if audio.TrackID() != original {
+					delete(tracks, strconv.FormatUint(uint64(audio.TrackID()), 10))
+				}
+			}
 		}
 		renditions = map[string][]byte{}
 		for _, other := range cat.Video.Renditions {

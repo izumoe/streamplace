@@ -1,6 +1,7 @@
 package websocketrep
 
 import (
+	"bytes"
 	"context"
 	"testing"
 	"time"
@@ -142,4 +143,59 @@ func TestMoqDeliversAudioContinuationBeforeVideoEnds(t *testing.T) {
 	}
 	stop()
 	require.Error(t, <-replayDone)
+}
+
+func TestMoqLegacyOmitsAudioContinuation(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	source := signedSegments(t, ctx)[0]
+	parts, err := media.MuxlTracks(ctx, source)
+	require.NoError(t, err)
+	b := bus.NewBus()
+	const streamer = "did:test:legacy-audio"
+	publish := func(data []byte, tail bool) {
+		b.PublishSegment(ctx, streamer, moqSourceChannel, &bus.Seg{Filepath: "source", Muxl: data, Published: true, AudioOnly: tail})
+	}
+	publish(source, false)
+	producer, err := official.NewBroadcastProducer()
+	require.NoError(t, err)
+	defer producer.Close()
+	ready := make(chan struct{})
+	done := make(chan struct{})
+	r := &WebsocketReplicator{bus: b}
+	go func() {
+		defer close(done)
+		r.serveTracks(ctx, streamer, moqSourceChannel, producer, true, func() error { close(ready); return nil })
+	}()
+	defer func() { cancel(); <-done }()
+	select {
+	case <-ready:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	peer, err := producer.Consume()
+	require.NoError(t, err)
+	received := make(chan []byte, 2)
+	consumed := make(chan error, 1)
+	go func() {
+		consumed <- consumeSource(ctx, peer, []string{"video1", "audio2"}, func(data []byte) error { received <- data; return nil })
+	}()
+	defer func() { cancel(); require.ErrorIs(t, <-consumed, context.Canceled) }()
+	receive := func() {
+		t.Helper()
+		select {
+		case got := <-received:
+			require.True(t, bytes.Equal(source, got), "original signed source is unchanged")
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		}
+	}
+	receive()
+	publish(parts["audio2"], true)
+	publish(source, false)
+	receive()
+	catalog, err := peer.Catalog(ctx)
+	require.NoError(t, err)
+	require.Len(t, catalog.Audio, 1, "legacy peers must not receive a node-signed continuation track")
+	require.Contains(t, catalog.Audio, "audio2", "an original Opus source remains available")
 }
