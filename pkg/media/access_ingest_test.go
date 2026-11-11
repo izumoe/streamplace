@@ -16,6 +16,7 @@ import (
 	"stream.place/streamplace/pkg/bus"
 	"stream.place/streamplace/pkg/config"
 	"stream.place/streamplace/pkg/crypto/signers"
+	"stream.place/streamplace/pkg/muxl"
 	"stream.place/streamplace/pkg/statedb"
 )
 
@@ -292,14 +293,14 @@ func TestRemoteCompletionDoesNotInheritRevokedPublisher(t *testing.T) {
 	require.NoError(t, err)
 	local, _, err := mm.validateSource(ctx, segments[0], true, did)
 	require.NoError(t, err)
-	require.NoError(t, mm.feedStreamTranscoder(ctx, local, segments[0], "aac", signer.Cert, key))
+	require.NoError(t, mm.feedStreamTranscoder(ctx, local, segments[0], "aac", muxl.SignerInput{CertPEM: signer.Cert, KeyPEM: key}))
 	transcoder := mm.transcoders[did]
 	t.Cleanup(func() { require.NoError(t, transcoder.Close()) })
 	revokeAndReapprovePublisher(t, controller, did)
 	for _, segment := range segments[1:] {
 		remote, _, err := mm.validateSource(t.Context(), segment, false, did)
 		require.NoError(t, err)
-		require.NoError(t, mm.feedStreamTranscoder(t.Context(), remote, segment, "aac", signer.Cert, key))
+		require.NoError(t, mm.feedStreamTranscoder(t.Context(), remote, segment, "aac", muxl.SignerInput{CertPEM: signer.Cert, KeyPEM: key}))
 	}
 	require.Same(t, transcoder, mm.transcoders[did], "remote carriage can reuse the same codec pipeline")
 	require.NoError(t, transcoder.Close())

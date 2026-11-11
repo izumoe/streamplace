@@ -12,6 +12,7 @@ import (
 	"github.com/bluenviron/mediacommon/v2/pkg/formats/fmp4/seekablebuffer"
 	"github.com/go-gst/go-gst/pkg/gst"
 	app "github.com/go-gst/go-gst/pkg/gstapp"
+	"stream.place/streamplace/pkg/c2patypes"
 	"stream.place/streamplace/pkg/muxl"
 )
 
@@ -33,9 +34,10 @@ type audioOutput struct {
 }
 
 type audioIngredient struct {
-	data   []byte
-	end    uint64
-	policy *SegmentMetadata
+	data     []byte
+	end      uint64
+	policy   *SegmentMetadata
+	manifest *c2patypes.Manifest
 }
 
 // installAudioOutput observes encoded packets directly; the muxer supplies
@@ -175,7 +177,7 @@ func audioTicks(ns uint64, scale uint32) uint64 {
 
 // signAudioChunk uses existing MP4 and muxl writers, retaining native codec
 // headers and packet order. Each canonical asset receives its own signature.
-func (mm *MediaManager) signAudioChunk(ctx context.Context, header []byte, packets []audioPacket, ingredients []audioIngredient, sourceEvents []*muxl.MuxlEvent, cert, key, manifest []byte) ([]byte, error) {
+func (mm *MediaManager) signAudioChunk(ctx context.Context, header []byte, packets []audioPacket, ingredients []audioIngredient, sourceEvents []*muxl.MuxlEvent, signer muxl.SignerInput, manifest []byte) ([]byte, error) {
 	boxes, err := mp4.ExtractBoxWithPayload(bytes.NewReader(header), nil, mp4.BoxPath{mp4.BoxTypeMoov(), mp4.BoxTypeTrak(), mp4.BoxTypeMdia(), mp4.BoxTypeMdhd()})
 	if err != nil {
 		return nil, fmt.Errorf("read encoded audio clock: %w", err)
@@ -243,7 +245,7 @@ func (mm *MediaManager) signAudioChunk(ctx context.Context, header []byte, packe
 		if len(output) == 0 {
 			continue
 		}
-		piece, err := muxl.RunMuxlSignTranscode(ctx, muxl.TranscodeInput{Output: output, Source: source, CertPEM: cert, KeyPEM: key, Manifest: manifest})
+		piece, err := muxl.RunMuxlSignTranscode(ctx, muxl.TranscodeInput{Output: output, Source: source, CertPEM: signer.CertPEM, KeyPEM: signer.KeyPEM, Sign: signer.Sign, Manifest: manifest})
 		if err != nil {
 			return nil, err
 		}

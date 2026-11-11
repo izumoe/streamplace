@@ -24,6 +24,10 @@ import (
 // The fixture re-encoded at a smaller size and fragmented with one keyframe
 // per second, so minting must sign each resulting GoP.
 func renditionMP4(t *testing.T, w, h int) []byte {
+	return renditionMP4AtRate(t, w, h, 30)
+}
+
+func renditionMP4AtRate(t *testing.T, w, h, fps int) []byte {
 	t.Helper()
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		t.Skip("ffmpeg not on PATH")
@@ -33,7 +37,7 @@ func renditionMP4(t *testing.T, w, h int) []byte {
 	// keyframed mid-segment, so minting has to sign per GoP.
 	cmd := exec.Command("ffmpeg", "-v", "error", "-y", "-i", getFixture("h264-opus-frag.mp4"),
 		"-t", "2", "-an", "-vf", fmt.Sprintf("scale=%d:%d", w, h), "-c:v", "libx264", "-preset", "ultrafast",
-		"-g", "30", "-keyint_min", "30", "-sc_threshold", "0", "-pix_fmt", "yuv420p",
+		"-r", fmt.Sprint(fps), "-g", fmt.Sprint(fps), "-keyint_min", fmt.Sprint(fps), "-sc_threshold", "0", "-pix_fmt", "yuv420p",
 		"-movflags", "+frag_keyframe+empty_moov", "-f", "mp4", out)
 	require.NoError(t, cmd.Run(), "ffmpeg")
 	b, err := os.ReadFile(out)

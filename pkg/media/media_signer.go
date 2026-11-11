@@ -29,6 +29,7 @@ import (
 var signerTracer = otel.Tracer("signer")
 
 type MediaSigner interface {
+	SigningInput() (muxl.SignerInput, error)
 	// SignSegmentStream streams an fMP4 input through muxl-sign's per-segment
 	// signer, emitting one signed-segment event per GoP on eventCh. The
 	// segment bytes routed in each event are bare canonical .m4s
@@ -211,25 +212,35 @@ func (ms *MediaSignerLocal) SignSegmentStream(ctx context.Context, input io.Read
 	fetchManifest := func() ([]byte, error) {
 		return ms.buildManifest(ctx, time.Now().UnixMilli())
 	}
-	in := muxl.SignerInput{
-		TrackRemap:        trackRemap,
-		CertPEM:           ms.Cert,
-		TrackManifestFn:   fetchManifest,
-		WrapperManifestFn: fetchManifest,
+	in, err := ms.SigningInput()
+	if err != nil {
+		return err
 	}
+	in.TrackRemap = trackRemap
+	in.TrackManifestFn = fetchManifest
+	in.WrapperManifestFn = fetchManifest
+	backend := "host-callback"
+	if len(in.KeyPEM) > 0 {
+		backend = "pem"
+	}
+	span.SetAttributes(attribute.String("backend", backend))
+	return muxl.RunMuxlSignSegment(ctx, input, in, nil, nil, eventCh)
+}
+
+// SigningInput uses the stream's existing authority for source assets and
+// derived audio. Callback signers keep their private keys outside the WASM.
+func (ms *MediaSignerLocal) SigningInput() (muxl.SignerInput, error) {
+	in := muxl.SignerInput{CertPEM: ms.Cert}
 	if _, ok := ms.Signer.(*ecdsa.PrivateKey); ok {
 		keyPEM, err := signers.MarshalES256KPrivateKeyPEM(ms.Signer)
 		if err != nil {
-			return fmt.Errorf("failed to marshal signing key: %w", err)
+			return in, fmt.Errorf("failed to marshal signing key: %w", err)
 		}
 		in.KeyPEM = keyPEM
-		span.SetAttributes(attribute.String("backend", "pem"))
 	} else {
 		in.Sign = muxl.SignerToCallback(ms.Signer, 32)
-		span.SetAttributes(attribute.String("backend", "host-callback"))
 	}
-
-	return muxl.RunMuxlSignSegment(ctx, input, in, nil, nil, eventCh)
+	return in, nil
 }
 
 // don't call externally! this is used as a callback for the rust library

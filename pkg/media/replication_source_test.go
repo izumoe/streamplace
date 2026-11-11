@@ -47,10 +47,11 @@ func TestH264ReplicationSourcePreservesSignedTracksAndAudioTail(t *testing.T) {
 			// One completion batch can contain multiple original signed GoPs.
 			// Every input track must retain its own original C2PA asset.
 			source := bytes.Join(allSignedBareSegments(t, ctx, signer, filename), nil)
-			cert, key := nodeSignerForTest(t)
+			input, err := signer.SigningInput()
+			require.NoError(t, err)
 			encoder := NewOffline(&config.CLI{BroadcasterHost: "node.test"})
 			var completed, tail []byte
-			tr := encoder.newStreamTranscoder(ctx, "opus", cert, key, func(_ any, data []byte, audioOnly bool) {
+			tr := encoder.newStreamTranscoder(ctx, "opus", input.CertPEM, input.KeyPEM, func(_ any, data []byte, audioOnly bool) {
 				if audioOnly {
 					tail = append(tail, data...)
 				} else {
@@ -80,8 +81,8 @@ func TestH264ReplicationSourcePreservesSignedTracksAndAudioTail(t *testing.T) {
 			require.NoError(t, err)
 			cat, actual := catalogAndTracks(selectedEvents)
 			require.Len(t, cat.Video.Renditions, 1)
-			require.Len(t, cat.Audio.Renditions, 1, "legacy peers complete audio with their own trusted signer")
-			require.Len(t, actual, 2)
+			require.Len(t, cat.Audio.Renditions, 2, "legacy peers need completed Opus before video addenda arrive")
+			require.Len(t, actual, 3)
 			for _, video := range cat.Video.Renditions {
 				require.Equal(t, uint32(2), video.TrackID())
 				require.Equal(t, uint32(240), video.CodedWidth)
@@ -108,7 +109,7 @@ func TestH264ReplicationSourcePreservesSignedTracksAndAudioTail(t *testing.T) {
 			did := signer.Streamer()
 			legacy := NewOffline(&config.CLI{BroadcasterHost: "node.test"})
 			legacy.bufferSegment(did, valid.Meta.StartTime.Time(), public, false, selected, 0, *valid.Manifest.Label)
-			require.ErrorIs(t, legacy.ReceiveAudioAddendum(ctx, did, tail), ErrAudioSourceMissing, "legacy projection cannot admit a continuation for the omitted codec")
+			require.NoError(t, legacy.ReceiveAudioAddendum(ctx, did, tail), "selected Opus retains its valid continuation")
 
 			mm := NewOffline(&config.CLI{BroadcasterHost: "node.test"})
 			mm.bufferSegment(did, original.Meta.StartTime.Time(), public, false, completed, 0, *original.Manifest.Label)
@@ -139,13 +140,18 @@ func TestH264ReplicationSourceRejectsAV1Only(t *testing.T) {
 }
 
 func TestH264ReplicationSourceKeepsOriginalAudio(t *testing.T) {
-	for _, tc := range []struct{ fixture, target string }{
-		{"ertmp-red-h264.mp4", "opus"},
-		{"h264-opus-frag.mp4", "aac"},
+	for _, tc := range []struct {
+		fixture, target string
+		streamSigned    bool
+	}{
+		{"ertmp-red-h264.mp4", "opus", false},
+		{"ertmp-red-h264.mp4", "opus", true},
+		{"h264-opus-frag.mp4", "aac", false},
 	} {
-		t.Run(tc.target, func(t *testing.T) {
+		t.Run(fmt.Sprintf("%s/streamSigned=%t", tc.target, tc.streamSigned), func(t *testing.T) {
 			ctx := t.Context()
-			source := allSignedBareSegments(t, ctx, audioSignerForTest(t), getFixture(tc.fixture))[0]
+			signer := audioSignerForTest(t)
+			source := allSignedBareSegments(t, ctx, signer, getFixture(tc.fixture))[0]
 			expected, err := MuxlTracks(ctx, source)
 			require.NoError(t, err)
 			cert, key := nodeSignerForTest(t)
@@ -156,6 +162,10 @@ func TestH264ReplicationSourceKeepsOriginalAudio(t *testing.T) {
 					completed = append(completed, data...)
 				}
 			})
+			if tc.streamSigned {
+				tr.signer, err = signer.SigningInput()
+				require.NoError(t, err)
+			}
 			require.NoError(t, tr.Feed(source, nil))
 			require.NoError(t, tr.Close())
 			full, err := MuxlTracks(ctx, completed)
@@ -166,7 +176,15 @@ func TestH264ReplicationSourceKeepsOriginalAudio(t *testing.T) {
 			require.Empty(t, extra)
 			got, err := MuxlTracks(ctx, selected)
 			require.NoError(t, err)
-			require.True(t, maps.EqualFunc(expected, got, bytes.Equal), "legacy peers receive original signed video and audio, without node-signed additions")
+			if tc.target == "opus" && tc.streamSigned {
+				require.Equal(t, len(expected)+1, len(got), "legacy peers receive completed Opus without encoding it again")
+				for name, track := range full {
+					if len(expected[name]) == 0 {
+						expected[name] = track
+					}
+				}
+			}
+			require.True(t, maps.EqualFunc(expected, got, bytes.Equal), "legacy peers retain original signed tracks and completed Opus")
 			_, err = ValidateMP4MediaC2PA(ctx, selected)
 			require.NoError(t, err)
 			named, renditions, err := H264ReplicationTracks(ctx, completed, 0)

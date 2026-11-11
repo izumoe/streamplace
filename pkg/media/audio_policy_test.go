@@ -59,6 +59,11 @@ func TestAudioCompletionPreservesContributorPolicy(t *testing.T) {
 						completed = append(completed, data)
 					}
 				})
+				if local {
+					signer, err := ms.SigningInput()
+					require.NoError(t, err)
+					tr.signer = signer
+				}
 				t.Cleanup(func() { require.NoError(t, tr.Close()) })
 				for i, segment := range source {
 					var token any

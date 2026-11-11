@@ -66,6 +66,9 @@ func muxlSignSegmentElem(ctx context.Context, cli *config.CLI, signStream SignSe
 		if videoPad == nil {
 			return nil, nil, fmt.Errorf("failed to get video pad %d", i)
 		}
+		// Older replication peers pair raw decode ticks across renditions.
+		// Set one video clock before signing, including mixed frame rates.
+		videoPad.SetObjectProperty("trak-timescale", uint32(90000))
 		videoGhost := gst.NewGhostPad(fmt.Sprintf("video_%d", i), videoPad)
 		if videoGhost == nil || !bin.AddPad(videoGhost) {
 			return nil, nil, fmt.Errorf("failed to add video ghost pad %d", i)

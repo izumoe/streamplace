@@ -55,6 +55,11 @@ func readRTMPFixture(t testing.TB, name string) rtmpFixture {
 	t.Helper()
 	fixture, err := os.ReadFile(getFixture(name))
 	require.NoError(t, err)
+	return rtmpFixtureFromMP4(t, fixture)
+}
+
+func rtmpFixtureFromMP4(t testing.TB, fixture []byte) rtmpFixture {
+	t.Helper()
 	events, err := segmentMuxlEvents(t.Context(), fixture)
 	require.NoError(t, err)
 	cat, _ := catalogAndTracks(events)
@@ -836,4 +841,68 @@ func TestRTMPTrackRemapKeepsLargestAVCAsSource(t *testing.T) {
 	session.VideoTracks[0].Track = &gortmplib.Track{Codec: &codecs.H264{SPS: []byte{1}}}
 	_, err = rtmpReplicationTrackRemap(session)
 	require.Error(t, err, "malformed H264 configuration is rejected before signing")
+}
+
+func TestRTMPCompletionUsesStreamAuthorityForLegacyPeers(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	audio := readRTMPFixture(t, "ertmp-red-h264.mp4")
+	high := rtmpFixtureFromMP4(t, renditionMP4AtRate(t, 320, 240, 60))
+	low := rtmpFixtureFromMP4(t, renditionMP4AtRate(t, 160, 120, 30))
+	session := rtmpSessionForFixtures(t, audio, high, low)
+	session.MediaSigner = audioSignerForTest(t)
+	close(session.EventChan)
+	mm := NewOffline(&config.CLI{BroadcasterHost: "node.test", AllowedStreams: []string{session.MediaSigner.Streamer()}})
+	mm.bus = bus.NewBus()
+	mm.transcoders = map[string]*streamTranscoder{}
+	cert, key := nodeSignerForTest(t)
+	mm.nodeSignerOnce.Do(func() { mm.nodeCert, mm.nodeKeyPEM = cert, key })
+	require.NoError(t, mm.RTMPIngest(ctx, session))
+	segments := mm.BufferedSegments(session.MediaSigner.Streamer())
+	require.NotEmpty(t, segments)
+	peer := NewOffline(&config.CLI{BroadcasterHost: "peer.test", Syndicate: []string{session.MediaSigner.Streamer()}})
+	peer.bus = bus.NewBus()
+	lower := peer.bus.SubscribeSegment(ctx, session.MediaSigner.Streamer(), RenditionName(160, 120))
+	defer peer.bus.UnsubscribeSegment(ctx, session.MediaSigner.Streamer(), RenditionName(160, 120), lower)
+	for _, segment := range segments {
+		source, extra, err := H264ReplicationSource(ctx, segment.Data)
+		require.NoError(t, err)
+		require.NotEmpty(t, extra)
+		valid, err := ValidateMP4MediaC2PA(ctx, source)
+		require.NoError(t, err)
+		tracks, err := MuxlTracks(ctx, source)
+		require.NoError(t, err)
+		require.Len(t, tracks, 3, "legacy source must already contain both AAC and Opus")
+		for _, signingKey := range valid.trackSigningKeys {
+			require.Equal(t, session.MediaSigner.DID(), signingKey, "legacy peers require no additional transcoder trust")
+		}
+		_, needsCompletion := peer.audioCompletionTarget(ctx, source)
+		require.False(t, needsCompletion, "the receiver must not defer source publication for another audio encode")
+		require.NoError(t, peer.ValidateReplicatedMP4(ctx, bytes.NewReader(source), session.MediaSigner.Streamer()))
+		sourceEvents, err := unwrapMuxlEvents(ctx, source)
+		require.NoError(t, err)
+		sourceCatalog, sourceTracks := catalogAndTracks(sourceEvents)
+		originalVideo, ok := primaryVideoTrack(sourceCatalog, 0, "avc1")
+		require.True(t, ok)
+		sourceTime, ok := firstTfdt(sourceTracks[fmt.Sprint(originalVideo.TrackID())])
+		require.True(t, ok)
+		extraEvents, err := unwrapMuxlEvents(ctx, extra)
+		require.NoError(t, err)
+		extraCatalog, extraTracks := catalogAndTracks(extraEvents)
+		for _, video := range extraCatalog.Video.Renditions {
+			tick, ok := firstTfdt(extraTracks[fmt.Sprint(video.TrackID())])
+			require.True(t, ok)
+			require.Equal(t, originalVideo.Timescale(), video.Timescale(), "older receivers pair raw ticks across different frame rates")
+			require.Equal(t, sourceTime, tick, "aligned rendition boundaries retain identical raw decode clocks")
+		}
+		require.NoError(t, peer.ReceiveRenditions(ctx, session.MediaSigner.Streamer(), extra))
+		select {
+		case frame := <-lower.C:
+			require.True(t, frame.Published)
+			require.NotEmpty(t, frame.PacketizedData.Video, "the lower WebRTC rendition actually publishes video")
+			require.NotEmpty(t, frame.PacketizedData.Audio, "the lower rendition keeps Opus audio")
+		case <-ctx.Done():
+			t.Fatal("lower WebRTC rendition did not publish", ctx.Err())
+		}
+	}
 }

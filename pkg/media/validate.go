@@ -40,7 +40,7 @@ type segmentValidation struct {
 }
 
 func (mm *MediaManager) ValidateMP4(ctx context.Context, input io.Reader, local bool) error {
-	return mm.validateMP4(ctx, input, local, "")
+	return mm.validateMP4(ctx, input, local, "", nil)
 }
 
 // ValidateReplicatedMP4 validates a segment a peer sent as streamer's,
@@ -50,10 +50,10 @@ func (mm *MediaManager) ValidateReplicatedMP4(ctx context.Context, input io.Read
 	if streamer == "" {
 		return fmt.Errorf("replicated segment has no named streamer")
 	}
-	return mm.validateMP4(ctx, input, false, streamer)
+	return mm.validateMP4(ctx, input, false, streamer, nil)
 }
 
-func (mm *MediaManager) validateMP4(ctx context.Context, input io.Reader, local bool, streamer string) error {
+func (mm *MediaManager) validateMP4(ctx context.Context, input io.Reader, local bool, streamer string, audioSigner *muxl.SignerInput) error {
 	tracer := otel.Tracer("signer")
 	ctx, span := tracer.Start(ctx, "ValidateMP4")
 	defer span.End()
@@ -80,8 +80,11 @@ func (mm *MediaManager) validateMP4(ctx context.Context, input io.Reader, local 
 	// — already dual-codec, no audio, audio-only, an exotic codec, or no node
 	// signer — is distributed as-is, immediately.
 	if target, need := audioCompletionTargetFromMedia(vs.mediaData); need {
+		if audioSigner != nil && target == "opus" {
+			return mm.feedStreamTranscoder(ctx, vs, buf, target, *audioSigner)
+		}
 		if cert, keyPEM, serr := mm.transcodeSigner(); serr == nil {
-			return mm.feedStreamTranscoder(ctx, vs, buf, target, cert, keyPEM)
+			return mm.feedStreamTranscoder(ctx, vs, buf, target, muxl.SignerInput{CertPEM: cert, KeyPEM: keyPEM})
 		} else {
 			log.Warn(ctx, "node transcode signer unavailable, distributing single-codec", "error", serr)
 		}
@@ -95,6 +98,7 @@ func (mm *MediaManager) validateMP4(ctx context.Context, input io.Reader, local 
 // async — the metadata still comes from the source.
 type validatedSegment struct {
 	meta                *SegmentMetadata
+	manifest            *c2patypes.Manifest
 	mediaData           *localdb.SegmentMediaData
 	label               string
 	repoDID             string
@@ -262,6 +266,7 @@ func (mm *MediaManager) validateSource(ctx context.Context, buf []byte, local bo
 
 	return &validatedSegment{
 		meta:                meta,
+		manifest:            valid.Manifest,
 		mediaData:           valid.MediaData,
 		label:               label,
 		repoDID:             repoDID,

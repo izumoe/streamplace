@@ -3,6 +3,7 @@ package media
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strconv"
@@ -27,19 +28,24 @@ func isOpusCodec(codec string) bool { return strings.HasPrefix(codec, "opus") }
 // with: opened + transcoded actions over the source ingredient, and the
 // streamer as creator.
 func transcodeManifestFor(creator, title string) []byte {
-	return []byte(fmt.Sprintf(`{
-		"title": %q,
-		"assertions": [
-			{"label": "c2pa.actions", "data": {"actions": [
-				{"action": "c2pa.opened",     "parameters": {"org.cai.ingredientIds": [%q]}},
-				{"action": "c2pa.transcoded", "parameters": {"org.cai.ingredientIds": [%q]}}
-			]}},
-			{"label": "cawg.metadata", "data": {
-				"@context": {"dc": "http://purl.org/dc/elements/1.1/"},
-				"dc:creator": %q
-			}}
-		]
-	}`, title, muxl.TranscodeIngredientLabel, muxl.TranscodeIngredientLabel, creator))
+	// The template contains only JSON-compatible maps, slices and strings.
+	data, _ := json.Marshal(obj{
+		"title": title,
+		"assertions": []obj{
+			transcodeActions(),
+			{"label": "cawg.metadata", "data": obj{
+				"@context": obj{"dc": "http://purl.org/dc/elements/1.1/"}, "dc:creator": creator,
+			}},
+		},
+	})
+	return data
+}
+
+func transcodeActions() obj {
+	return obj{"label": "c2pa.actions", "data": obj{"actions": []obj{
+		{"action": "c2pa.opened", "parameters": obj{"org.cai.ingredientIds": []string{muxl.TranscodeIngredientLabel}}},
+		{"action": "c2pa.transcoded", "parameters": obj{"org.cai.ingredientIds": []string{muxl.TranscodeIngredientLabel}}},
+	}}}
 }
 
 // transcodeSigner returns the node's S2PA cert + PKCS#8 key PEM, built once
@@ -256,8 +262,8 @@ func MuxlTracks(ctx context.Context, seg []byte) (map[string][]byte, error) {
 }
 
 // H264ReplicationSource selects the largest H264 video for single-video peers,
-// retaining original audio and the selected video unchanged. The remaining
-// H264 assets travel separately through the peer's rendition-addendum path.
+// retaining original audio, stream-signed Opus and the selected video unchanged.
+// The remaining H264 assets travel separately through the rendition-addendum path.
 func H264ReplicationSource(ctx context.Context, seg []byte) (source, addendum []byte, err error) {
 	_, tracks, renditions, err := readMuxlTracks(ctx, seg, 0, "avc1")
 	if err != nil {
@@ -292,9 +298,9 @@ func readMuxlTracks(ctx context.Context, seg []byte, videoID uint32, videoCodec 
 		if !ok {
 			return nil, nil, nil, fmt.Errorf("source has no H264 replication track %d", videoID)
 		}
-		// Codec completion allocates after the source track IDs. Legacy peers
-		// must encode their own additional codec: they may not trust our node's
-		// audio signer. Keep the single original audio, including Opus inputs.
+		// Opus must arrive with the source: older receivers cannot defer video
+		// addenda until local audio completion. Local AAC ingest signs that
+		// derivative with the stream key. Keep original Opus inputs as well.
 		if cat.Audio != nil {
 			var original uint32
 			for _, audio := range cat.Audio.Renditions {
@@ -302,8 +308,26 @@ func readMuxlTracks(ctx context.Context, seg []byte, videoID uint32, videoCodec 
 					original = audio.TrackID()
 				}
 			}
+			var audioKeys map[uint32]string
 			for _, audio := range cat.Audio.Renditions {
-				if audio.TrackID() != original {
+				if audio.TrackID() != original && isOpusCodec(audio.Codec) {
+					// Forwarded AAC can have node-signed completion. Do not send
+					// it to peers that only trust the original stream authority.
+					// Verify only audio, without another pass over the video.
+					var assets []byte
+					for _, track := range cat.Audio.Renditions {
+						assets = append(assets, tracks[strconv.FormatUint(uint64(track.TrackID()), 10)]...)
+					}
+					valid, err := ValidateMP4MediaC2PA(ctx, assets)
+					if err != nil {
+						return nil, nil, nil, fmt.Errorf("replication audio authority: %w", err)
+					}
+					audioKeys = valid.trackSigningKeys
+					break
+				}
+			}
+			for _, audio := range cat.Audio.Renditions {
+				if audio.TrackID() != original && (!isOpusCodec(audio.Codec) || audioKeys[original] == "" || audioKeys[audio.TrackID()] != audioKeys[original]) {
 					delete(tracks, strconv.FormatUint(uint64(audio.TrackID()), 10))
 				}
 			}

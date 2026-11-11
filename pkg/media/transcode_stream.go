@@ -47,8 +47,7 @@ type streamTranscoder struct {
 	// session rebuilds it (registry-owned: set under transcodersMu before the
 	// transcoder is published to the map, read only by needsReset under the same
 	// lock, so it needs no separate synchronization).
-	cert       []byte
-	keyPEM     []byte
+	signer     muxl.SignerInput
 	onComplete func(token any, completed []byte, audioOnly bool)
 
 	ctx    context.Context
@@ -94,7 +93,7 @@ func ingestSessionFromContext(ctx context.Context) uint64 {
 // feedStreamTranscoder routes one source segment into the stream's continuous
 // transcoder, creating it on first use. The completed dual-codec segment is
 // distributed asynchronously via distributeSegment when its marker completes.
-func (mm *MediaManager) feedStreamTranscoder(ctx context.Context, vs *validatedSegment, src []byte, target string, cert, keyPEM []byte) error {
+func (mm *MediaManager) feedStreamTranscoder(ctx context.Context, vs *validatedSegment, src []byte, target string, signer muxl.SignerInput) error {
 	did := vs.repoDID
 	sessionID := ingestSessionFromContext(ctx)
 	mm.transcodersMu.Lock()
@@ -103,7 +102,7 @@ func (mm *MediaManager) feedStreamTranscoder(ctx context.Context, vs *validatedS
 		mm.transcodersMu.Unlock()
 		return fmt.Errorf("audio source belongs to an older ingest session")
 	}
-	if t != nil && t.needsReset(target, sessionID) {
+	if t != nil && (t.needsReset(target, sessionID) || !bytes.Equal(t.signer.CertPEM, signer.CertPEM)) {
 		// The live encoder is wrong for the incoming segment:
 		//   - a newer ingest session took over — the streamer reconnected (a rapid
 		//     stop/start), which restarts the media timeline. Feeding that into the
@@ -111,7 +110,9 @@ func (mm *MediaManager) feedStreamTranscoder(ctx context.Context, vs *validatedS
 		//     that makes it stop emitting audio and wedges the stream;
 		//   - the source codec swapped (the needed target flipped, e.g. a streamer
 		//     dropped RTMP/AAC and picked up WHIP/Opus), so the pipeline expects the
-		//     previous codec; or
+		//     previous codec;
+		//   - the completion signer changed, so a remote source cannot borrow a
+		//     local stream key; or
 		//   - the pipeline failed.
 		// Drain the old encoder before feeding the replacement session.
 		old := t
@@ -129,7 +130,7 @@ func (mm *MediaManager) feedStreamTranscoder(ctx context.Context, vs *validatedS
 			delete(mm.transcoders, did)
 		}
 		mm.transcodersMu.Unlock()
-		return mm.feedStreamTranscoder(ctx, vs, src, target, cert, keyPEM)
+		return mm.feedStreamTranscoder(ctx, vs, src, target, signer)
 	}
 	if t == nil {
 		// The transcoder outlives any single request; carry log values but not
@@ -138,7 +139,7 @@ func (mm *MediaManager) feedStreamTranscoder(ctx context.Context, vs *validatedS
 		// distributeSegment restores a local segment's captured generation;
 		// remote segments must not inherit a previous publisher's admission.
 		streamCtx := context.WithValue(context.WithoutCancel(ctx), publisherAdmissionKey{}, nil)
-		t = mm.newStreamTranscoder(streamCtx, target, cert, keyPEM, func(token any, completed []byte, audioOnly bool) {
+		t = mm.newStreamTranscoder(streamCtx, target, signer.CertPEM, signer.KeyPEM, func(token any, completed []byte, audioOnly bool) {
 			v := token.(*validatedSegment)
 			if audioOnly {
 				if err := mm.publishAudioAddendum(context.WithoutCancel(streamCtx), v, completed); err != nil {
@@ -150,6 +151,9 @@ func (mm *MediaManager) feedStreamTranscoder(ctx context.Context, vs *validatedS
 				log.Error(streamCtx, "distribute completed segment failed", "streamer", v.repoDID, "error", err)
 			}
 		})
+		// Set before Feed publishes any work to the encoder goroutine. Remote
+		// completion must never reuse a local stream's signing authority.
+		t.signer = signer
 		t.sessionID = sessionID
 		t.reaper = time.AfterFunc(streamTranscoderIdle, func() { mm.reapStreamTranscoder(did, t) })
 		mm.transcoders[did] = t
@@ -228,12 +232,12 @@ func (mm *MediaManager) closeStreamTranscoder(ctx context.Context, did string) e
 }
 
 // newStreamTranscoder starts a per-stream continuous transcoder. target is the
-// codec to add. cert/keyPEM are the node's S2PA signer. onComplete is invoked,
+// codec to add. cert/keyPEM initialize the S2PA signer. onComplete is invoked,
 // in order, with each completed dual-codec segment (and its feed token).
 func (mm *MediaManager) newStreamTranscoder(parent context.Context, target string, cert, keyPEM []byte, onComplete func(token any, completed []byte, audioOnly bool)) *streamTranscoder {
 	ctx, cancel := context.WithCancel(parent)
 	t := &streamTranscoder{
-		mm: mm, target: target, cert: cert, keyPEM: keyPEM, onComplete: onComplete,
+		mm: mm, target: target, signer: muxl.SignerInput{CertPEM: cert, KeyPEM: keyPEM}, onComplete: onComplete,
 		ctx: ctx, cancel: cancel,
 		jobs: make(chan transcodeJob, 16), done: make(chan struct{}),
 	}
@@ -294,12 +298,17 @@ func (t *streamTranscoder) Feed(src []byte, token any) error {
 	}
 	if source, ok := token.(*validatedSegment); ok {
 		ingredient.policy = source.meta
-	} else {
+		ingredient.manifest = source.manifest
+	}
+	if ingredient.manifest == nil {
 		verified, err := ValidateMP4MediaC2PA(t.ctx, ingredient.data)
 		if err != nil {
 			return fmt.Errorf("read source audio policy: %w", err)
 		}
-		ingredient.policy = verified.Meta
+		ingredient.manifest = verified.Manifest
+		if ingredient.policy == nil {
+			ingredient.policy = verified.Meta
+		}
 	}
 	selected, err := selectEventTracks(events, 0, "", t.target == "aac")
 	if err != nil {
@@ -458,20 +467,27 @@ func (t *streamTranscoder) run() error {
 		if tail {
 			title = audioTailTitle
 		}
-		manifest := transcodeManifestFor(t.mm.cli.BroadcasterDID(), title)
-		if private {
-			var definition map[string]any
-			if err := json.Unmarshal(manifest, &definition); err != nil {
-				return err
-			}
-			definition["assertions"] = append(definition["assertions"].([]any), obj{"label": audioPublicationAssertion, "data": obj{"published": false}})
-			var err error
-			manifest, err = json.Marshal(definition)
-			if err != nil {
-				return err
+		assertions := []obj{transcodeActions()}
+		// A stream-authorized derivative carries the same metadata gates as
+		// the source, alongside its own transcoded action and signed ingredients.
+		for _, assertion := range job.ingredient.manifest.Assertions {
+			switch assertion.Label {
+			case StreamplaceMetadata, "place.stream.metadata.configuration", "place.stream.livestream", "cawg.training-mining":
+				assertions = append(assertions, obj{"label": assertion.Label, "data": assertion.Data})
 			}
 		}
-		signed, err := t.mm.signAudioChunk(ctx, header, packets, ingredients, job.events, t.cert, t.keyPEM, manifest)
+		if current.Published && !private {
+			actions := assertions[0]["data"].(obj)["actions"].([]obj)
+			assertions[0]["data"].(obj)["actions"] = append(actions, obj{"action": C2PAPublishedAction})
+		}
+		if private {
+			assertions = append(assertions, obj{"label": audioPublicationAssertion, "data": obj{"published": false}})
+		}
+		manifest, err := json.Marshal(obj{"title": title, "assertions": assertions})
+		if err != nil {
+			return err
+		}
+		signed, err := t.mm.signAudioChunk(ctx, header, packets, ingredients, job.events, t.signer, manifest)
 		if err != nil {
 			return err
 		}

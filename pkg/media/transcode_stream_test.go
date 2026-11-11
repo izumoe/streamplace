@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"strconv"
 	"sync"
@@ -88,7 +89,7 @@ func TestFeedStreamTranscoderRebuildsOnNewSession(t *testing.T) {
 				meta:    &SegmentMetadata{StartTime: aqtime.FromTime(base.Add(time.Duration(startIdx+i) * time.Second))},
 				local:   true,
 			}
-			require.NoError(t, mm.feedStreamTranscoder(sctx, vs, seg, "aac", ms.Cert, keyPEM),
+			require.NoError(t, mm.feedStreamTranscoder(sctx, vs, seg, "aac", muxl.SignerInput{CertPEM: ms.Cert, KeyPEM: keyPEM}),
 				"feed session %d segment %d", epoch, i)
 		}
 	}
@@ -206,7 +207,7 @@ func TestAudioCompletionSignsEveryCanonicalPiece(t *testing.T) {
 	require.NotEmpty(t, packets)
 	cert, key := nodeSignerForTest(t)
 	mm := &MediaManager{cli: &config.CLI{BroadcasterHost: "test.example.com"}}
-	signed, err := mm.signAudioChunk(ctx, header.Bytes(), packets, []audioIngredient{ingredient}, sourceEvents, cert, key, transcodeManifestFor(mm.cli.BroadcasterDID(), "transcoded audio"))
+	signed, err := mm.signAudioChunk(ctx, header.Bytes(), packets, []audioIngredient{ingredient}, sourceEvents, muxl.SignerInput{CertPEM: cert, KeyPEM: key}, transcodeManifestFor(mm.cli.BroadcasterDID(), "transcoded audio"))
 	require.NoError(t, err)
 	verification, err := muxl.RunMuxlVerify(ctx, bytes.NewReader(signed))
 	require.NoError(t, err)
@@ -225,7 +226,7 @@ func TestAudioCompletionSignsEveryCanonicalPiece(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			invalid := append([]audioPacket(nil), packets[:2]...)
 			invalid[0].pts, invalid[1].pts = test.first, test.next
-			_, err := mm.signAudioChunk(ctx, header.Bytes(), invalid, []audioIngredient{ingredient}, sourceEvents, cert, key, transcodeManifestFor(mm.cli.BroadcasterDID(), "transcoded audio"))
+			_, err := mm.signAudioChunk(ctx, header.Bytes(), invalid, []audioIngredient{ingredient}, sourceEvents, muxl.SignerInput{CertPEM: cert, KeyPEM: key}, transcodeManifestFor(mm.cli.BroadcasterDID(), "transcoded audio"))
 			require.ErrorContains(t, err, "invalid sample duration", "invalid clocks must not be silently truncated into an MP4 sample table")
 		})
 	}
@@ -432,5 +433,54 @@ func appendAudioCompletion(dst *[][]byte, chunk []byte, audioOnly bool) {
 		(*dst)[i] = append((*dst)[i], chunk...)
 	} else {
 		*dst = append(*dst, chunk)
+	}
+}
+
+func TestAudioCompletionKeepsLocalAndReplicatedSigningAuthoritySeparate(t *testing.T) {
+	for _, callback := range []bool{false, true} {
+		t.Run(fmt.Sprint(callback), func(t *testing.T) {
+			ctx := t.Context()
+			source := audioSignerForTest(t)
+			segments := allSignedBareSegments(t, ctx, source, getFixture("ertmp-red-h264.mp4"))
+			require.GreaterOrEqual(t, len(segments), 2)
+			localSigner, err := source.SigningInput()
+			require.NoError(t, err)
+			if callback {
+				localSigner.KeyPEM = nil
+				localSigner.Sign = muxl.SignerToCallback(source.Signer, 32)
+			}
+			node := newBareSegmentSigner(t)
+			nodeInput, err := node.SigningInput()
+			require.NoError(t, err)
+			mm := NewOffline(&config.CLI{BroadcasterHost: "node.test", AllowedStreams: []string{source.Streamer()}, Syndicate: []string{source.Streamer()}})
+			mm.transcoders = map[string]*streamTranscoder{}
+			local, _, err := mm.validateSource(ctx, segments[0], true, source.Streamer())
+			require.NoError(t, err)
+			require.NoError(t, mm.feedStreamTranscoder(ctx, local, segments[0], "opus", localSigner))
+			first := mm.transcoders[source.Streamer()]
+			remote, _, err := mm.validateSource(ctx, segments[1], false, source.Streamer())
+			require.NoError(t, err)
+			require.NoError(t, mm.feedStreamTranscoder(ctx, remote, segments[1], "opus", nodeInput))
+			require.NotSame(t, first, mm.transcoders[source.Streamer()], "a different signing authority must not inherit the previous encoder")
+			require.NoError(t, mm.closeStreamTranscoder(ctx, source.Streamer()))
+			buffered := mm.BufferedSegments(source.Streamer())
+			require.Len(t, buffered, 2)
+			for _, segment := range buffered {
+				verified, err := ValidateMP4MediaC2PA(ctx, segment.Data)
+				require.NoError(t, err)
+				events, err := unwrapMuxlEvents(ctx, segment.Data)
+				require.NoError(t, err)
+				cat := catalogFromEvents(events)
+				for _, audio := range cat.Audio.Renditions {
+					if isOpusCodec(audio.Codec) {
+						expected := node.DID()
+						if segment.Local {
+							expected = source.DID()
+						}
+						require.Equal(t, expected, verified.trackSigningKeys[audio.TrackID()], "replicated media must never borrow a local stream's signing key")
+					}
+				}
+			}
+		})
 	}
 }
