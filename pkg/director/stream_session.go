@@ -641,11 +641,7 @@ func (ss *StreamSession) doUpdateStatus(ctx context.Context, repoDID string) err
 		"rkey":       "self",
 	}, nil, &getOutput)
 	if err != nil {
-		xErr, ok := err.(*xrpc.Error)
-		if !ok {
-			return fmt.Errorf("could not get record: %w", err)
-		}
-		if xErr.StatusCode != 400 { // yes, they return "400" for "not found"
+		if !recordNotFound(err) {
 			return fmt.Errorf("could not get record: %w", err)
 		}
 		log.Debug(ctx, "record not found, creating", "repoDID", repoDID)
@@ -663,12 +659,11 @@ func (ss *StreamSession) doUpdateStatus(ctx context.Context, repoDID string) err
 	}
 	out := comatproto.RepoPutRecord_Output{}
 
-	ss.lastStatusCID = &out.Cid
-
-	err = client.Do(ctx, xrpc.Procedure, "application/json", "com.atproto.repo.putRecord", map[string]any{}, inp, &out)
+	err = client.Do(ctx, xrpc.Procedure, "application/json", "com.atproto.repo.putRecord", map[string]any{}, conditionalRecord(inp), &out)
 	if err != nil {
 		return fmt.Errorf("could not create record: %w", err)
 	}
+	ss.lastStatusCID = &out.Cid
 	log.Debug(ctx, "created status record", "out", out)
 
 	ss.lastStatus = time.Now()
@@ -866,11 +861,7 @@ func (ss *StreamSession) doUpdateBroadcastOrigin(ctx context.Context) error {
 		"rkey":       rkey,
 	}, nil, &getOutput)
 	if err != nil {
-		xErr, ok := err.(*xrpc.Error)
-		if !ok {
-			return fmt.Errorf("could not get record: %w", err)
-		}
-		if xErr.StatusCode != 400 { // yes, they return "400" for "not found"
+		if !recordNotFound(err) {
 			return fmt.Errorf("could not get record: %w", err)
 		}
 		log.Debug(ctx, "record not found, creating", "repoDID", ss.repoDID)
@@ -888,7 +879,7 @@ func (ss *StreamSession) doUpdateBroadcastOrigin(ctx context.Context) error {
 	}
 	out := comatproto.RepoPutRecord_Output{}
 
-	err = client.Do(ctx, xrpc.Procedure, "application/json", "com.atproto.repo.putRecord", map[string]any{}, inp, &out)
+	err = client.Do(ctx, xrpc.Procedure, "application/json", "com.atproto.repo.putRecord", map[string]any{}, conditionalRecord(inp), &out)
 	if err != nil {
 		return fmt.Errorf("could not create record: %w", err)
 	}
@@ -1222,6 +1213,23 @@ func (ss *StreamSession) expireSuppliedPlayback(ctx context.Context, did string,
 			ss.bus.EndSessionIfCurrent(ctx, did, name, last)
 		}
 	}
+}
+
+// PDS implementations report a missing record with either HTTP 400 or 404.
+func recordNotFound(err error) bool {
+	var response *xrpc.Error
+	var problem *xrpc.XRPCError
+	return errors.As(err, &response) && (response.StatusCode == 400 || response.StatusCode == 404) &&
+		errors.As(err, &problem) && problem.ErrStr == "RecordNotFound"
+}
+
+// The generated input omits nil swapRecord. The PDS needs explicit null to
+// enforce "still absent" for a first write, rather than an unconditional put.
+func conditionalRecord(record comatproto.RepoPutRecord_Input) any {
+	return struct {
+		comatproto.RepoPutRecord_Input
+		SwapRecord *string `json:"swapRecord"`
+	}{record, record.SwapRecord}
 }
 
 type XRPCClient interface {
