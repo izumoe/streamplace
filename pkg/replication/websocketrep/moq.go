@@ -371,7 +371,19 @@ func (ts moqTracks) publish(ctx context.Context, broadcast *official.BroadcastPr
 	if err != nil {
 		return fmt.Errorf("replication source tracks: %w", err)
 	}
+	// Keep legacy source names low even when the signed audio IDs follow
+	// supplied video. Only alias a complete supplied set, never mix it into
+	// an existing low-ID audio namespace from another producer.
+	aliasAudio := true
+	for name := range tracks {
+		if strings.HasPrefix(name, "audio") && replicationAudioName(name) == name {
+			aliasAudio = false
+		}
+	}
 	for name, data := range tracks {
+		if aliasAudio {
+			name = replicationAudioName(name)
+		}
 		if err := ts.publishTrack(ctx, broadcast, name, data, group); err != nil {
 			return err
 		}
@@ -394,6 +406,10 @@ func (ts moqTracks) publishAudioAddendum(ctx context.Context, broadcast *officia
 		return err
 	}
 	for name, data := range tracks {
+		alias := replicationAudioName(name)
+		if ts[alias] != nil && ts[name] == nil {
+			name = alias
+		}
 		id, err := strconv.ParseUint(strings.TrimPrefix(name, "audio"), 10, 32)
 		if err != nil || !strings.HasPrefix(name, "audio") || id >= uint64(media.RenditionTrackID(0)) {
 			return fmt.Errorf("invalid continuation track %s", name)
@@ -404,6 +420,19 @@ func (ts moqTracks) publishAudioAddendum(ctx context.Context, broadcast *officia
 		}
 	}
 	return nil
+}
+
+// The wire name controls source/addendum routing on old peers. The CMAF init
+// and media retain their actual track IDs and original signatures.
+func replicationAudioName(name string) string {
+	if !strings.HasPrefix(name, "audio") {
+		return name
+	}
+	id, err := strconv.ParseUint(strings.TrimPrefix(name, "audio"), 10, 32)
+	if err != nil || id <= media.SuppliedRenditionTrackBase || id >= media.SuppliedRenditionTrackBase+uint64(media.RenditionTrackID(0)) {
+		return name
+	}
+	return fmt.Sprintf("audio%d", id-media.SuppliedRenditionTrackBase)
 }
 
 func (ts moqTracks) publishTrack(ctx context.Context, broadcast *official.BroadcastProducer, name string, data []byte, group func(*official.CMAFProducer) (*official.CMAFGroupProducer, error)) error {

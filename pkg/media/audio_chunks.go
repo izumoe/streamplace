@@ -189,6 +189,8 @@ func (mm *MediaManager) signAudioChunk(ctx context.Context, header []byte, packe
 	if scale == 0 {
 		return nil, fmt.Errorf("encoded audio initialization has no timescale")
 	}
+	// Remapped source AAC follows the supplied video IDs; allocate Opus
+	// after it while leaving node-minted video IDs available.
 	var want uint32
 	cat := catalogFromEvents(sourceEvents)
 	for _, v := range cat.Video.Renditions {
@@ -197,12 +199,15 @@ func (mm *MediaManager) signAudioChunk(ctx context.Context, header []byte, packe
 		}
 	}
 	for _, a := range cat.Audio.Renditions {
-		if a.TrackID() < renditionTrackBase {
+		if a.TrackID() < renditionTrackBase || a.TrackID() >= SuppliedRenditionTrackBase {
 			want = max(want, a.TrackID())
 		}
 	}
+	if want == ^uint32(0) {
+		return nil, fmt.Errorf("no source track ID available for encoded audio")
+	}
 	want++
-	if want >= renditionTrackBase {
+	if want >= renditionTrackBase && want < SuppliedRenditionTrackBase {
 		return nil, fmt.Errorf("no source track ID available for encoded audio")
 	}
 	samples := make([]*fmp4.Sample, 0, len(packets))

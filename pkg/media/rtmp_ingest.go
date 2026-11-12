@@ -539,8 +539,16 @@ func rtmpReplicationTrackRemap(session *RTMPSession) (map[uint32]uint32, error) 
 			if remap == nil {
 				remap = map[uint32]uint32{}
 			}
-			remap[id] = 1<<16 | id
+			remap[id] = SuppliedRenditionTrackBase | id
 		}
+	}
+	if len(remap) > 0 && session.AudioTrack != nil {
+		// Legacy receivers concatenate video then Opus. Their flat writer
+		// preserves both timeline origins only when track IDs ascend.
+		// Completion allocates Opus after its AAC ingredient, so reserve the
+		// source audio above every supplied video before either is signed.
+		audioID := uint32(len(session.VideoTracks) + 1)
+		remap[audioID] = SuppliedRenditionTrackBase | audioID
 	}
 	return remap, nil
 }

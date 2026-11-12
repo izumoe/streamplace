@@ -134,19 +134,19 @@ func TestMoqSourceRoutesPreserveFullLadder(t *testing.T) {
 	defer cancel()
 	fixture, err := os.ReadFile("../../../test/fixtures/h264-opus-frag.mp4")
 	require.NoError(t, err)
-	canonical, err := muxl.RunMuxlCanonicalize(ctx, fixture, map[uint32]uint32{1: 1, 2: 3})
+	canonical, err := muxl.RunMuxlCanonicalize(ctx, fixture, map[uint32]uint32{1: 1, 2: 65539})
 	require.NoError(t, err)
 	base, err := media.MuxlTracks(ctx, canonical)
 	require.NoError(t, err)
-	relabelled, err := muxl.RunMuxlCanonicalize(ctx, fixture, map[uint32]uint32{1: 65538, 2: 3})
+	relabelled, err := muxl.RunMuxlCanonicalize(ctx, fixture, map[uint32]uint32{1: 65538, 2: 65539})
 	require.NoError(t, err)
 	extra, err := media.MuxlTracks(ctx, relabelled)
 	require.NoError(t, err)
 	require.NotEmpty(t, base["video1"])
-	require.NotEmpty(t, base["audio3"])
+	require.NotEmpty(t, base["audio65539"])
 	require.NotEmpty(t, extra["video65538"])
 	var flat bytes.Buffer
-	require.NoError(t, muxl.RunMuxlWrap(ctx, bytes.NewReader(bytes.Join([][]byte{base["video1"], extra["video65538"], base["audio3"]}, nil)), "fmp4", &flat))
+	require.NoError(t, muxl.RunMuxlWrap(ctx, bytes.NewReader(bytes.Join([][]byte{base["video1"], extra["video65538"], base["audio65539"]}, nil)), "fmp4", &flat))
 	signer, err := media.NewEphemeralMediaSigner("compat-routing")
 	require.NoError(t, err)
 	events := make(chan *muxl.MuxlEvent, 16)
@@ -160,7 +160,7 @@ func TestMoqSourceRoutesPreserveFullLadder(t *testing.T) {
 		if event.Type != "signed-segment" {
 			continue
 		}
-		for _, id := range []string{"1", "65538", "3"} {
+		for _, id := range []string{"1", "65538", "65539"} {
 			source = append(source, event.Tracks[id]...)
 		}
 	}
@@ -172,9 +172,9 @@ func TestMoqSourceRoutesPreserveFullLadder(t *testing.T) {
 	for name := range tracks {
 		sourceNames = append(sourceNames, name)
 	}
-	require.ElementsMatch(t, []string{"audio3", "video1", "video65538"}, sourceNames, "the fixture carries both signed video assets")
-	source = bytes.Join([][]byte{tracks["video1"], tracks["video65538"], tracks["audio3"]}, nil)
-	legacy := bytes.Join([][]byte{tracks["video1"], tracks["audio3"]}, nil)
+	require.ElementsMatch(t, []string{"audio65539", "video1", "video65538"}, sourceNames, "the fixture carries both signed video assets")
+	source = bytes.Join([][]byte{tracks["video1"], tracks["video65538"], tracks["audio65539"]}, nil)
+	legacy := bytes.Join([][]byte{tracks["video1"], tracks["audio65539"]}, nil)
 	b := bus.NewBus()
 	const streamer = "did:plc:routing"
 	for _, channel := range []string{moqSourceChannel, media.PlaybackSourceRendition} {

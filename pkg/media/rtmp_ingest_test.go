@@ -211,8 +211,8 @@ func TestRTMPDirectIngestSignsOriginalVideoTracks(t *testing.T) {
 		{"H264", []rtmpFixture{h264Fixture}, nil},
 		{"AV1 sequence-start config", []rtmpFixture{av1Fixture}, nil},
 		{"mixed H264 AV1", []rtmpFixture{h264Fixture, av1Fixture}, nil},
-		{"H264 ladder", []rtmpFixture{h264Fixture, h264Fixture, h264Fixture}, map[uint32]uint32{2: 65538, 3: 65539}},
-		{"AV1 and H264 ladder", []rtmpFixture{av1Fixture, h264Fixture, h264Fixture}, map[uint32]uint32{3: 65539}},
+		{"H264 ladder", []rtmpFixture{h264Fixture, h264Fixture, h264Fixture}, map[uint32]uint32{2: 65538, 3: 65539, 4: 65540}},
+		{"AV1 and H264 ladder", []rtmpFixture{av1Fixture, h264Fixture, h264Fixture}, map[uint32]uint32{3: 65539, 4: 65540}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
@@ -271,7 +271,11 @@ func TestRTMPDirectIngestSignsOriginalVideoTracks(t *testing.T) {
 				}
 				require.EqualValues(t, len(fixture.frames), counts[strconv.FormatUint(uint64(out), 10)], "track %d loses no encoded frames", id)
 			}
-			require.EqualValues(t, len(av1Fixture.audioFrames), counts[strconv.Itoa(len(tc.videos)+1)], "source AAC is copied intact")
+			audioID := uint32(len(tc.videos) + 1)
+			if mapped, ok := tc.remap[audioID]; ok {
+				audioID = mapped
+			}
+			require.EqualValues(t, len(av1Fixture.audioFrames), counts[strconv.FormatUint(uint64(audioID), 10)], "source AAC is copied intact")
 		})
 	}
 }
@@ -560,8 +564,8 @@ func TestRTMPMultitrackCompletionAndExtraction(t *testing.T) {
 			require.Equal(t, 4, len(tracks), "all source videos and common AAC reach MoQ")
 			for id, data := range expected {
 				name := "video" + id
-				if id == "4" {
-					name = "audio4"
+				if id == "65540" {
+					name = "audio65540"
 				}
 				require.True(t, bytes.Equal(data, tracks[name]), "track %s preserves every signed fragment in order", id)
 			}
@@ -572,7 +576,7 @@ func TestRTMPMultitrackCompletionAndExtraction(t *testing.T) {
 		for i, fixture := range []rtmpFixture{red, blue, green} {
 			require.EqualValues(t, len(fixture.frames), counts[[]string{"1", "65538", "3"}[i]])
 		}
-		require.EqualValues(t, len(red.audioFrames), counts["4"])
+		require.EqualValues(t, len(red.audioFrames), counts["65540"])
 	})
 	t.Run("continuous AAC completion", func(t *testing.T) {
 		var logs logCapture
@@ -604,7 +608,7 @@ func TestRTMPMultitrackCompletionAndExtraction(t *testing.T) {
 			tracks, err := MuxlTracks(ctx, segment)
 			require.NoError(t, err)
 			require.Len(t, tracks, 5)
-			require.NotEmpty(t, tracks["audio5"], "the node adds the Opus track")
+			require.NotEmpty(t, tracks["audio65541"], "the node adds Opus after the supplied video tracks")
 		}
 		require.Empty(t, logs.String(), "healthy completion emits no errors")
 	})
@@ -837,7 +841,7 @@ func TestRTMPTrackRemapKeepsLargestAVCAsSource(t *testing.T) {
 	session := rtmpSessionForFixtures(t, small, small, av1, large)
 	remap, err := rtmpReplicationTrackRemap(session)
 	require.NoError(t, err)
-	require.Equal(t, map[uint32]uint32{1: 65537}, remap, "AV1 and the largest AVC keep their source IDs; only the smaller AVC becomes a rendition")
+	require.Equal(t, map[uint32]uint32{1: 65537, 4: 65540}, remap, "AV1 and the largest AVC keep their source IDs; audio follows the smaller AVC rendition")
 	session.VideoTracks[0].Track = &gortmplib.Track{Codec: &codecs.H264{SPS: []byte{1}}}
 	_, err = rtmpReplicationTrackRemap(session)
 	require.Error(t, err, "malformed H264 configuration is rejected before signing")
@@ -889,7 +893,15 @@ func TestRTMPCompletionUsesStreamAuthorityForLegacyPeers(t *testing.T) {
 		extraEvents, err := unwrapMuxlEvents(ctx, extra)
 		require.NoError(t, err)
 		extraCatalog, extraTracks := catalogAndTracks(extraEvents)
+		var opusID uint32
+		for _, audio := range sourceCatalog.Audio.Renditions {
+			if isOpusCodec(audio.Codec) {
+				opusID = audio.TrackID()
+			}
+		}
+		require.NotZero(t, opusID)
 		for _, video := range extraCatalog.Video.Renditions {
+			require.Less(t, video.TrackID(), opusID, "legacy receivers concatenate video before Opus; descending IDs lose the audio timeline origin")
 			tick, ok := firstTfdt(extraTracks[fmt.Sprint(video.TrackID())])
 			require.True(t, ok)
 			require.Equal(t, originalVideo.Timescale(), video.Timescale(), "older receivers pair raw ticks across different frame rates")

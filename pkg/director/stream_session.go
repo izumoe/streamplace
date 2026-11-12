@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -44,6 +45,9 @@ type StreamSession struct {
 	// Publication order for the source segments (WebRTC, peers) and for
 	// the transcoded renditions: see lane.
 	sourceLane, renditions *lane
+	// Written in the source publication turn and cleared after goroutines drain.
+	// Keep the last supplied-rung frames so teardown cannot erase a newer producer.
+	suppliedPlayback       map[string]*bus.Seg
 	mm                     *media.MediaManager
 	mod                    model.Model
 	cli                    *config.CLI
@@ -171,6 +175,8 @@ func (ss *StreamSession) Start(ctx context.Context, notif *media.NewSegmentNotif
 			ss.bus.EndSession(ctx, spseg.Creator, media.PlaybackSourceRendition)
 			ss.bus.EndSession(ctx, spseg.Creator, media.WebRTCSourceRendition)
 			ss.bus.EndSession(ctx, spseg.Creator, media.RTMPSourceRendition)
+			ss.expireSuppliedPlayback(ctx, spseg.Creator, nil)
+			ss.suppliedPlayback = nil
 			ss.s3Close(ctx)
 			return err
 		case <-timer.C:
@@ -971,7 +977,7 @@ func (ss *StreamSession) Transcode(ctx context.Context, spseg *placestream.Segme
 		// Hand the transcoder the Opus presentation: it copies that audio
 		// back into every rendition, and the WebRTC packetizer the
 		// renditions feed needs Opus (an RTMP source's first audio is AAC).
-		if opus, err := media.PresentationWithOpus(ctx, notif.Muxl); err == nil {
+		if opus, err := media.PresentationWithOpus(ctx, notif.Muxl, 0); err == nil {
 			data = opus
 		} else {
 			log.Warn(ctx, "transcode: could not select opus audio, using the presentation as is", "error", err)
@@ -1128,6 +1134,48 @@ func (ss *StreamSession) AddToWebRTC(ctx context.Context, spseg *placestream.Seg
 		}
 	}
 
+	var supplied map[string]*bus.Seg
+	if rendition == "source" && len(spseg.Video) > 1 && len(seg.Muxl) > 0 {
+		primary := -1
+		for i, video := range spseg.Video {
+			if video.Codec != "h264" && !strings.HasPrefix(video.Codec, "avc1") {
+				continue
+			}
+			if primary < 0 || video.Width*video.Height > spseg.Video[primary].Width*spseg.Video[primary].Height {
+				primary = i
+			}
+		}
+		for i, video := range spseg.Video {
+			if primary < 0 || i == primary || video.TrackId == nil || video.Codec != "h264" && !strings.HasPrefix(video.Codec, "avc1") {
+				continue
+			}
+			name := media.RenditionName(uint32(video.Width), uint32(video.Height))
+			if name == media.RenditionName(uint32(spseg.Video[primary].Width), uint32(spseg.Video[primary].Height)) || supplied[name] != nil {
+				continue
+			}
+			id, err := strconv.ParseUint(*video.TrackId, 10, 32)
+			if err != nil || id == 0 {
+				log.Warn(ctx, "invalid supplied video track ID", "track", *video.TrackId)
+				continue
+			}
+			data, err := media.PresentationWithOpus(ctx, seg.Muxl, uint32(id))
+			if err != nil {
+				log.Warn(ctx, "could not present supplied rendition", "rendition", name, "error", err)
+				continue
+			}
+			frame := &bus.Seg{Filepath: seg.Filepath, Data: data, Published: seg.Published}
+			frame.PacketizedData, err = media.Packetize(ctx, ss.cli, frame, 0)
+			if err != nil {
+				log.Warn(ctx, "could not packetize supplied rendition", "rendition", name, "error", err)
+				continue
+			}
+			if supplied == nil {
+				supplied = map[string]*bus.Seg{}
+			}
+			supplied[name] = frame
+		}
+	}
+
 	if !tn.wait(ctx) {
 		log.Warn(ctx, "segment abandoned by later segments, not published", "rendition", rendition)
 		return nil
@@ -1137,6 +1185,11 @@ func (ss *StreamSession) AddToWebRTC(ctx context.Context, spseg *placestream.Seg
 	}
 	ss.bus.PublishSegment(ctx, spseg.Creator, rendition, seg)
 	if rendition == "source" {
+		ss.expireSuppliedPlayback(ctx, spseg.Creator, supplied)
+		for name, frame := range supplied {
+			ss.bus.PublishSegment(ctx, spseg.Creator, name, frame)
+		}
+		ss.suppliedPlayback = supplied
 		if !seg.PlaybackPublished {
 			ss.bus.PublishSegment(ctx, spseg.Creator, media.PlaybackSourceRendition, seg)
 		}
@@ -1149,6 +1202,26 @@ func (ss *StreamSession) AddToWebRTC(ctx context.Context, spseg *placestream.Seg
 	}
 
 	return nil
+}
+
+// Expire only this producer's last source or its matching audio continuation.
+// The bus comparison protects a newer producer publishing after the snapshot.
+func (ss *StreamSession) expireSuppliedPlayback(ctx context.Context, did string, keep map[string]*bus.Seg) {
+	for name, owned := range ss.suppliedPlayback {
+		if keep[name] != nil {
+			continue
+		}
+		sub := ss.bus.SubscribeSegmentBuf(ctx, did, name, 1)
+		var last *bus.Seg
+		select {
+		case last = <-sub.C:
+		default:
+		}
+		ss.bus.UnsubscribeSegment(ctx, did, name, sub)
+		if last == owned || last != nil && last.AudioOnly && last.Filepath != "" && last.Filepath == owned.Filepath {
+			ss.bus.EndSessionIfCurrent(ctx, did, name, last)
+		}
+	}
 }
 
 type XRPCClient interface {

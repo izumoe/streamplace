@@ -64,6 +64,10 @@ type RenditionInput struct {
 // per rendition.
 const renditionTrackBase = 100
 
+// SuppliedRenditionTrackBase reserves IDs for supplied video rungs and their
+// source audio, separate from node-generated rendition IDs.
+const SuppliedRenditionTrackBase = 1 << 16
+
 // RenditionTrackID is the track id rendition number i (in ladder order) is
 // minted under.
 func RenditionTrackID(i int) uint32 { return renditionTrackBase + uint32(i) }
@@ -230,9 +234,9 @@ func (mm *MediaManager) canonicalRenditionTrack(ctx context.Context, r Rendition
 // MP4s come out under (see canonicalRenditionTrack).
 type renditionTIDCache = sync.Map
 
-// PresentationWithOpus returns the primary video and required Opus audio as
+// PresentationWithOpus returns the selected video and required Opus audio as
 // a fragmented MP4. The transcoder copies that audio into the H264 renditions
-// used for WebRTC playback.
+// used for WebRTC playback. A zero videoID selects the primary video.
 //
 // Fragmented, not flat: a flat MP4 carries a track duration, and qtdemux
 // clips samples that present past it — with B-frames the last P frame's
@@ -240,8 +244,8 @@ type renditionTIDCache = sync.Map
 // segment lost one frame (49 of 50 from a real broadcast). A fragmented
 // presentation has no duration to clip against and every sample gets
 // through.
-func PresentationWithOpus(ctx context.Context, seg []byte) ([]byte, error) {
-	opus, err := selectSegmentTracks(ctx, seg, 0, "", true)
+func PresentationWithOpus(ctx context.Context, seg []byte, videoID uint32) ([]byte, error) {
+	opus, err := selectSegmentTracks(ctx, seg, videoID, "", true)
 	if err != nil {
 		return nil, err
 	}

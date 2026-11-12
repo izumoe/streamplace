@@ -20,7 +20,7 @@ func TestTranscoderServicePublishesSignedRenditions(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	source := sourceSegmentForTest(t)
-	presentation, err := PresentationWithOpus(ctx, source)
+	presentation, err := PresentationWithOpus(ctx, source, 0)
 	require.NoError(t, err)
 	handler, err := transcoder.NewHandler(1)
 	require.NoError(t, err)
