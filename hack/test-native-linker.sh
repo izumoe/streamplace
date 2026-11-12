@@ -47,8 +47,22 @@ edition = "2021"
 crate-type = ["rlib", "cdylib"]
 [build-dependencies]
 cc = "=1.9.0"
+[dependencies]
+fixture_${crate//-/_} = { path = "fixture" }
 EOF
   function_name=${crate//-/_}
+  # The final link must discover transitive Rust artifacts, not only the two
+  # top-level rlibs. Cargo's internal dependency layout changes across versions.
+  mkdir -p "$dir/fixture/src"
+  cat > "$dir/fixture/Cargo.toml" <<EOF
+[package]
+name = "fixture_$function_name"
+version = "0.0.0"
+edition = "2021"
+EOF
+  cat > "$dir/fixture/src/lib.rs" <<'EOF'
+pub fn identity(value: i32) -> i32 { value }
+EOF
   extension=c
   cpp=false
   linkage=
@@ -71,7 +85,9 @@ EOF
   cat > "$dir/src/lib.rs" <<EOF
 extern "C" { fn value_$function_name() -> i32; }
 #[no_mangle]
-pub extern "C" fn fixture_$function_name() -> i32 { unsafe { value_$function_name() } }
+pub extern "C" fn fixture_$function_name() -> i32 {
+    fixture_$function_name::identity(unsafe { value_$function_name() })
+}
 EOF
   cargo generate-lockfile --offline --manifest-path "$dir/Cargo.toml"
 done

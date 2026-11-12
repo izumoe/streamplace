@@ -88,20 +88,28 @@ for input in "$iroh_rlib" "$moq_rlib" "$source_dir/rust/streamplace-native/src/l
   [[ "$out" -nt "$input" ]] || fresh=false
 done
 if [[ "$fresh" != true ]]; then
+  # Cargo 1.100 moved dependencies from deps/ into per-crate build folders.
+  # Find this profile's target libraries and host proc macros without relying
+  # on Cargo's internal dependency layout.
+  dependency_roots=()
+  for graph in iroh moq; do
+    for dir in "$output_dir/$graph/$triple/$profile" "$output_dir/$graph/$profile"; do
+      if [[ -d "$dir" ]]; then dependency_roots+=("$dir"); fi
+    done
+  done
+  while IFS= read -r dir; do
+    compose_args+=(-L "dependency=$dir")
+  done < <(find "${dependency_roots[@]}" -type f \( -name '*.rlib' -o -name '*.so' -o -name '*.dylib' \) \
+    -print | sed 's|/[^/]*$||' | sort -u)
+
   # Native C/C++ static dependencies are bundled in the rlibs; target system
   # libs are propagated by Meson's streamplacedeps.pc. A staticlib also prints
   # rustc's complete list, so a dependency change can be checked against that
-  # explicit system-lib list. With --target, proc-macro dylibs live in the
-  # separate host profile/deps directories. rustc needs those too when loading
-  # either rlib's crate metadata. Release builds of the same crate version
+  # explicit system-lib list. Release builds of the same crate version
   # from both graphs collide (rustc: "colliding StableCrateId values"), so
   # Cargo.lock keeps rustversion at a different version than MoQ's lockfile.
   "$RUSTC" --edition=2021 --crate-name streamplace_native --crate-type "$crate_type" \
     --target "$triple" "${rustflags[@]}" ${compose_args[@]+"${compose_args[@]}"} --print native-static-libs \
-    -L "dependency=$output_dir/iroh/$triple/$profile/deps" \
-    -L "dependency=$output_dir/moq/$triple/$profile/deps" \
-    -L "dependency=$output_dir/iroh/$profile/deps" \
-    -L "dependency=$output_dir/moq/$profile/deps" \
     --extern "iroh_streamplace=$iroh_rlib" \
     --extern "moq_ffi=$moq_rlib" \
     "$source_dir/rust/streamplace-native/src/lib.rs" \
