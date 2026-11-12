@@ -3,6 +3,7 @@ package director
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -715,15 +716,6 @@ func (ss *StreamSession) doUpdateLivestream(ctx context.Context, repoDID string)
 		log.Debug(ctx, "no livestream found, skipping livestream update")
 		return nil
 	}
-	lsv, err := lastLivestream.ToLivestreamView()
-	if err != nil {
-		return fmt.Errorf("could not convert livestream to streamplace livestream: %w", err)
-	}
-	lsvr, ok := lsv.Record.Val.(*placestream.Livestream)
-	if !ok {
-		return fmt.Errorf("livestream is not a streamplace livestream")
-	}
-
 	aturi, err := syntax.ParseATURI(lastLivestream.URI)
 	if err != nil {
 		return fmt.Errorf("could not parse livestream URI: %w", err)
@@ -734,8 +726,12 @@ func (ss *StreamSession) doUpdateLivestream(ctx context.Context, repoDID string)
 		return fmt.Errorf("could not get xrpc client for repoDID: %w", err)
 	}
 
-	var swapRecord *string
-	getOutput := comatproto.RepoGetRecord_Output{}
+	// Read the current body with its CID. The local index can lag an editor,
+	// and decoding into the known schema would drop extension fields.
+	var getOutput struct {
+		comatproto.RepoGetRecord_Output
+		Value map[string]json.RawMessage `json:"value"`
+	}
 	err = client.Do(ctx, xrpc.Query, "application/json", "com.atproto.repo.getRecord", map[string]any{
 		"repo":       repoDID,
 		"collection": "place.stream.livestream",
@@ -745,17 +741,30 @@ func (ss *StreamSession) doUpdateLivestream(ctx context.Context, repoDID string)
 		return fmt.Errorf("could not get record: %w", err)
 	}
 	log.Debug(ctx, "got record", "record", getOutput)
-	swapRecord = getOutput.Cid
+	if getOutput.Cid == nil || *getOutput.Cid == "" {
+		return fmt.Errorf("livestream record has no CID")
+	}
+	var recordType string
+	if err := json.Unmarshal(getOutput.Value["$type"], &recordType); err != nil {
+		return fmt.Errorf("could not read livestream record type: %w", err)
+	}
+	if recordType != "place.stream.livestream" {
+		return fmt.Errorf("unexpected livestream record type %q", recordType)
+	}
 
 	now := time.Now().UTC().Format(util.ISO8601)
-	lsvr.LastSeenAt = &now
+	getOutput.Value["lastSeenAt"] = json.RawMessage(strconv.Quote(now))
+	record, err := glex.Unknown(getOutput.Value)
+	if err != nil {
+		return fmt.Errorf("could not encode livestream heartbeat: %w", err)
+	}
 
 	inp := comatproto.RepoPutRecord_Input{
 		Collection: "place.stream.livestream",
-		Record:     &glex.LexiconTypeDecoder{Val: lsvr},
+		Record:     record,
 		Rkey:       aturi.RecordKey().String(),
 		Repo:       ss.repoDID,
-		SwapRecord: swapRecord,
+		SwapRecord: getOutput.Cid,
 	}
 	out := comatproto.RepoPutRecord_Output{}
 
