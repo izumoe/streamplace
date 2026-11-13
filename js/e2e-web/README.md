@@ -145,3 +145,37 @@ inside the build container.
 
 Artifacts on failure (traces, screenshots, video) land in `test-results/` and a
 report in `playwright-report/` (`pnpm --filter @streamplace/e2e-web report`).
+
+## Receiver compatibility
+
+The syndication flow can run a separate receiver executable with real signature
+validation, MoQ replication, and simultaneous WebRTC viewers for 1080p, 720p,
+and 360p. Run these commands inside the configured build container, from the
+repository root, after building the current harness binary:
+
+```bash
+fixtures="$PWD/.build/replication-fixtures"
+bash test/ertmp/generate.sh --replication "$fixtures"
+E2E_PEER_BINARY=/absolute/path/to/released-streamplace \
+  E2E_HTTPS_PDS_HOSTNAME= E2E_ERTMP=1 \
+  E2E_ERTMP_FIXTURES_DIR="$fixtures" \
+  E2E_ERTMP_VIDEO_FIXTURES='ertmp-red-h264.mp4 ertmp-blue-h264.mp4 ertmp-green-h264.mp4' \
+  hack/e2e-web-local.sh flows/syndication.spec.ts --project chromium --grep 'all AVC'
+```
+
+The inputs are pre-encoded AVC at 30 fps with matching one-second GOPs and AAC
+audio. Encoding finishes before playback measurement. The flow checks decoded
+and presented frame progress, dimensions, audio packet progress, and the actual
+replication transport over 70 seconds. Progress JSON and traces are retained in
+the test results. The harness stops its publishers, nodes, and PDS on exit.
+
+The expected receiver health version defaults to `streamplace v0.13.4`.
+`E2E_PEER_VERSION` selects the exact expected version for a rebuilt receiver.
+`E2E_WEBSOCKET_REPLICATION=1` omits MoQ advertisement for the WebSocket control.
+
+For the MoQ timeout regression, generate inputs with
+`generate.sh --replication-unmatched "$fixtures"`, set
+`E2E_REPLICATION_CASE=unmatched`, and select `--grep 'unmatched rendition'`.
+This uses 59.94 fps for source/720p and 30 fps for 360p. It requires source and
+720p to continue without reconnecting when 360p cannot match source audio;
+it does not claim compatibility for the unmatched rendition.

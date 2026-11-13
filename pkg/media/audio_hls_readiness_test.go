@@ -28,9 +28,15 @@ func TestPlaybackAddendaWaitForSourceHLSWithoutHoldingWindow(t *testing.T) {
 	video, err := mint.mintVideoRenditions(ctx, last, []RenditionInput{{MP4: flat.Bytes()}}, cert, key)
 	require.NoError(t, err)
 	for _, test := range []struct {
-		name              string
-		rendition, cancel bool
-	}{{"audio-tail", false, false}, {"video-rendition", true, false}, {"cancelled-audio-tail", false, true}} {
+		name      string
+		rendition bool
+		wantErr   error
+	}{
+		{"audio-tail", false, nil},
+		{"video-rendition", true, nil},
+		{"cancelled-audio-tail", false, context.Canceled},
+		{"expired-audio-tail", false, context.DeadlineExceeded},
+	} {
 		rendition := test.rendition
 		t.Run(test.name, func(t *testing.T) {
 			callCtx, cancel := context.WithCancel(ctx)
@@ -55,6 +61,11 @@ func TestPlaybackAddendaWaitForSourceHLSWithoutHoldingWindow(t *testing.T) {
 			mm.segBuffersMut.Lock()
 			mm.segBuffers[did].segs[len(completed)-1].hlsReady = ready
 			mm.segBuffersMut.Unlock()
+			if test.wantErr == context.DeadlineExceeded {
+				var stop context.CancelFunc
+				callCtx, stop = context.WithTimeout(callCtx, 10*time.Second)
+				defer stop()
+			}
 			done := make(chan error, 1)
 			go func() {
 				if rendition {
@@ -85,13 +96,18 @@ func TestPlaybackAddendaWaitForSourceHLSWithoutHoldingWindow(t *testing.T) {
 			case <-time.After(time.Second):
 				t.Fatal("addendum held the source's HLS window lock")
 			}
-			if test.cancel {
-				cancel()
+			if test.wantErr != nil {
+				timeout := time.Second
+				if test.wantErr == context.Canceled {
+					cancel()
+				} else {
+					timeout = 15 * time.Second
+				}
 				select {
 				case err := <-done:
-					require.ErrorIs(t, err, context.Canceled)
-				case <-time.After(time.Second):
-					t.Fatal("cancelled addendum kept waiting for HLS")
+					require.ErrorIs(t, err, test.wantErr)
+				case <-time.After(timeout):
+					t.Fatal("addendum kept waiting for HLS after its context ended")
 				}
 				return
 			}

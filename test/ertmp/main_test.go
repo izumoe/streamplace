@@ -84,3 +84,23 @@ func TestFixtureTracksKeepTheirOwnLoopTimeline(t *testing.T) {
 		require.Greater(t, counts[i], len(track.samples)*2, "track %d crosses multiple loop boundaries", i)
 	}
 }
+
+func TestFixtureTracksSupportAVCLadder(t *testing.T) {
+	engine, err := muxl.NewWASM(t.Context())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, engine.Close(context.Background())) })
+	tracks, err := readFixtures(t.Context(), engine, "../fixtures",
+		"h264-opus-frag.mp4", "ertmp-red-h264.mp4", "ertmp-blue-h264.mp4")
+	require.NoError(t, err)
+	require.Len(t, tracks, 4)
+	for _, track := range tracks[:3] {
+		require.IsType(t, &codecs.H264{}, track.track.Codec)
+		require.NotEmpty(t, track.samples)
+	}
+	require.IsType(t, &codecs.MPEG4Audio{}, tracks[3].track.Codec)
+	names := []string{"h264-opus-frag.mp4", "ertmp-red-h264.mp4", "ertmp-blue-h264.mp4", "ertmp-red-h264.mp4"}
+	for _, count := range []int{2, 4} {
+		_, err := readFixtures(t.Context(), engine, "../fixtures", names[:count]...)
+		require.Error(t, err, "a replay requires three video inputs, got %d", count)
+	}
+}

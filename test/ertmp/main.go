@@ -61,7 +61,7 @@ func run(ctx context.Context) error {
 	if directory == "" {
 		directory = "test/fixtures"
 	}
-	tracks, err := readFixtures(ctx, engine, directory)
+	tracks, err := readFixtures(ctx, engine, directory, strings.Fields(os.Getenv("E2E_ERTMP_VIDEO_FIXTURES"))...)
 	if err != nil {
 		return err
 	}
@@ -155,10 +155,16 @@ func (c *fixtureConn) Write(msg message.Message) error {
 	return c.Conn.Write(msg)
 }
 
-func readFixtures(ctx context.Context, engine muxl.Engine, directory string) ([]*fixtureTrack, error) {
+func readFixtures(ctx context.Context, engine muxl.Engine, directory string, names ...string) ([]*fixtureTrack, error) {
+	if len(names) == 0 {
+		names = []string{"ertmp-red-h264.mp4", "ertmp-blue-h264.mp4", "ertmp-green-av1.mp4"}
+	}
+	if len(names) != 3 {
+		return nil, fmt.Errorf("expected three video fixtures, got %d", len(names))
+	}
 	var tracks []*fixtureTrack
 	var audio *fixtureTrack
-	for _, name := range []string{"ertmp-red-h264.mp4", "ertmp-blue-h264.mp4", "ertmp-green-av1.mp4"} {
+	for _, name := range names {
 		video, aac, err := readFixture(ctx, engine, filepath.Join(directory, name))
 		if err != nil {
 			return nil, fmt.Errorf("fixture %s: %w", name, err)

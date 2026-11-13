@@ -19,11 +19,11 @@ places to start reading the code.
 
 There are three broadcast paths for a stream:
 
-| Subscriber                   | Path                   | Media                                                                |
-| ---------------------------- | ---------------------- | -------------------------------------------------------------------- |
-| Node with multitrack support | `source/did:plc:...`   | Full completed, signed source and available renditions               |
-| Older node                   | `did:plc:...`          | Largest H264 source video, all signed audio and available renditions |
-| Browser                      | `playback/did:plc:...` | Full verified source media grouped for playback                      |
+| Subscriber                   | Path                   | Media                                                                            |
+| ---------------------------- | ---------------------- | -------------------------------------------------------------------------------- |
+| Node with multitrack support | `source/did:plc:...`   | Full completed, signed source and available renditions                           |
+| Older node                   | `did:plc:...`          | Largest H264 source video, original audio, stream-signed Opus and AVC renditions |
+| Browser                      | `playback/did:plc:...` | Full verified source media grouped for playback                                  |
 
 The compatibility source selects existing encoded tracks; it does not re-encode
 or re-sign them. Its original selected H264 manifest identifies that source.
@@ -33,20 +33,29 @@ A compatibility broadcast keeps its selected video for its lifetime and ends
 when that track ends, allowing the peer to rediscover the stream.
 
 Direct multitrack RTMP ingest assigns the other AVC videos IDs starting at
-`65536` before signing. The largest AVC, AV1 tracks and source audio keep their
-source IDs. Older nodes discover these additional AVC assets through their
+`65536` before signing. The largest AVC and AV1 tracks keep their source IDs.
+When other AVC videos are present, source AAC is assigned an ID above them and
+completed Opus follows it. Older nodes discover the additional AVC assets through their
 existing rendition path, which requires signed video IDs of at least `100`.
 The compatibility route sends them as addenda, preserving their signed bytes;
-it does not rewrite IDs or signatures during replication. Audio completion stays
-below `100`, so peers continue to assemble it with the source. Existing streams
-need a new ingest session to receive this layout.
+it does not rewrite IDs or signatures during replication. MoQ exposes the supplied
+source audio under low wire names so older peers assemble it with the source;
+the signed media keeps its actual high IDs. Existing streams need a new ingest
+session to receive this layout.
 
 Nodes request the full source first and use the older path only after an explicit
 404 broadcast rejection. Authorization failures, other server errors and catalog
 timeouts remain failures. WebSocket subscribers opt into the full source with
 `Streamplace-Source: full`; requests without that header get the H264 source.
-The origin record and signed media format stay unchanged. Generated audio keeps
-its original signer and the receiver's existing transcoder trust requirements.
+The origin record and signed media format stay unchanged. Local AAC-to-Opus
+completion uses the stream's authorized signing key. The compatibility route
+omits completion signed by a different authority and standalone audio tails;
+the full route retains them with their existing validation requirements.
+
+Independent MoQ rendition tracks can arrive before their source is admitted.
+The receiver retries after source publication, retaining signature, admission
+and visibility checks. A missing source expires at the MoQ group-age limit and
+drops only that addendum, without restarting the pull or delaying other tracks.
 
 Worker-based ingest can publish verified source media for playback before audio
 completion adds AAC. Direct RTMP ingest publishes after source GoP signing and

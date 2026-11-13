@@ -73,12 +73,22 @@ func makeE2eCommand(build *config.BuildFlags) *urfavecli.Command {
 		Usage: "start a self-contained e2e test environment with a test account and live stream",
 		Flags: []urfavecli.Flag{
 			&urfavecli.BoolFlag{
+				Name:    "websocket-replication",
+				Usage:   "omit MoQ advertisement so the syndication peer uses WebSocket",
+				Sources: urfavecli.EnvVars("E2E_WEBSOCKET_REPLICATION"),
+			},
+			&urfavecli.BoolFlag{
 				Name:  "external-stream",
 				Usage: "export the test account's stream key instead of publishing the fixture",
 			},
 			&urfavecli.BoolFlag{
 				Name:  "unapproved-stream",
 				Usage: "start without publishing approval and make the syndication peer receive-only",
+			},
+			&urfavecli.StringFlag{
+				Name:    "peer-binary",
+				Usage:   "node executable for the syndication peer; defaults to this binary",
+				Sources: urfavecli.EnvVars("E2E_PEER_BINARY"),
 			},
 			&urfavecli.StringFlag{
 				Name:    "dev-env",
@@ -118,7 +128,7 @@ func makeE2eCommand(build *config.BuildFlags) *urfavecli.Command {
 			if (pdsHost == "") != (stationHost == "") {
 				return errors.New("--https-pds-hostname and --https-station-hostname go together")
 			}
-			return runE2E(ctx, cmd.String("dev-env"), pdsHost, stationHost, int(cmd.Int("https-port")), cmd.String("app-bundle-id"), cmd.Bool("external-stream"), cmd.Bool("unapproved-stream"))
+			return runE2E(ctx, cmd.String("dev-env"), pdsHost, stationHost, int(cmd.Int("https-port")), cmd.String("app-bundle-id"), cmd.Bool("external-stream"), cmd.Bool("unapproved-stream"), cmd.String("peer-binary"), cmd.Bool("websocket-replication"))
 		},
 	}
 }
@@ -226,7 +236,7 @@ func waitForNode(ctx context.Context, httpAddr string) error {
 	}
 }
 
-func runE2E(ctx context.Context, devEnvPath, httpsPDSHost, httpsStationHost string, httpsPort int, appBundleID string, externalStream, unapprovedStream bool) error {
+func runE2E(ctx context.Context, devEnvPath, httpsPDSHost, httpsStationHost string, httpsPort int, appBundleID string, externalStream, unapprovedStream bool, peerBinary string, websocketReplication bool) error {
 	// Ctrl-C / SIGTERM must unwind through the normal path, or none of the
 	// teardown below runs: Go's default handling exits immediately, which left
 	// the dev-env node, the forked node and the temp data dir behind.
@@ -390,6 +400,9 @@ func runE2E(ctx context.Context, devEnvPath, httpsPDSHost, httpsStationHost stri
 	if !unapprovedStream {
 		nodeEnv = append(nodeEnv, fmt.Sprintf("SP_ALLOWED_STREAMS=%s", out.Did))
 	}
+	if websocketReplication {
+		nodeEnv = append(nodeEnv, "SP_MOQ_ADDR=", "SP_MOQ_URL=", "SP_MOQ_RELAY_URL=")
+	}
 	if tlsEnv != nil {
 		nodeEnv = append(nodeEnv, tlsEnv.NodeEnv()...)
 	}
@@ -453,7 +466,10 @@ func runE2E(ctx context.Context, devEnvPath, httpsPDSHost, httpsStationHost stri
 		// The peer syncs the streamer's repo from the same HTTPS PDS.
 		peerEnv = append(peerEnv, tlsEnv.TrustEnv()...)
 	}
-	peerCmd, err := startNode(ctx, self, env, peerDataDir, peerEnv)
+	if peerBinary == "" {
+		peerBinary = self
+	}
+	peerCmd, err := startNode(ctx, peerBinary, env, peerDataDir, peerEnv)
 	if err != nil {
 		return fmt.Errorf("peer: %w", err)
 	}
