@@ -51,11 +51,15 @@ func TestE2ENodeProfilerEnvironment(t *testing.T) {
 }
 
 func TestE2EPublisherFlags(t *testing.T) {
+	t.Setenv("E2E_PEER_BINARY", "")
+	t.Setenv("E2E_WEBSOCKET_REPLICATION", "false")
 	for _, tc := range []struct {
 		name       string
 		args       []string
 		want       bool
 		unapproved bool
+		peerBinary string
+		websocket  bool
 	}{
 		{name: "fixture by default", args: []string{"e2e"}},
 		{name: "external publisher", args: []string{"e2e", "--external-stream"}, want: true},
@@ -63,6 +67,8 @@ func TestE2EPublisherFlags(t *testing.T) {
 		{name: "unapproved fixture", args: []string{"e2e", "--unapproved-stream"}, unapproved: true},
 		{name: "unapproved external publisher", args: []string{"e2e", "--external-stream", "--unapproved-stream"}, want: true, unapproved: true},
 		{name: "explicit approved fixture", args: []string{"e2e", "--unapproved-stream=false"}},
+		{name: "released peer", args: []string{"e2e", "--peer-binary", "/tmp/released-streamplace"}, peerBinary: "/tmp/released-streamplace"},
+		{name: "websocket replication", args: []string{"e2e", "--websocket-replication"}, websocket: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cmd := makeE2eCommand(&config.BuildFlags{})
@@ -71,6 +77,8 @@ func TestE2EPublisherFlags(t *testing.T) {
 			cmd.Before = func(_ context.Context, cmd *urfavecli.Command) (context.Context, error) {
 				require.Equal(t, tc.want, cmd.Bool("external-stream"))
 				require.Equal(t, tc.unapproved, cmd.Bool("unapproved-stream"))
+				require.Equal(t, tc.peerBinary, cmd.String("peer-binary"))
+				require.Equal(t, tc.websocket, cmd.Bool("websocket-replication"))
 				return nil, stop
 			}
 			require.ErrorIs(t, cmd.Run(t.Context(), tc.args), stop)

@@ -707,19 +707,25 @@ func (r *WebsocketReplicator) consume(ctx context.Context, broadcast *official.B
 			}
 			source := r.bus.SubscribeSegment(ctx, streamer, "source")
 			defer r.bus.UnsubscribeSegment(context.Background(), streamer, "source", source)
-			waiting, cancel := context.WithTimeout(ctx, 15*time.Second)
+			waiting, cancel := context.WithTimeout(ctx, time.Duration(moqMaxAgeUs)*time.Microsecond)
 			defer cancel()
 			for {
 				// Retry after subscribing so an admission racing the subscription is
 				// observed either in the canonical buffer or in the source channel.
 				err = r.feedRenditions(waiting, streamer, addendum)
-				if !errors.Is(err, media.ErrAudioSourceMissing) {
+				// Expiry during validation follows the same path as expiry while idle.
+				expired := waiting.Err() != nil && errors.Is(err, waiting.Err())
+				if !errors.Is(err, media.ErrAudioSourceMissing) && !expired {
 					return err
 				}
 				select {
 				case <-source.C:
 				case <-waiting.Done():
-					return fmt.Errorf("audio continuation source: %w", waiting.Err())
+					if ctx.Err() != nil {
+						return ctx.Err()
+					}
+					log.Warn(ctx, "moq: rendition source audio did not arrive", "streamer", streamer)
+					return nil
 				}
 			}
 		})
