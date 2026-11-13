@@ -1,0 +1,57 @@
+diff --git a/player-B6mw85kT.js b/player-B6mw85kT.js
+index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..7cecc86e5a8e2dfa6400ba9e040cb86421d184c6 100644
+--- a/player-B6mw85kT.js
++++ b/player-B6mw85kT.js
+@@ -490,37 +490,43 @@ var N = class {
+ 	#r;
+ 	#i = 0;
+ 	#a;
++	#o;
++	#s;
++	#c = 0;
++	#l = 0;
+ 	get end() {
+ 		return this.#t;
+ 	}
+ 	clear(e = 0) {
+-		this.#e = 0, this.#t = void 0, this.#i = e, this.#o();
++		this.#e = 0, this.#t = void 0, this.#i = e, this.#u();
+ 	}
+ 	update(e) {
+ 		let t = e.discontinuity !== this.#e;
+-		return t && (this.#e = e.discontinuity, this.#t = void 0, this.#o()), e.frame && e.group !== this.#n && (this.#t = void 0), e.frame && this.#r === void 0 && (this.#r = e.frame.timestamp), e.end !== void 0 && (this.#t = e.end, this.#n = e.group), t;
++		return t && (this.#e = e.discontinuity, this.#t = void 0, this.#u()), e.frame && e.group !== this.#n && (this.#t = void 0), e.frame && this.#r === void 0 && (this.#r = e.frame.timestamp), e.end !== void 0 && (this.#t = e.end, this.#n = e.group), t;
+ 	}
+ 	span(e) {
+ 		let t = this.#r ?? e.timestamp;
+ 		this.#r = t;
+ 		let n = Math.floor(this.#i * e.sampleRate / 48e3), r = this.#a ?? n, i = Math.min(r, e.numberOfFrames);
+ 		this.#a = r - i;
+-		let a = Math.round(n * 1e6 / e.sampleRate), o = Math.max(t, e.timestamp - a), s = e.numberOfFrames - i;
++		let a = Math.round(n * 1e6 / e.sampleRate), o = Math.max(t, e.timestamp - a), s = this.#o, c = s !== void 0 && this.#l === e.sampleRate && this.#s !== void 0 && this.#s % 1e3 == 0 && e.timestamp % 1e3 == 0 && this.#c * 1e3 % e.sampleRate != 0 && Math.abs(o - s) < 1e3;
++		c && (o = Math.round(s));
++		let l = e.numberOfFrames - i;
+ 		if (this.#t !== void 0) {
+-			if (this.#t <= o) s = 0;
++			if (this.#t <= o) l = 0;
+ 			else {
+ 				let t = this.#t - o, n = Math.round(t * e.sampleRate / 1e6);
+-				s = Math.min(s, n);
++				l = Math.min(l, n);
+ 			}
+ 		}
+-		return {
++		return l > 0 && (this.#o = (c ? s : o) + l * 1e6 / e.sampleRate, this.#s = e.timestamp, this.#c = l, this.#l = e.sampleRate), {
+ 			timestamp: o,
+ 			frameOffset: i,
+-			frames: s
++			frames: l
+ 		};
+ 	}
+-	#o() {
+-		this.#r = void 0, this.#a = void 0;
++	#u() {
++		this.#r = void 0, this.#a = void 0, this.#o = void 0, this.#s = void 0, this.#c = 0, this.#l = 0;
+ 	}
+ }, we = class {
+ 	#e;
