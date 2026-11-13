@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"strconv"
 	"sync"
@@ -88,7 +89,7 @@ func TestFeedStreamTranscoderRebuildsOnNewSession(t *testing.T) {
 				meta:    &SegmentMetadata{StartTime: aqtime.FromTime(base.Add(time.Duration(startIdx+i) * time.Second))},
 				local:   true,
 			}
-			require.NoError(t, mm.feedStreamTranscoder(sctx, vs, seg, "aac", ms.Cert, keyPEM),
+			require.NoError(t, mm.feedStreamTranscoder(sctx, vs, seg, "aac", muxl.SignerInput{CertPEM: ms.Cert, KeyPEM: keyPEM}),
 				"feed session %d segment %d", epoch, i)
 		}
 	}
@@ -110,7 +111,7 @@ func TestFeedStreamTranscoderRebuildsOnNewSession(t *testing.T) {
 		"a new ingest session must rebuild the transcoder, not reuse the previous session's continuous encoder")
 	require.Equal(t, s2, t2.sessionID)
 
-	// The previous session's transcoder is flushed + torn down (async on reset).
+	// The previous session's transcoder is drained before its replacement starts.
 	require.Eventually(t, t1.isClosed, 20*time.Second, 20*time.Millisecond,
 		"the previous session's transcoder must be flushed + torn down on reconnect")
 
@@ -119,14 +120,14 @@ func TestFeedStreamTranscoderRebuildsOnNewSession(t *testing.T) {
 
 // allSignedBareSegments signs the fragmented fixture per-segment and returns
 // every GoP's bare canonical .m4s (the live ingest shape), in order.
-func allSignedBareSegments(t *testing.T, ctx context.Context, ms *MediaSignerLocal, fragPath string) [][]byte {
+func allSignedBareSegments(t testing.TB, ctx context.Context, ms *MediaSignerLocal, fragPath string) [][]byte {
 	t.Helper()
 	frag, err := os.ReadFile(fragPath)
 	require.NoError(t, err)
 	eventCh := make(chan *muxl.MuxlEvent, 16)
 	errCh := make(chan error, 1)
 	go func() {
-		err := ms.SignSegmentStream(ctx, bytes.NewReader(frag), eventCh)
+		err := ms.SignSegmentStream(ctx, bytes.NewReader(frag), eventCh, nil)
 		close(eventCh)
 		errCh <- err
 	}()
@@ -188,32 +189,47 @@ func TestAudioCompletionSignsEveryCanonicalPiece(t *testing.T) {
 	pieces := allSignedBareSegments(t, ctx, ms, getFixture("h264-opus-frag.mp4"))
 	require.GreaterOrEqual(t, len(pieces), 2)
 	source := bytes.Join(pieces, nil)
-	fixture, err := os.ReadFile(getFixture("h264-opus-frag.mp4"))
-	require.NoError(t, err)
-	// Signing after a lossless re-container must cover every canonical asset,
-	// including when the audio spans more than one video keyframe boundary.
-	output, err := muxl.RunMuxlCanonicalize(ctx, fixture, nil)
-	require.NoError(t, err)
-	events, err := unwrapMuxlEvents(ctx, output)
-	require.NoError(t, err)
-	audioID, ok := audioTrackID(catalogFromEvents(events))
-	require.True(t, ok)
-	count := 0
-	for _, event := range events {
-		if len(event.Tracks[strconv.FormatUint(uint64(audioID), 10)]) != 0 {
-			count++
-		}
-	}
-	require.GreaterOrEqual(t, count, 2, "fixture must cross a canonical audio boundary")
-	cert, key := nodeSignerForTest(t)
-	mm := &MediaManager{cli: &config.CLI{BroadcasterHost: "test.example.com"}}
 	sourceEvents, err := unwrapMuxlEvents(ctx, source)
 	require.NoError(t, err)
-	completed, err := mm.finishTranscodedSegment(ctx, source, sourceEvents, output, audioID, cert, key)
+	ingredient, err := sourceAudioIngredient(sourceEvents)
 	require.NoError(t, err)
-	require.True(t, bytes.HasPrefix(completed, source), "all original signed source assets remain unchanged")
-	_, err = ValidateMP4MediaC2PA(ctx, completed)
+	audioID, ok := audioTrackID(catalogFromEvents(sourceEvents))
+	require.True(t, ok)
+	// Use real consecutive packets and codec initialization. The chunk writer
+	// receives track 1 from its encoder's muxer, independently of source IDs.
+	var audio bytes.Buffer
+	require.NoError(t, muxl.RunMuxlWrap(ctx, bytes.NewReader(ingredient.data), "fmp4", &audio))
+	canonical, err := muxl.RunMuxlCanonicalize(ctx, audio.Bytes(), map[uint32]uint32{audioID: 1})
+	require.NoError(t, err)
+	var header bytes.Buffer
+	require.NoError(t, muxl.RunMuxlWrapInit(ctx, bytes.NewReader(canonical), &header))
+	packets := canonicalAudioPackets(t, ctx, canonical, "opus")
+	require.NotEmpty(t, packets)
+	cert, key := nodeSignerForTest(t)
+	mm := &MediaManager{cli: &config.CLI{BroadcasterHost: "test.example.com"}}
+	signed, err := mm.signAudioChunk(ctx, header.Bytes(), packets, []audioIngredient{ingredient}, sourceEvents, muxl.SignerInput{CertPEM: cert, KeyPEM: key}, transcodeManifestFor(mm.cli.BroadcasterDID(), "transcoded audio"))
+	require.NoError(t, err)
+	verification, err := muxl.RunMuxlVerify(ctx, bytes.NewReader(signed))
+	require.NoError(t, err)
+	assets, err := parseVerifiedSegments([]byte(verification))
 	require.NoError(t, err, "each derived canonical audio asset must carry its own valid signature")
+	require.GreaterOrEqual(t, len(assets), 2, "the chunk must cross a canonical audio boundary and sign every piece")
+	require.Equal(t, packets, canonicalAudioPackets(t, ctx, signed, "opus"), "every packet survives canonicalization and signing")
+	for _, test := range []struct {
+		name        string
+		first, next uint64
+	}{
+		{"equal clock", uint64(time.Second), uint64(time.Second)},
+		{"backwards clock", uint64(time.Second), uint64(time.Second / 2)},
+		{"duration overflow", 0, uint64(time.Second) * (uint64(^uint32(0))/48000 + 2)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			invalid := append([]audioPacket(nil), packets[:2]...)
+			invalid[0].pts, invalid[1].pts = test.first, test.next
+			_, err := mm.signAudioChunk(ctx, header.Bytes(), invalid, []audioIngredient{ingredient}, sourceEvents, muxl.SignerInput{CertPEM: cert, KeyPEM: key}, transcodeManifestFor(mm.cli.BroadcasterDID(), "transcoded audio"))
+			require.ErrorContains(t, err, "invalid sample duration", "invalid clocks must not be silently truncated into an MP4 sample table")
+		})
+	}
 }
 
 // TestStreamTranscoderGapless feeds every segment of one stream through the
@@ -233,9 +249,9 @@ func TestStreamTranscoderGapless(t *testing.T) {
 
 	var mu sync.Mutex
 	var completed [][]byte
-	tr := mm.newStreamTranscoder(ctx, "aac", ms.Cert, keyPEM, func(_ any, c []byte) {
+	tr := mm.newStreamTranscoder(ctx, "aac", ms.Cert, keyPEM, func(_ any, c []byte, audioOnly bool) {
 		mu.Lock()
-		completed = append(completed, c)
+		appendAudioCompletion(&completed, c, audioOnly)
 		mu.Unlock()
 	})
 
@@ -268,16 +284,9 @@ func TestStreamTranscoderGapless(t *testing.T) {
 		require.NotContains(t, out, `"validation_state":"Invalid"`, "segment %d must validate", i)
 
 		o, a := audioDurationsSeconds(t, ctx, c)
-		// Each completed segment must carry a FULL GoP of transcoded audio, not a
-		// fraction of it. Relabeling the transcoded track to a free id runs it back
-		// through muxl's canonicalize, which re-segments; cut audio-only (no video
-		// keyframe to anchor on) it splits each ~2 s GoP into ~1 s pieces, and a bug
-		// that extracted only the first piece silently HALVED the track — every
-		// segment played ~1 s of AAC against ~2 s of Opus/video, audible as the
-		// audio cutting out for the back half of each segment. This proportional
-		// guard catches that (and any gross under-fill) independent of segment
-		// count; finishTranscodedSegment now carries the video through as the cut
-		// clock so the audio re-canonicalizes as one full segment per GoP.
+		// Canonicalization can split an audio chunk into multiple assets. Keeping
+		// only the first would truncate playback; this guards against gross
+		// under-fill independently of the number of completed source segments.
 		require.Greater(t, a, 0.65*o,
 			"segment %d: transcoded AAC %.3fs far short of source Opus %.3fs (halved track?)", i, a, o)
 		totalOpus += o
@@ -289,10 +298,9 @@ func TestStreamTranscoderGapless(t *testing.T) {
 	// Gapless: the transcoded track tracks the source duration with no per-segment
 	// accumulation. The continuous encoder pays its priming ONCE at stream start
 	// (the gappy per-segment transcoder this replaced paid 40–80 ms at EVERY
-	// boundary), and each segment's audio is cut on the video keyframe — which need
-	// not land on an AAC frame — so per-segment durations quantize by ±1 AAC frame
-	// (~21 ms) around the source without drifting (measured ~0.15 ms/segment over a
-	// 10-min real stream). The fixture is only a few short segments, too few to
+	// boundary). Input markers regroup whole encoded packets, so per-segment
+	// durations quantize by an AAC frame (~21 ms) without accumulating drift.
+	// The fixture is only a few short segments, too few to
 	// average the one-time priming, so bound = priming + ~one frame per segment.
 	tol := 0.040 + 0.025*float64(len(completed))
 	require.InDelta(t, totalOpus, totalAAC, tol,
@@ -306,8 +314,7 @@ func TestStreamTranscoderGapless(t *testing.T) {
 // no PTS, which made mp4mux abort the whole pipeline ("Could not multiplex
 // stream"); the per-stream transcoder then produced NOTHING, so the stream
 // silently lost its AAC track for its entire life (a prod incident on a 1080p60
-// High-profile Opus stream). buildAudioTranscodePipeline now repairs the
-// (discarded) passthrough video's timestamps before the muxer, so the segment
+// High-profile Opus stream). Video now drains without entering the muxer, so the segment
 // must transcode to a verifiable dual-codec result instead of wedging.
 func TestStreamTranscoderDegenerateTimestamps(t *testing.T) {
 	ctx := context.Background()
@@ -321,9 +328,9 @@ func TestStreamTranscoderDegenerateTimestamps(t *testing.T) {
 
 	var mu sync.Mutex
 	var completed [][]byte
-	tr := mm.newStreamTranscoder(ctx, "aac", ms.Cert, keyPEM, func(_ any, c []byte) {
+	tr := mm.newStreamTranscoder(ctx, "aac", ms.Cert, keyPEM, func(_ any, c []byte, audioOnly bool) {
 		mu.Lock()
-		completed = append(completed, c)
+		appendAudioCompletion(&completed, c, audioOnly)
 		mu.Unlock()
 	})
 	require.NoError(t, tr.Feed(seg, 0), "degenerate-timestamp segment must not wedge the muxer")
@@ -332,7 +339,7 @@ func TestStreamTranscoderDegenerateTimestamps(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	// Before the PTS repair the muxer aborted and this segment was dropped whole.
+	// Invalid source-video timestamps must not drop the audio completion.
 	require.Len(t, completed, 1, "the fed segment must complete to a dual-codec result")
 
 	c := completed[0]
@@ -358,4 +365,122 @@ func TestStreamTranscoderDegenerateTimestamps(t *testing.T) {
 	o, a := audioDurationsSeconds(t, ctx, c)
 	require.Greater(t, a, 0.65*o,
 		"transcoded AAC %.3fs far short of source Opus %.3fs", a, o)
+}
+
+func TestStreamTranscoderCompletesBeforeNextGoP(t *testing.T) {
+	for _, fixture := range []string{"ertmp-red-h264.mp4", "h264-opus-frag.mp4"} {
+		t.Run(fixture, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+			defer cancel()
+			ms := newBareSegmentSigner(t)
+			source := allSignedBareSegments(t, ctx, ms, getFixture(fixture))
+			require.GreaterOrEqual(t, len(source), 2)
+			codecs := audioCodecsOf(t, ctx, source[0])
+			target := "aac"
+			for _, codec := range codecs {
+				if isAACCodec(codec) {
+					target = "opus"
+				}
+			}
+			cert, key := nodeSignerForTest(t)
+			mm := &MediaManager{cli: &config.CLI{BroadcasterHost: "test.example.com"}}
+			type delivery struct {
+				data      []byte
+				audioOnly bool
+			}
+			completed := make(chan delivery, len(source)+1)
+			tr := mm.newStreamTranscoder(ctx, target, cert, key, func(_ any, b []byte, audioOnly bool) { completed <- delivery{b, audioOnly} })
+			t.Cleanup(func() { require.NoError(t, tr.Close()) })
+			require.NoError(t, tr.Feed(source[0], 0))
+			var outputs [][]byte
+			select {
+			case b := <-completed:
+				require.False(t, b.audioOnly)
+				appendAudioCompletion(&outputs, b.data, b.audioOnly)
+			case <-time.After(2 * time.Second):
+				t.Fatal("completion waits for the next GoP even though the current source was fully fed")
+			}
+			for i, b := range source[1:] {
+				require.NoError(t, tr.Feed(b, i+1))
+			}
+			require.NoError(t, tr.Close())
+			close(completed)
+			for b := range completed {
+				appendAudioCompletion(&outputs, b.data, b.audioOnly)
+			}
+			require.Len(t, outputs, len(source))
+			var opusSeconds, aacSeconds float64
+			for i, b := range outputs {
+				require.True(t, bytes.HasPrefix(b, source[i]), "signed source bytes must remain unchanged")
+				_, err := ValidateMP4MediaC2PA(ctx, b)
+				require.NoError(t, err)
+				opus, aac := audioDurationsSeconds(t, ctx, b)
+				require.Greater(t, opus, 0.0)
+				require.Greater(t, aac, 0.0)
+				opusSeconds += opus
+				aacSeconds += aac
+			}
+			require.InDelta(t, opusSeconds, aacSeconds, .04+.025*float64(len(source)), "continuous encoding must not accumulate priming at each boundary")
+		})
+	}
+}
+
+// appendAudioCompletion assembles delivery chunks for assertions on a complete
+// stored source segment, including the independently signed encoder tail.
+func appendAudioCompletion(dst *[][]byte, chunk []byte, audioOnly bool) {
+	if audioOnly {
+		i := len(*dst) - 1
+		(*dst)[i] = append((*dst)[i], chunk...)
+	} else {
+		*dst = append(*dst, chunk)
+	}
+}
+
+func TestAudioCompletionKeepsLocalAndReplicatedSigningAuthoritySeparate(t *testing.T) {
+	for _, callback := range []bool{false, true} {
+		t.Run(fmt.Sprint(callback), func(t *testing.T) {
+			ctx := t.Context()
+			source := audioSignerForTest(t)
+			segments := allSignedBareSegments(t, ctx, source, getFixture("ertmp-red-h264.mp4"))
+			require.GreaterOrEqual(t, len(segments), 2)
+			localSigner, err := source.SigningInput()
+			require.NoError(t, err)
+			if callback {
+				localSigner.KeyPEM = nil
+				localSigner.Sign = muxl.SignerToCallback(source.Signer, 32)
+			}
+			node := newBareSegmentSigner(t)
+			nodeInput, err := node.SigningInput()
+			require.NoError(t, err)
+			mm := NewOffline(&config.CLI{BroadcasterHost: "node.test", AllowedStreams: []string{source.Streamer()}, Syndicate: []string{source.Streamer()}})
+			mm.transcoders = map[string]*streamTranscoder{}
+			local, _, err := mm.validateSource(ctx, segments[0], true, source.Streamer())
+			require.NoError(t, err)
+			require.NoError(t, mm.feedStreamTranscoder(ctx, local, segments[0], "opus", localSigner))
+			first := mm.transcoders[source.Streamer()]
+			remote, _, err := mm.validateSource(ctx, segments[1], false, source.Streamer())
+			require.NoError(t, err)
+			require.NoError(t, mm.feedStreamTranscoder(ctx, remote, segments[1], "opus", nodeInput))
+			require.NotSame(t, first, mm.transcoders[source.Streamer()], "a different signing authority must not inherit the previous encoder")
+			require.NoError(t, mm.closeStreamTranscoder(ctx, source.Streamer()))
+			buffered := mm.BufferedSegments(source.Streamer())
+			require.Len(t, buffered, 2)
+			for _, segment := range buffered {
+				verified, err := ValidateMP4MediaC2PA(ctx, segment.Data)
+				require.NoError(t, err)
+				events, err := unwrapMuxlEvents(ctx, segment.Data)
+				require.NoError(t, err)
+				cat := catalogFromEvents(events)
+				for _, audio := range cat.Audio.Renditions {
+					if isOpusCodec(audio.Codec) {
+						expected := node.DID()
+						if segment.Local {
+							expected = source.DID()
+						}
+						require.Equal(t, expected, verified.trackSigningKeys[audio.TrackID()], "replicated media must never borrow a local stream's signing key")
+					}
+				}
+			}
+		})
+	}
 }

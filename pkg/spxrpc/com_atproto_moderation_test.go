@@ -142,9 +142,15 @@ func TestCreateReportRouting(t *testing.T) {
 				keyPEM, err := signers.MarshalES256KPrivateKeyPEM(localSigner.Signer)
 				require.NoError(t, err)
 				manifest := []byte(fmt.Sprintf(`{"title":"report clip","assertions":[{"label":"c2pa.actions","data":{"actions":[{"action":"c2pa.created"}]}},{"label":"cawg.metadata","data":{"@context":{"dc":"http://purl.org/dc/elements/1.1/"},"dc:creator":%q,"dc:title":"report clip","dc:date":%q}}]}`, streamerDID, time.Now().UTC().Format(time.RFC3339Nano)))
+				nodeKey, err := secp256k1.GeneratePrivateKey()
+				require.NoError(t, err)
+				nodeCert, err := signers.GenerateES256KCert(nodeKey.ToECDSA())
+				require.NoError(t, err)
+				nodeKeyPEM, err := signers.MarshalES256KPrivateKeyPEM(nodeKey.ToECDSA())
+				require.NoError(t, err)
 				cfg := media.IngestWorkerConfig{
 					StreamerDID: streamerDID, KeyPEM: keyPEM, CertPEM: localSigner.Cert, Manifest: manifest,
-					NodeKeyPEM: keyPEM, NodeCertPEM: localSigner.Cert, BroadcasterHost: "stream.example",
+					NodeKeyPEM: nodeKeyPEM, NodeCertPEM: nodeCert, BroadcasterHost: "stream.example",
 				}
 				fixture, err := test.Files.ReadFile("fixtures/h264-opus-frag.mp4")
 				require.NoError(t, err)
@@ -179,8 +185,16 @@ func TestCreateReportRouting(t *testing.T) {
 						break
 					}
 					require.NoError(t, err)
-					require.Equal(t, ingestframe.Segment, typ)
-					require.NoError(t, mm.ValidateMP4(ctx, bytes.NewReader(segment), true))
+					switch typ {
+					case ingestframe.SourceSegment:
+						continue
+					case ingestframe.CompletedSourceSegment:
+						require.NoError(t, mm.ValidateMP4(ctx, bytes.NewReader(segment), true))
+					case ingestframe.AudioAddendum:
+						require.NoError(t, mm.ReceiveAudioAddendum(ctx, streamerDID, segment))
+					default:
+						t.Fatalf("unexpected worker frame %s", typ)
+					}
 				}
 			}
 			mod := newTestModel(t)

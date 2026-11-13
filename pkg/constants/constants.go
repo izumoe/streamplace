@@ -5,6 +5,7 @@ import "fmt"
 var PLACE_STREAM_KEY = "place.stream.key"                                     //nolint:all
 var PLACE_STREAM_LIVESTREAM = "place.stream.livestream"                       //nolint:all
 var PLACE_STREAM_CHAT_MESSAGE = "place.stream.chat.message"                   //nolint:all
+var PLACE_STREAM_BIO_PAGE = "place.stream.bio.page"                           //nolint:all
 var PLACE_STREAM_CHAT_PROFILE = "place.stream.chat.profile"                   //nolint:all
 var PLACE_STREAM_SERVER_SETTINGS = "place.stream.server.settings"             //nolint:all
 var PLACE_STREAM_LIVE_TELEPORT = "place.stream.live.teleport"                 //nolint:all

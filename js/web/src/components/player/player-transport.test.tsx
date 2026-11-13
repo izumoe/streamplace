@@ -120,6 +120,37 @@ it("keeps an explicit WebRTC source on WebRTC without discovery requests", async
   }
 });
 
+it("falls back from failed WebRTC without saving it as the viewer's preference", async () => {
+  localStorage.setItem("player-transport", "webrtc");
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  try {
+    await act(async () =>
+      root.render(
+        <FullscreenProvider>
+          <Player
+            src="https://node.example/playlist?streamer=did:plc:alice"
+            active
+          />
+        </FullscreenProvider>,
+      ),
+    );
+    const video = container.querySelector("video")!;
+    Object.defineProperty(video, "error", { value: { code: 2 } });
+    await act(async () => video.dispatchEvent(new Event("error")));
+    expect(
+      container
+        .querySelector("[data-playback-transport]")
+        ?.getAttribute("data-playback-transport"),
+    ).toBe("hls");
+    expect(localStorage.getItem("player-transport")).toBe("webrtc");
+  } finally {
+    await act(async () => root.unmount());
+    container.remove();
+  }
+});
+
 it("keeps the viewer unmuted when switching from MoQ to standard playback", async () => {
   vi.stubGlobal("isSecureContext", true);
   for (const api of [
@@ -173,6 +204,7 @@ it("keeps the viewer unmuted when switching from MoQ to standard playback", asyn
         ?.getAttribute("data-playback-transport"),
     ).toBe("hls");
     expect(container.querySelector("video")!.muted).toBe(false);
+    expect(localStorage.getItem("player-transport")).toBe("hls");
   } finally {
     await act(async () => root.unmount());
     container.remove();
@@ -222,6 +254,16 @@ it.each([undefined, 0, 7])(
           droppedFrames: value,
           fps: value,
           bitrate: value === undefined ? undefined : value * 1000,
+          renditionBitrate: value === undefined ? undefined : value * 1000,
+          availableBandwidth: value === undefined ? undefined : value * 2000,
+          liveEdgeDelay: value,
+          playbackDelayMs: value,
+          publicationBatchMs: value,
+          roundTripTimeMs: value,
+          avSyncMs: value === undefined ? undefined : -value,
+          processingDelayMs: value,
+          decodeTimeMs: value,
+          jitterBufferMs: value,
           totalFrames: 120,
           level: -1,
         }),
@@ -235,18 +277,43 @@ it.each([undefined, 0, 7])(
         document.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"]'),
       ).find((item) => item.textContent === "player-stats")!;
       await act(async () => toggle.click());
-      const dialog = container.querySelector(
+      await act(async () => {
+        await vi.dynamicImportSettled();
+      });
+      const summary = container.querySelector(
         '[role="dialog"][aria-label="player-stats"]',
       )!;
-      expect(dialog).not.toBeNull();
+      expect(summary).not.toBeNull();
+      const dialog = summary;
+      const text = dialog.textContent ?? "";
       expect(dialog.textContent?.includes("player-stats-skipped")).toBe(
         value !== undefined,
       );
       expect(dialog.textContent?.includes("FPS")).toBe(value !== undefined);
-      expect(dialog.textContent?.includes("player-stats-bitrate")).toBe(
-        value !== undefined,
-      );
+      for (const label of [
+        "bitrate",
+        "rendition-bitrate",
+        "available-bandwidth",
+        "live-edge-delay",
+        "playback-delay",
+        "publication-batch",
+        "rtt",
+        "av-sync",
+        "processing-delay",
+        "decode-time",
+        "jitter-buffer",
+      ]) {
+        expect(text.includes(`player-stats-${label}`)).toBe(
+          value !== undefined,
+        );
+      }
+      expect(dialog.textContent).toContain("player-stats-broadcaster-delay");
+      expect(dialog.textContent).toContain("player-stats-not-measured");
+      expect(dialog.querySelector("details")).toBeNull();
+      expect(dialog.textContent).toContain("player-stats-session");
       if (value !== undefined) {
+        expect(text).toContain(`${value.toFixed(1)} ms`);
+        expect(text).toContain(`${(-value).toFixed(1)} ms`);
         expect(dialog.textContent).toContain(`${value} / 120`);
       }
     } finally {

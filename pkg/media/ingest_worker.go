@@ -51,7 +51,8 @@ func (h *manifestHolder) set(b []byte) {
 // receives the streamer key directly. This is the deliberately-temporary
 // approach; the detach/reattach work will revisit how a worker holds keys.
 type IngestWorkerConfig struct {
-	StreamerDID string `json:"streamer_did"`
+	StreamerDID         string  `json:"streamer_did"`
+	PublisherGeneration *uint64 `json:"publisher_generation,omitempty"`
 	// KeyPEM is the streamer's ES256K signing key in PEM. The Mist-pull/RTMP path
 	// always yields a software key, which is what muxl-sign wants here; it is
 	// forwarded verbatim, no reconstruction.
@@ -189,9 +190,11 @@ func (mm *MediaManager) workerSegmentSink(ctx context.Context, cfg IngestWorkerC
 			}
 			earlySource = target == "aac"
 			transcoder = mm.newStreamTranscoder(context.WithoutCancel(ctx), target, cfg.NodeCertPEM, cfg.NodeKeyPEM,
-				func(_ any, completed []byte) {
+				func(_ any, completed []byte, audioOnly bool) {
 					var ferr error
-					if earlySource {
+					if audioOnly {
+						ferr = frames.AudioAddendum(completed)
+					} else if earlySource {
 						ferr = frames.CompletedSourceSegment(completed)
 					} else {
 						ferr = frames.Segment(completed)
@@ -245,9 +248,8 @@ func RunMP4IngestWorker(ctx context.Context, cfg IngestWorkerConfig, stdin io.Re
 	defer wd.stop()
 	frames = wd.wrap(frames)
 
-	// Minimal manager: the broadcaster identity the transcode completion
-	// (finishTranscodedSegment) stamps into the node-signed AAC track, plus the
-	// destination for an optional debug recording.
+	// Minimal manager: the broadcaster identity used to sign transcoded audio,
+	// plus the destination for an optional debug recording.
 	mm := &MediaManager{cli: cfg.workerCLI()}
 	onSegment, flush := mm.workerSegmentSink(ctx, cfg, frames)
 

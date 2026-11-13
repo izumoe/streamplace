@@ -31,9 +31,12 @@ func (s *Server) handlePlaceStreamPlaybackGetPlaybackServer(ctx context.Context,
 	}
 	// Origins refresh every 30 seconds while ingest is active.
 	if origin != nil && origin.MoqURL != "" && time.Since(origin.UpdatedAt) < time.Minute {
+		sessionURL := url.URL{Scheme: "https", Host: DIDWebToHost(origin.ServerDID), Path: "/api/moq/session", RawQuery: url.Values{"streamer": {streamer}}.Encode()}
+		session := sessionURL.String()
 		out.Moq = &placestream.PlaybackGetPlaybackServer_Moq{
-			Url:  origin.MoqURL,
-			Name: "playback/" + streamer,
+			Url:        origin.MoqURL,
+			SessionUrl: &session,
+			Name:       "playback/" + streamer,
 		}
 	}
 	return out, nil

@@ -353,7 +353,9 @@ func (s *Server) handlePlaceStreamLiveSubscribeSegments(c echo.Context) error {
 
 	ctx, cancel := context.WithCancel(c.Request().Context())
 	defer cancel()
+	fullSource := c.Request().Header.Get("Streamplace-Source") == "full"
 	go func() {
+		defer ws.Close()
 
 		segChan := s.bus.SubscribeSegmentBuf(ctx, user, "source", 2)
 		defer s.bus.UnsubscribeSegment(ctx, user, "source", segChan)
@@ -376,11 +378,34 @@ func (s *Server) handlePlaceStreamLiveSubscribeSegments(c echo.Context) error {
 				log.Debug(ctx, "got segment", "file", file.Filepath)
 				// Ship the bare canonical MUXL segment; the receiver
 				// re-validates it via ValidateMP4 (which accepts bare .m4s).
-				err := ws.WriteMessage(websocket.BinaryMessage, file.Muxl)
+				data := file.Muxl
+				var addendum []byte
+				if file.AudioOnly {
+					if !fullSource {
+						continue // legacy peers complete audio with their own signer
+					}
+					data = media.FrameRenditions(data)
+				} else if !fullSource {
+					var err error
+					data, addendum, err = media.H264ReplicationSource(ctx, data)
+					if err != nil {
+						log.Warn(ctx, "could not select H264 replication source", "error", err)
+						cancel()
+						return
+					}
+				}
+				err := ws.WriteMessage(websocket.BinaryMessage, data)
 				if err != nil {
 					log.Error(ctx, "could not write message", "error", err)
 					cancel()
 					return
+				}
+				if len(addendum) > 0 {
+					if err := ws.WriteMessage(websocket.BinaryMessage, media.FrameRenditions(addendum)); err != nil {
+						log.Error(ctx, "could not write source renditions", "error", err)
+						cancel()
+						return
+					}
 				}
 			case ren := <-renChan.C:
 				if !ren.Published {

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm/logger"
 	"stream.place/streamplace/pkg/placestream"
 )
 
@@ -48,11 +49,11 @@ func TestMostRecentChatMessagesRetention(t *testing.T) {
 		IndexedAt:       &now,
 	}))
 
-	all, err := mod.MostRecentChatMessages("did:plc:streamer", time.Time{})
+	all, err := mod.MostRecentChatMessages(ctx, "did:plc:streamer", time.Time{})
 	require.NoError(t, err)
 	require.Len(t, all, 2, "a zero cutoff serves the whole backlog")
 
-	recent, err := mod.MostRecentChatMessages("did:plc:streamer", now.Add(-24*time.Hour))
+	recent, err := mod.MostRecentChatMessages(ctx, "did:plc:streamer", now.Add(-24*time.Hour))
 	require.NoError(t, err)
 	require.Len(t, recent, 1, "a message older than the window is withheld")
 	require.Equal(t,
@@ -60,4 +61,26 @@ func TestMostRecentChatMessagesRetention(t *testing.T) {
 
 	require.Equal(t, int64(2), countRows(t, mod, &ChatMessage{}),
 		"withholding history must not delete it")
+}
+
+func TestChatSnapshotReadsHonorCancellation(t *testing.T) {
+	mod := indexedTestDB(t)
+	mod.DB.Logger = logger.Discard
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	for _, tc := range []struct {
+		name string
+		read func() error
+	}{
+		{"history", func() error { _, err := mod.MostRecentChatMessages(ctx, "did:plc:streamer", time.Time{}); return err }},
+		{"message", func() error {
+			_, err := mod.GetChatMessage(ctx, "at://did:plc:author/place.stream.chat.message/one")
+			return err
+		}},
+		{"pin", func() error { _, err := mod.GetActivePinnedRecord(ctx, "did:plc:streamer"); return err }},
+		{"chat profile", func() error { _, err := mod.GetChatProfile(ctx, "did:plc:author"); return err }},
+		{"verification profile", func() error { _, err := mod.GetBskyProfile(ctx, "did:plc:author", false); return err }},
+	} {
+		t.Run(tc.name, func(t *testing.T) { require.ErrorIs(t, tc.read(), context.Canceled) })
+	}
 }

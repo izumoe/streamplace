@@ -1,10 +1,7 @@
 export const STALL_TIMEOUT_MS = 10_000;
 const PLAYBACK_SCHEDULING_RESERVE_MS = 200;
 
-export function getMoqPlaybackFloor(
-  catalog: Record<string, unknown>,
-  current?: number,
-) {
+export function getMoqBatchDuration(catalog: Record<string, unknown>) {
   const timing = catalog.streamplace;
   if (typeof timing !== "object" || timing === null) return;
   const duration = (timing as Record<string, unknown>).batchDurationMs;
@@ -15,6 +12,15 @@ export function getMoqPlaybackFloor(
     duration >= STALL_TIMEOUT_MS
   )
     return;
+  return duration;
+}
+
+export function getMoqPlaybackFloor(
+  catalog: Record<string, unknown>,
+  current?: number,
+) {
+  const duration = getMoqBatchDuration(catalog);
+  if (duration === undefined) return;
   // Keep playing through small cadence changes that fit the allocated reserve.
   const floor =
     current !== undefined && duration <= current
@@ -74,5 +80,24 @@ export async function getMoqPlaybackSource(src: string, signal: AbortSignal) {
     throw new Error("Invalid MoQ certificate fingerprint");
   }
   url.searchParams.delete("certhash");
-  return { url, name: moq.name as string, certificateHash };
+  let sessionUrl: URL | undefined;
+  if (typeof moq.sessionUrl === "string") {
+    try {
+      const endpoint = new URL(moq.sessionUrl);
+      if (
+        endpoint.protocol === "https:" &&
+        !endpoint.username &&
+        !endpoint.password
+      )
+        sessionUrl = endpoint;
+    } catch {
+      /* Reporting is optional; malformed reporting metadata cannot break playback. */
+    }
+  }
+  return {
+    url,
+    name: moq.name as string,
+    certificateHash,
+    ...(sessionUrl ? { sessionUrl } : {}),
+  };
 }

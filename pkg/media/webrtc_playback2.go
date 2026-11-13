@@ -134,7 +134,11 @@ func (mm *MediaManager) WebRTCPlayback2(ctx context.Context, user string, rendit
 
 		var backlog atomic.Int64
 
-		packetQueue := make(chan *bus.PacketizedSegment, 1024)
+		type playbackSegment struct {
+			packet    *bus.PacketizedSegment
+			audioOnly bool
+		}
+		packetQueue := make(chan playbackSegment, 1024)
 		go func() {
 			// Starting at connection time keeps finite cached media available
 			// until the tracks bind, then joins the newest cached GoP.
@@ -162,7 +166,7 @@ func (mm *MediaManager) WebRTCPlayback2(ctx context.Context, user string, rendit
 					}
 					backlog.Add(int64(file.PacketizedData.Duration))
 					select {
-					case packetQueue <- file.PacketizedData:
+					case packetQueue <- playbackSegment{packet: file.PacketizedData, audioOnly: file.AudioOnly}:
 					case <-ctx.Done():
 						backlog.Add(-int64(file.PacketizedData.Duration))
 						return
@@ -181,11 +185,11 @@ func (mm *MediaManager) WebRTCPlayback2(ctx context.Context, user string, rendit
 
 			var videoPacer, audioPacer samplePacer
 			for {
-				var packet *bus.PacketizedSegment
+				var segment playbackSegment
 				select {
 				case <-ctx.Done():
 					return
-				case packet = <-packetQueue:
+				case segment = <-packetQueue:
 				default:
 					// Pause both clocks only while no media is available. A source
 					// stall must not become a burst of overdue samples on recovery.
@@ -193,13 +197,14 @@ func (mm *MediaManager) WebRTCPlayback2(ctx context.Context, user string, rendit
 					select {
 					case <-ctx.Done():
 						return
-					case packet = <-packetQueue:
+					case segment = <-packetQueue:
 					}
 					idle := time.Since(started)
 					videoPacer.pause(idle)
 					audioPacer.pause(idle)
 				}
 
+				packet := segment.packet
 				queuedDuration := time.Duration(backlog.Add(-int64(packet.Duration)))
 				scalar := getPlaybackRate(queuedDuration)
 				log.Debug(ctx, "playback backlog", "backlog", queuedDuration, "scalar", scalar)
@@ -209,7 +214,7 @@ func (mm *MediaManager) WebRTCPlayback2(ctx context.Context, user string, rendit
 					g.Go(func() error {
 						return videoPacer.writeSamples(groupCtx, videoTrack, packet.Video, scalar, 0)
 					})
-				} else if !audioOnly {
+				} else if !audioOnly && !segment.audioOnly {
 					videoPacer.deadline = time.Time{}
 					log.Warn(ctx, "no video samples to write")
 				}

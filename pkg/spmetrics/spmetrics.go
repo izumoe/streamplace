@@ -21,6 +21,11 @@ var ViewersTotal = promauto.NewGaugeVec(prometheus.GaugeOpts{
 	Help: "total number of viewers",
 }, []string{"protocol"})
 
+var MoqRelayStatsAvailable = promauto.NewGauge(prometheus.GaugeOpts{
+	Name: "streamplace_moq_relay_stats_available",
+	Help: "1 when complete relay stats determine MoQ viewer counts; 0 when using reporting-player sessions",
+})
+
 var StreamSessions = promauto.NewGaugeVec(prometheus.GaugeOpts{
 	Name: "streamplace_stream_sessions",
 	Help: "number of open stream sessions per streamer",
@@ -73,13 +78,12 @@ var SigningDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
 	Buckets: []float64{0, 250, 500, 750, 1000, 1250, 1500, 2000, 2500, 3000, 3500, 4000, 4500, 5000, 10000, 20000, 30000, 60000},
 }, []string{"streamer"})
 
-// SegmentDeliveryDuration measures wall time from when the muxer hands a
-// fresh segment to the sign callback through the end of validation —
-// i.e. the latency the user actually waits on before the segment is
-// available downstream. Wraps per-segment signing + ValidateMP4.
+// SegmentDeliveryDuration measures validation and synchronous distribution in
+// receiveSignedSegment. Signing has already finished before this timer starts;
+// ingest, GoP accumulation, signing, and asynchronous codec completion are excluded.
 var SegmentDeliveryDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
 	Name:    "streamplace_segment_delivery_duration_ms",
-	Help:    "duration of sign + validate in ms (the user-visible per-segment latency)",
+	Help:    "duration of validation and synchronous distribution after signing, in ms",
 	Buckets: []float64{0, 250, 500, 750, 1000, 1250, 1500, 2000, 2500, 3000, 3500, 4000, 4500, 5000, 10000, 20000, 30000, 60000},
 }, []string{"streamer"})
 
@@ -318,33 +322,23 @@ var DuplicateMistWorkers = promauto.NewGauge(prometheus.GaugeOpts{
 	Help: "duplicate-mist shadow worker subprocesses currently running (including ones draining after publisher EOF)",
 })
 
-func ViewerInc(user string, protocol string) {
-	go func() {
-		viewersLock.Lock()
-		defer viewersLock.Unlock()
-		viewersByStreamer[user]++
-		viewersByProtocol[protocol]++
-		Viewers.WithLabelValues(user).Set(float64(viewersByStreamer[user]))
-		ViewersTotal.WithLabelValues(protocol).Set(float64(viewersByProtocol[protocol]))
-	}()
-}
+func ViewerInc(user string, protocol string) { ViewerAdd(user, protocol, 1) }
 
-func ViewerDec(user string, protocol string) {
-	go func() {
-		viewersLock.Lock()
-		defer viewersLock.Unlock()
-		viewersByStreamer[user]--
-		if viewersByStreamer[user] == 0 {
-			Viewers.DeleteLabelValues(user)
-		} else {
-			Viewers.WithLabelValues(user).Set(float64(viewersByStreamer[user]))
-		}
-		viewersByProtocol[protocol]--
-		// Per-protocol series stay at 0 rather than vanishing: a node with
-		// no viewers should read 0, not "no data". (Per-streamer ones are
-		// unbounded, so those are still dropped.)
-		ViewersTotal.WithLabelValues(protocol).Set(float64(viewersByProtocol[protocol]))
-	}()
+func ViewerDec(user string, protocol string) { ViewerAdd(user, protocol, -1) }
+
+// ViewerAdd applies an aggregate change without creating a goroutine per viewer.
+func ViewerAdd(user string, protocol string, delta int) {
+	viewersLock.Lock()
+	defer viewersLock.Unlock()
+	viewersByStreamer[user] += delta
+	viewersByProtocol[protocol] += delta
+	if viewersByStreamer[user] == 0 {
+		delete(viewersByStreamer, user)
+		Viewers.DeleteLabelValues(user)
+	} else {
+		Viewers.WithLabelValues(user).Set(float64(viewersByStreamer[user]))
+	}
+	ViewersTotal.WithLabelValues(protocol).Set(float64(viewersByProtocol[protocol]))
 }
 
 func GetViewCount(user string) int {
@@ -364,7 +358,7 @@ func init() {
 		v.WithLabelValues("")
 	}
 	SegmentSubscriptionsOpen.WithLabelValues("", "")
-	for _, protocol := range []string{"webrtc", "hls", "local"} {
+	for _, protocol := range []string{"webrtc", "hls", "moq", "local"} {
 		ViewersTotal.WithLabelValues(protocol)
 	}
 	for _, outcome := range []string{"connect", "not_syndicated", "self", "already_connected", "no_url"} {

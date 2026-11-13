@@ -10,3 +10,4 @@
 !packagefiles/**
 !iroh_streamplace.wrap
 !moq.wrap
+!moq-noq.wrap

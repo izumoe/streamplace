@@ -23,10 +23,8 @@ import (
 // The failure mode it guards against: gst's default queue caps at
 // max-size-time=1s, so a 2s GoP overflowed the video queue's time cap, blocked
 // qtdemux (which feeds both branches), starved the audio branch, and
-// deadlocked mp4mux — backpressuring appsrc until the synchronous Feed
-// (feedW.Write into an unbuffered io.Pipe) blocked, wedging the serial ingest
-// path. Before the Queue2Big sizing fix this Fataled on the 25s timeout
-// (completing only 2/4); with it the 2s GoP flows through.
+// stalled audio completion and backpressured ingest. Both demux branches must
+// accept a double-length GoP without exhausting their queue limits.
 func TestStreamTranscoderDoubleGopWedge(t *testing.T) {
 	// Captured run-2 window: three 1s primes then the 2s double GoP (#185).
 	files := []string{
@@ -44,14 +42,17 @@ func TestStreamTranscoderDoubleGopWedge(t *testing.T) {
 
 	var mu sync.Mutex
 	completed := 0
-	tr := mm.newStreamTranscoder(ctx, "aac", ms.Cert, keyPEM, func(_ any, _ []byte) {
+	tr := mm.newStreamTranscoder(ctx, "aac", ms.Cert, keyPEM, func(_ any, _ []byte, audioOnly bool) {
+		if audioOnly {
+			return
+		}
 		mu.Lock()
 		completed++
 		mu.Unlock()
 	})
 
 	// Feed in a goroutine so the wedge surfaces as a timeout rather than a hang:
-	// Feed blocks (feedW.Write) when the pipeline deadlocks.
+	// A stalled pipeline can backpressure the bounded input queue or block Close.
 	done := make(chan error, 1)
 	go func() {
 		for i, f := range files {

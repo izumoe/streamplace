@@ -1,7 +1,7 @@
 // Package moq is what Streamplace adds to the official Media over QUIC
 // transport (moq.dev/moq): the certificate lifecycle its listener needs,
 // and the wire conventions nodes agree on for carrying signed MUXL segments
-// (see docs/moq.md). The transport itself, sessions, caching and
+// (see docs/moq-for-devs.md). The transport itself, sessions, caching and
 // prioritisation included, is the official library's.
 package moq
 

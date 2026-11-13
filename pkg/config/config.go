@@ -25,8 +25,8 @@ import (
 	"github.com/lmittmann/tint"
 	slogGorm "github.com/orandin/slog-gorm"
 	urfavecli "github.com/urfave/cli/v3"
+	"stream.place/streamplace/pkg/access"
 	"stream.place/streamplace/pkg/aqtime"
-	"stream.place/streamplace/pkg/constants"
 	"stream.place/streamplace/pkg/crypto/aqpub"
 	"stream.place/streamplace/pkg/integrations/discord/discordtypes"
 	"stream.place/streamplace/pkg/log"
@@ -103,6 +103,7 @@ type CLI struct {
 	RelayHost                   string
 	Debug                       map[string]map[string]int
 	AllowedStreams              []string
+	AccessPolicy                string
 	WideOpen                    bool
 	Peers                       []string
 	Redirects                   map[string]string
@@ -155,6 +156,12 @@ type CLI struct {
 	WebsocketURL                string
 	MoqAddr                     string
 	MoqURL                      string
+	MoqRelayURL                 string
+	MoqStatsURLs                []string
+	MoqStatsTier                string
+	MoqSessionRateLimit         int
+	MoqSessionRateBurst         int
+	MoqSessionTrustedProxies    []string
 	BehindHTTPSProxy            bool
 	SegmentDebugDir             string
 	AdminDIDs                   []string
@@ -561,8 +568,14 @@ func (cli *CLI) NewCommand(name string) *urfavecli.Command {
 				Sources:     urfavecli.EnvVars("SP_WIDE_OPEN"),
 			},
 			&urfavecli.StringFlag{
+				Name:        "access-policy",
+				Usage:       "startup capability modes, for example streamer=allowlist,chat=open,syndicate=off",
+				Destination: &cli.AccessPolicy,
+				Sources:     urfavecli.EnvVars("SP_ACCESS_POLICY"),
+			},
+			&urfavecli.StringFlag{
 				Name:  "allowed-streams",
-				Usage: `if set, only allow these addresses or atproto DIDs to upload to this node (default: "")`,
+				Usage: `DIDs approved to publish locally; empty denies local publishing`,
 				Action: func(ctx context.Context, cmd *urfavecli.Command, s string) error {
 					if s == "" {
 						return nil
@@ -727,7 +740,7 @@ func (cli *CLI) NewCommand(name string) *urfavecli.Command {
 			&urfavecli.IntFlag{
 				Name:        "muxl-initial-memory-mb",
 				Usage:       "initial wasm linear memory pre-allocation per muxl instance, in MiB. higher avoids realloc churn at the cost of holding more memory upfront",
-				Value:       50,
+				Value:       16,
 				Destination: &cli.MuxlInitialMemoryMB,
 				Sources:     urfavecli.EnvVars("SP_MUXL_INITIAL_MEMORY_MB"),
 			},
@@ -1064,6 +1077,44 @@ func (cli *CLI) NewCommand(name string) *urfavecli.Command {
 				Value:       ":38443",
 				Destination: &cli.MoqAddr,
 				Sources:     urfavecli.EnvVars("SP_MOQ_ADDR"),
+			},
+			&urfavecli.StringFlag{
+				Name:        "moq-relay-url",
+				Usage:       "publish this node's MoQ broadcasts to an outbound relay and advertise that relay for playback (for example https://cdn.moq.dev/anon/unique-node)",
+				Destination: &cli.MoqRelayURL,
+				Sources:     urfavecli.EnvVars("SP_MOQ_RELAY_URL"),
+			},
+			&urfavecli.StringSliceFlag{
+				Name:        "moq-stats-url",
+				Usage:       "private MoQ URL of an end-user stats broadcast; repeat for every relay node in the playback namespace (never advertise these URLs)",
+				Destination: &cli.MoqStatsURLs,
+				Sources:     urfavecli.EnvVars("SP_MOQ_STATS_URL"),
+			},
+			&urfavecli.StringFlag{
+				Name:        "moq-stats-tier",
+				Usage:       "end-user traffic tier in the configured stats broadcasts; empty selects the default tier, which must exclude cluster traffic",
+				Destination: &cli.MoqStatsTier,
+				Sources:     urfavecli.EnvVars("SP_MOQ_STATS_TIER"),
+			},
+			&urfavecli.IntFlag{
+				Name:        "moq-session-rate-limit",
+				Usage:       "MoQ player-session requests per second per client IP; zero disables this endpoint's limiter",
+				Value:       20,
+				Destination: &cli.MoqSessionRateLimit,
+				Sources:     urfavecli.EnvVars("SP_MOQ_SESSION_RATE_LIMIT"),
+			},
+			&urfavecli.IntFlag{
+				Name:        "moq-session-rate-burst",
+				Usage:       "maximum burst of MoQ player-session requests per client IP",
+				Value:       100,
+				Destination: &cli.MoqSessionRateBurst,
+				Sources:     urfavecli.EnvVars("SP_MOQ_SESSION_RATE_BURST"),
+			},
+			&urfavecli.StringSliceFlag{
+				Name:        "moq-session-trusted-proxies",
+				Usage:       "proxy CIDRs allowed to supply X-Forwarded-For for MoQ session limits; empty trusts only the TCP peer",
+				Destination: &cli.MoqSessionTrustedProxies,
+				Sources:     urfavecli.EnvVars("SP_MOQ_SESSION_TRUSTED_PROXIES"),
 			},
 			&urfavecli.StringFlag{
 				Name:        "moq-url",
@@ -1450,6 +1501,58 @@ func (cli *CLI) CheckConfig() error {
 	if cli.DuplicateMistTest && (!cli.Secure || cli.RTMPServerAddon == "") {
 		errs = append(errs, fmt.Errorf("--duplicate-mist-test requires --secure and --rtmp-server-addon pointing to Mist"))
 	}
+	if cli.MoqRelayURL != "" {
+		u, err := url.Parse(cli.MoqRelayURL)
+		if err != nil || u.Hostname() == "" || (u.Scheme != "https" && u.Scheme != "moqt") || u.Fragment != "" || u.User != nil || u.RawQuery != "" {
+			errs = append(errs, fmt.Errorf("--moq-relay-url must be an absolute HTTPS or moqt URL without credentials, a query, or a fragment"))
+		}
+		if cli.DisableSyndication {
+			errs = append(errs, fmt.Errorf("--moq-relay-url cannot be used with --disable-syndication"))
+		}
+		if len(cli.Replicators) > 0 && !slices.Contains(cli.Replicators, ReplicatorWebsocket) {
+			errs = append(errs, fmt.Errorf("--moq-relay-url requires the websocket replicator"))
+		}
+	}
+	if len(cli.MoqStatsURLs) > 0 && cli.MoqRelayURL == "" {
+		errs = append(errs, fmt.Errorf("--moq-stats-url requires --moq-relay-url"))
+	}
+	if cli.MoqSessionRateLimit < 0 {
+		errs = append(errs, fmt.Errorf("--moq-session-rate-limit must be non-negative"))
+	}
+	if cli.MoqSessionRateBurst < 0 || (cli.MoqSessionRateLimit > 0 && cli.MoqSessionRateBurst == 0) {
+		errs = append(errs, fmt.Errorf("--moq-session-rate-burst must be non-negative, and positive when the limiter is enabled"))
+	}
+	for _, cidr := range cli.MoqSessionTrustedProxies {
+		if _, _, err := net.ParseCIDR(cidr); err != nil {
+			errs = append(errs, fmt.Errorf("--moq-session-trusted-proxies: invalid CIDR %q", cidr))
+		}
+	}
+	seenStats := make(map[string]bool)
+	for _, raw := range cli.MoqStatsURLs {
+		u, err := url.Parse(raw)
+		if err != nil || u.Hostname() == "" || (u.Scheme != "https" && u.Scheme != "moqt") || u.Fragment != "" || u.User != nil {
+			errs = append(errs, fmt.Errorf("--moq-stats-url must be an absolute HTTPS or moqt URL without userinfo or a fragment"))
+			continue
+		}
+		port := u.Port()
+		if port == "" {
+			port = "443"
+		}
+		broadcast := net.JoinHostPort(strings.ToLower(u.Hostname()), port) + "/" + strings.Trim(u.Path, "/")
+		if seenStats[broadcast] {
+			errs = append(errs, fmt.Errorf("--moq-stats-url must not contain duplicate broadcasts"))
+		}
+		seenStats[broadcast] = true
+	}
+	if cli.MoqStatsTier != "" {
+		for _, part := range strings.Split(cli.MoqStatsTier, "/") {
+			if part == "" || part == "." || part == ".." {
+				errs = append(errs, fmt.Errorf("--moq-stats-tier must be a normalized track prefix"))
+				break
+			}
+		}
+	}
+
 	if cli.TranscoderURL != "" {
 		u, err := url.Parse(cli.TranscoderURL)
 		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.Fragment != "" {
@@ -1473,6 +1576,9 @@ func (cli *CLI) CheckConfig() error {
 		if _, err := cli.ParseSigningKey(); err != nil {
 			errs = append(errs, fmt.Errorf("--signing-key: %w", err))
 		}
+	}
+	if _, err := cli.AccessBootstrap(); err != nil {
+		errs = append(errs, err)
 	}
 	if err := cli.validateVODCDN(); err != nil {
 		errs = append(errs, err)
@@ -1747,17 +1853,7 @@ func (cli *CLI) AddressSliceFlag(name, defaultValue, usage string, dest *[]aqpub
 }
 
 func (cli *CLI) StreamIsAllowed(did string) error {
-	if cli.WideOpen {
-		return nil
-	}
-	// if the user set no test streams, anyone can stream
-	openServer := len(cli.AllowedStreams) == 0 || (cli.TestStream && len(cli.AllowedStreams) == 1)
-	// but only valid atproto accounts! did:key is only allowed for our local test stream
-	isDIDKey := strings.HasPrefix(did, constants.DID_KEY_PREFIX)
-	if openServer && !isDIDKey {
-		return nil
-	}
-	if slices.Contains(cli.AllowedStreams, did) {
+	if cli.CapabilityAllowed(did, access.Streamer) {
 		return nil
 	}
 	return fmt.Errorf("user is not allowed to stream")
@@ -1859,18 +1955,7 @@ func (cli *CLI) DebugRecordingCreate(ctx context.Context, fpath []string, conten
 }
 
 func (cli *CLI) ShouldSyndicate(did string) bool {
-	if cli.DisableSyndication {
-		return false
-	}
-	for _, d := range cli.Syndicate {
-		if d == "*" {
-			return true
-		}
-		if d == did {
-			return true
-		}
-	}
-	return false
+	return cli.CapabilityAllowed(did, access.Syndicate)
 }
 
 // RenditionLadder is the rendition ladder this node transcodes

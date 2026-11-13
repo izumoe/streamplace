@@ -66,6 +66,11 @@ func (d *Director) Start(ctx context.Context) error {
 		case not := <-newSeg:
 			d.streamSessionsMu.Lock()
 			ss, ok := d.streamSessions[not.Segment.RepoDID]
+			if !ok && not.AudioOnly {
+				d.streamSessionsMu.Unlock()
+				log.Warn(ctx, "audio continuation has no active source session", "streamer", not.Segment.RepoDID)
+				continue
+			}
 			if !ok {
 				ss = &StreamSession{
 					repoDID:     not.Segment.RepoDID,

@@ -63,6 +63,8 @@ type PlaybackGetPlaybackServer_Moq struct {
 	LexiconTypeID string `json:"$type,omitempty"`
 	// name: Broadcast path to subscribe to at the origin
 	Name string `json:"name"`
+	// sessionUrl: Origin-owned endpoint for best-effort player session reporting; optional on older nodes
+	SessionUrl *string `json:"sessionUrl,omitempty"`
 	// url: Origin endpoint, including its certificate hash when self-signed
 	Url string `json:"url"`
 }

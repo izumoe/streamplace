@@ -1,7 +1,30 @@
 diff --git a/player-B6mw85kT.js b/player-B6mw85kT.js
-index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..7cecc86e5a8e2dfa6400ba9e040cb86421d184c6 100644
+index 7d76cf2..5b2caa0 100644
 --- a/player-B6mw85kT.js
 +++ b/player-B6mw85kT.js
+@@ -17,16 +17,16 @@ function g(e) {
+ //#region src/media.ts
+ function _(e, t) {
+ 	if (e.get(t.broadcast.closed) !== void 0) return;
+-	let n = t.broadcast.track(t.track).subscribe({
+-		priority: t.priority,
++	let n = o(t.priority), r = t.broadcast.track(t.track).subscribe({
++		priority: n.peek(),
+ 		maxAge: t.maxAge.peek()
+ 	});
+-	return e.cleanup(() => n.close()), e.run((e) => {
+-		n.update({
+-			priority: t.priority,
++	return e.cleanup(() => r.close()), e.run((e) => {
++		r.update({
++			priority: e.get(n),
+ 			maxAge: e.get(t.maxAge)
+ 		});
+-	}), n;
++	}), r;
+ }
+ async function v(e) {
+ 	try {
 @@ -490,37 +490,43 @@ var N = class {
  	#r;
  	#i = 0;
@@ -55,3 +78,460 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..7cecc86e5a8e2dfa6400ba9e040cb864
  	}
  }, we = class {
  	#e;
+@@ -1341,7 +1347,7 @@ function Y(e, t) {
+ 	let s = r.find((e) => e > t.startTime);
+ 	s !== void 0 && t.endTime > s && (t.endTime = s);
+ }
+-function X(e, t) {
++function ze(e, t) {
+ 	let { cues: n, clears: r } = e, i = r.length;
+ 	for (; i > 0 && r[i - 1] > t;) i--;
+ 	r[i] !== t && r.splice(i, 0, t);
+@@ -1353,7 +1359,7 @@ function X(e, t) {
+ 		}
+ 	}
+ }
+-var ze = class {
++var Be = class {
+ 	source;
+ 	sync;
+ 	in;
+@@ -1436,7 +1442,7 @@ var ze = class {
+ 		let r = new TextDecoder().decode(t.payload), i = t.timestamp / 1e6;
+ 		if (e === "utf8") {
+ 			if (r.length === 0) {
+-				X(n, i);
++				ze(n, i);
+ 				return;
+ 			}
+ 			let e = new m(i, i + Le / 1e3, K(r));
+@@ -1459,11 +1465,11 @@ var ze = class {
+ 	close() {
+ 		this.#e.close();
+ 	}
+-}, Be = /* @__PURE__ */ new Set(["vtt", "utf8"]);
+-function Ve(e) {
+-	return Be.has(e.format);
++}, Ve = /* @__PURE__ */ new Set(["vtt", "utf8"]);
++function He(e) {
++	return Ve.has(e.format);
+ }
+-var He = class {
++var Ue = class {
+ 	in;
+ 	#e = {
+ 		catalog: new a(void 0),
+@@ -1489,13 +1495,13 @@ var He = class {
+ 			e.set(this.#e.track, void 0), e.set(this.#e.config, void 0);
+ 			return;
+ 		}
+-		Ve(r) || console.warn(`captions: unsupported format ${JSON.stringify(r.format)} for track ${n}`), e.set(this.#e.track, n), e.set(this.#e.config, r);
++		He(r) || console.warn(`captions: unsupported format ${JSON.stringify(r.format)} for track ${n}`), e.set(this.#e.track, n), e.set(this.#e.config, r);
+ 	}
+ 	close() {
+ 		this.#t.close();
+ 	}
+-}, Ue = Symbol("supportCacheKey");
+-function We(e) {
++}, We = Symbol("supportCacheKey");
++function Ge(e) {
+ 	return {
+ 		broadcast: e.broadcast,
+ 		decoder: {
+@@ -1508,8 +1514,8 @@ function We(e) {
+ 		}
+ 	};
+ }
+-function Ge(e) {
+-	return JSON.stringify(We(e).decoder);
++function X(e) {
++	return JSON.stringify(Ge(e).decoder);
+ }
+ //#endregion
+ //#region src/video/playhead.ts
+@@ -1628,8 +1634,11 @@ var et = r.Milli(500), Q = class {
+ 	}
+ 	constructor(e) {
+ 		this.in = { enabled: o(e?.enabled ?? !0) }, this.source = e.source, this.sync = e.sync, this.#i.cleanup(this.sync.register(this.out.jitter)), this.#r = this.#i.computed((e) => {
+-			let t = e.get(this.source.out.config);
+-			return t ? We(t) : void 0;
++			let t = e.get(this.source.out.config), n = e.get(this.source.out.track);
++			return t && n ? {
++				...Ge(t),
++				track: n
++			} : void 0;
+ 		}), this.#i.run(this.#o.bind(this)), this.#i.run(this.#s.bind(this)), this.#i.run(this.#c.bind(this)), this.#i.run(this.#l.bind(this)), this.#i.run(this.#u.bind(this));
+ 	}
+ 	#o(e) {
+@@ -1647,40 +1656,44 @@ var et = r.Milli(500), Q = class {
+ 		let t = e.getAll([
+ 			this.in.enabled,
+ 			this.source.in.broadcast,
+-			this.source.out.track,
+ 			this.#r
+ 		]);
+ 		if (!t) {
+ 			this.#t.set(void 0);
+ 			return;
+ 		}
+-		let [n, r, i, a] = t, o = r.relativeBroadcast(e, a.broadcast);
++		let [n, r, i] = t, { track: a } = i, o = r.relativeBroadcast(e, i.broadcast);
+ 		if (!o) {
+ 			this.#t.set(void 0), this.#a(), this.#e.buffered.set([]);
+ 			return;
+ 		}
+-		let s = new tt({
++		let s = this.#t.peek();
++		if (s?.broadcast === o && s.track === a && X(s.config) === X(i.decoder)) {
++			this.#n.set(void 0);
++			return;
++		}
++		let l = new tt({
+ 			sync: this.sync,
+ 			broadcast: o,
+-			track: i,
+-			config: a.decoder,
++			track: a,
++			config: i.decoder,
+ 			stats: this.#e.stats,
+ 			catalog: r.out.catalog
+ 		});
+ 		e.set(this.#n, {
+-			track: i,
++			track: a,
+ 			catalog: r.out.catalog
+-		}), e.cleanup(() => s?.close()), e.run((e) => {
+-			if (!s) return;
++		}), e.cleanup(() => l?.close()), e.run((e) => {
++			if (!l) return;
+ 			let t = e.get(this.#t);
+ 			if (t) {
+-				let n = e.get(s.timestamp);
++				let n = e.get(l.timestamp);
+ 				if (n === void 0 || !Je({
+ 					playhead: n,
+ 					active: e.get(t.timestamp)
+ 				})) return;
+ 			}
+-			this.#t.set(s), this.#n.set(void 0), s = void 0, e.close();
++			l.priority.set(c.PRIORITY.video), this.#t.set(l), this.#n.set(void 0), l = void 0, e.close();
+ 		});
+ 	}
+ 	#c(e) {
+@@ -1727,6 +1740,7 @@ var et = r.Milli(500), Q = class {
+ 	}
+ 	static supported = nt;
+ }, tt = class {
++	priority = new a(c.PRIORITY.video + 1);
+ 	sync;
+ 	broadcast;
+ 	track;
+@@ -1746,7 +1760,7 @@ var et = r.Milli(500), Q = class {
+ 		let t = _(e, {
+ 			broadcast: this.broadcast,
+ 			track: this.track,
+-			priority: c.PRIORITY.video,
++			priority: this.priority,
+ 			maxAge: this.sync.out.maxAge
+ 		});
+ 		if (!t) return;
+@@ -1755,7 +1769,7 @@ var et = r.Milli(500), Q = class {
+ 				try {
+ 					let n = this.#t, i = r.Milli.fromMicro(t.timestamp);
+ 					if (i < (this.timestamp.peek() ?? 0) || this.sync.out.reference.peek() === void 0 || (this.frame.peek() === void 0 && this.frame.set(t.clone()), !await e.race(this.sync.wait(i).then(() => !0))) || n !== this.#t || i < (this.timestamp.peek() ?? 0)) return;
+-					this.timestamp.set(i), this.#c(i), this.frame.update((e) => (e?.close(), t.clone()));
++					this.timestamp.set(i), this.#l(i), this.frame.update((e) => (e?.close(), t.clone()));
+ 				} finally {
+ 					t.close();
+ 				}
+@@ -1766,9 +1780,20 @@ var et = r.Milli(500), Q = class {
+ 		});
+ 		e.cleanup(() => {
+ 			n.state !== "closed" && n.close();
+-		}), this.config.container.kind === "cmaf" ? this.#a(e, t, n) : this.#i(e, t, n);
++		}), this.config.container.kind === "cmaf" ? this.#o(e, t, n) : this.#a(e, t, n);
++	}
++	async #i(e, t) {
++		for (; t.decodeQueueSize > 0;) {
++			if (e.abort.aborted || t.state !== "configured") return !1;
++			let n = new Promise((n) => {
++				let r = () => n(!0);
++				e.event(t, "dequeue", r, { once: !0 }), (t.decodeQueueSize === 0 || t.state !== "configured") && (t.removeEventListener("dequeue", r), n(!0));
++			});
++			if (!await e.race(n)) return !1;
++		}
++		return !e.abort.aborted && t.state === "configured";
+ 	}
+-	#i(e, t, n) {
++	#a(e, t, n) {
+ 		let i = this.config.container.kind === "loc" ? new u.Loc.Format("video") : new u.Legacy.Format(this.config), a = new u.Consumer(t, {
+ 			format: i,
+ 			maxAge: this.sync.out.maxAge
+@@ -1786,29 +1811,29 @@ var et = r.Milli(500), Q = class {
+ 		});
+ 		let o, s;
+ 		e.spawn(async () => {
+-			for (;;) {
+-				let e = await v(a);
+-				if (!e) break;
+-				this.#o(e.discontinuity) && (o = void 0);
+-				let { frame: t } = e;
+-				if (!t) continue;
+-				let i = s !== void 0 && e.group < s;
++			for (; !(n.decodeQueueSize > 0 && !await this.#i(e, n) || e.abort.aborted || n.state !== "configured");) {
++				let t = await v(a);
++				if (!t || e.abort.aborted || n.state !== "configured") break;
++				this.#s(t.discontinuity) && (o = void 0);
++				let { frame: i } = t;
++				if (!i) continue;
++				let c = s !== void 0 && t.group < s;
+ 				if (this.stats.update((e) => ({
+-					frameCount: (e?.frameCount ?? 0) + +!i,
+-					bytesReceived: (e?.bytesReceived ?? 0) + t.payload.byteLength
+-				})), i) continue;
+-				let c = r.Milli.fromMicro(t.timestamp);
+-				this.sync.received(c, "video");
+-				let l = new EncodedVideoChunk({
+-					type: t.keyframe ? "key" : "delta",
+-					data: t.payload,
+-					timestamp: t.timestamp
++					frameCount: (e?.frameCount ?? 0) + +!c,
++					bytesReceived: (e?.bytesReceived ?? 0) + i.payload.byteLength
++				})), c) continue;
++				let l = r.Milli.fromMicro(i.timestamp);
++				this.sync.received(l, "video");
++				let u = new EncodedVideoChunk({
++					type: i.keyframe ? "key" : "delta",
++					data: i.payload,
++					timestamp: i.timestamp
+ 				});
+-				o !== void 0 && e.continuous && this.#s(r.Milli.fromMicro(o), r.Milli.fromMicro(t.timestamp)), o = t.timestamp, s = e.group, n.decode(l);
++				o !== void 0 && t.continuous && this.#c(r.Milli.fromMicro(o), r.Milli.fromMicro(i.timestamp)), o = i.timestamp, s = t.group, n.decode(u);
+ 			}
+ 		});
+ 	}
+-	#a(e, t, n) {
++	#o(e, t, n) {
+ 		let i = this.config.container;
+ 		if (i.kind !== "cmaf") return;
+ 		let a = g(i.init), o = u.Cmaf.decodeInitSegment(a), s = this.config.description ? d.Hex.toBytes(this.config.description) : o.description, c = new u.Consumer(t, {
+@@ -1828,31 +1853,30 @@ var et = r.Milli(500), Q = class {
+ 		});
+ 		let l, f;
+ 		e.spawn(async () => {
+-			for (;;) {
+-				let e = await v(c);
+-				if (!e) break;
+-				this.#o(e.discontinuity) && (l = void 0);
+-				let { frame: t } = e;
+-				if (!t) continue;
+-				let i = f !== void 0 && e.group < f;
++			for (; !(n.decodeQueueSize > 0 && !await this.#i(e, n) || e.abort.aborted || n.state !== "configured");) {
++				let t = await v(c);
++				if (!t || e.abort.aborted || n.state !== "configured") break;
++				this.#s(t.discontinuity) && (l = void 0);
++				let { frame: i } = t;
++				if (!i) continue;
++				let a = f !== void 0 && t.group < f;
+ 				if (this.stats.update((e) => ({
+-					frameCount: (e?.frameCount ?? 0) + +!i,
+-					bytesReceived: (e?.bytesReceived ?? 0) + t.payload.byteLength
+-				})), i) continue;
+-				let a = r.Milli.fromMicro(t.timestamp);
+-				if (this.sync.received(a, "video"), l !== void 0 && e.continuous && this.#s(r.Milli.fromMicro(l), r.Milli.fromMicro(t.timestamp)), l = t.timestamp, n.state === "closed") break;
+-				f = e.group, n.decode(new EncodedVideoChunk({
+-					type: t.keyframe ? "key" : "delta",
+-					data: t.payload,
+-					timestamp: t.timestamp
++					frameCount: (e?.frameCount ?? 0) + +!a,
++					bytesReceived: (e?.bytesReceived ?? 0) + i.payload.byteLength
++				})), a) continue;
++				let o = r.Milli.fromMicro(i.timestamp);
++				this.sync.received(o, "video"), l !== void 0 && t.continuous && this.#c(r.Milli.fromMicro(l), r.Milli.fromMicro(i.timestamp)), l = i.timestamp, f = t.group, n.decode(new EncodedVideoChunk({
++					type: i.keyframe ? "key" : "delta",
++					data: i.payload,
++					timestamp: i.timestamp
+ 				}));
+ 			}
+ 		});
+ 	}
+-	#o(e) {
++	#s(e) {
+ 		return e !== this.#t && (this.#t = e, this.timestamp.set(void 0), this.#e.set([]), this.sync.reset(), !0);
+ 	}
+-	#s(e, t) {
++	#c(e, t) {
+ 		e > t || this.#e.mutate((n) => {
+ 			for (let i of n) if (i.start <= t && i.end >= e) {
+ 				i.start = r.Milli.min(i.start, e), i.end = r.Milli.max(i.end, t);
+@@ -1864,7 +1888,7 @@ var et = r.Milli(500), Q = class {
+ 			}), n.sort((e, t) => e.start - t.start);
+ 		});
+ 	}
+-	#c(e) {
++	#l(e) {
+ 		this.#e.mutate((t) => {
+ 			for (; t.length > 0;) {
+ 				if (t[0].end >= e) {
+@@ -1913,7 +1937,7 @@ async function nt(e) {
+ 	}
+ 	return !1;
+ }
+-Object.assign(nt, { [Ue]: Ge });
++Object.assign(nt, { [We]: X });
+ //#endregion
+ //#region src/video/renderer.ts
+ var rt = .01, it = class {
+@@ -2009,15 +2033,12 @@ function at(e) {
+ 		let n = [], r = [];
+ 		for (let [i, a] of t) if (a.codedWidth && a.codedHeight) {
+ 			let t = a.codedWidth * a.codedHeight;
+-			t <= e ? n.push({
+-				name: i,
+-				size: t
+-			}) : r.push({
++			t <= e ? n.push(i) : r.push({
+ 				name: i,
+ 				size: t
+ 			});
+ 		}
+-		return n.sort((e, t) => t.size - e.size), n.length > 0 ? n.map((e) => e.name) : r.length > 0 ? (r.sort((e, t) => e.size - t.size), [r[0].name]) : t.map(([e]) => e);
++		return n.length > 0 ? n : r.length > 0 ? (r.sort((e, t) => e.size - t.size), [r[0].name]) : t.map(([e]) => e);
+ 	};
+ }
+ function ot(e, t) {
+@@ -2025,29 +2046,23 @@ function ot(e, t) {
+ 		let r = [], i = [];
+ 		for (let [a, o] of n) {
+ 			if (!o.codedWidth || !o.codedHeight) continue;
+-			let n = o.codedWidth * o.codedHeight, s = e == null || o.codedWidth <= e, c = t == null || o.codedHeight <= t;
+-			s && c ? r.push({
+-				name: a,
+-				size: n
+-			}) : i.push({
++			let n = e == null || o.codedWidth <= e, s = t == null || o.codedHeight <= t;
++			n && s ? r.push(a) : i.push({
+ 				name: a,
+-				size: n
++				size: o.codedWidth * o.codedHeight
+ 			});
+ 		}
+-		return r.sort((e, t) => t.size - e.size), r.length > 0 ? r.map((e) => e.name) : i.length > 0 ? (i.sort((e, t) => e.size - t.size), [i[0].name]) : n.map(([e]) => e);
++		return r.length > 0 ? r : i.length > 0 ? (i.sort((e, t) => e.size - t.size), [i[0].name]) : n.map(([e]) => e);
+ 	};
+ }
+ function st(e) {
+ 	return (t) => {
+ 		let n = [], r = [];
+-		for (let [i, a] of t) a.bitrate != null && a.bitrate <= e ? n.push({
+-			name: i,
+-			bitrate: a.bitrate
+-		}) : a.bitrate != null && r.push({
++		for (let [i, a] of t) a.bitrate != null && a.bitrate <= e ? n.push(i) : a.bitrate != null && r.push({
+ 			name: i,
+ 			bitrate: a.bitrate
+ 		});
+-		return n.sort((e, t) => t.bitrate - e.bitrate), n.length > 0 ? n.map((e) => e.name) : r.length > 0 ? (r.sort((e, t) => e.bitrate - t.bitrate), [r[0].name]) : t.map(([e]) => e);
++		return n.length > 0 ? n : r.length > 0 ? (r.sort((e, t) => e.bitrate - t.bitrate), [r[0].name]) : t.map(([e]) => e);
+ 	};
+ }
+ function ct(e) {
+@@ -2111,7 +2126,7 @@ var $ = class {
+ 		e.spawn(async () => {
+ 			let i = {};
+ 			for (let [a, o] of Object.entries(n)) {
+-				let n = t[Ue], s = n ? n(o) : JSON.stringify(o), c = r.get(a), l = !1;
++				let n = t[We], s = n ? n(o) : JSON.stringify(o), c = r.get(a), l = !1;
+ 				if (c?.key === s) l = c.supported;
+ 				else {
+ 					let i = !1;
+@@ -2142,7 +2157,7 @@ var $ = class {
+ 		let r = lt(t);
+ 		if (Object.keys(r).length === 0) return;
+ 		let i = n;
+-		if (!n?.bitrate) {
++		if (n?.bitrate == null) {
+ 			let t = e.get(this.in.probe)?.estimatedRecvRate;
+ 			if (t != null) {
+ 				let e = Math.round(t * .8);
+@@ -2162,9 +2177,9 @@ var $ = class {
+ 		if (n.length === 0) return;
+ 		if (n.length === 1) return n[0][0];
+ 		let r = [];
+-		if (t?.pixels != null && r.push(at(t.pixels)), (t?.width != null || t?.height != null) && r.push(ot(t.width, t.height)), t?.bitrate != null && r.push(st(t.bitrate)), r.length === 0) return ct(n);
+-		let i = r.map((e) => e(n)), a = i.map((e) => new Set(e));
+-		for (let e of i[0]) if (a.every((t) => t.has(e))) return e;
++		if (t?.pixels != null && r.push(at(t.pixels)), (t?.width != null || t?.height != null) && r.push(ot(t.width, t.height)), t?.bitrate != null && n.some(([, e]) => e.bitrate != null) && r.push(st(t.bitrate)), r.length === 0) return ct(n);
++		let i = r.map((e) => new Set(e(n))), a = n.filter(([e]) => i.every((t) => t.has(e)));
++		if (a.length > 0) return ct(a);
+ 		console.warn("conflicting rendition filters, no rendition satisfies all criteria");
+ 	}
+ 	close() {
+@@ -2204,18 +2219,28 @@ var $ = class {
+ 			target: o(e.target),
+ 			captions: o(e.captions)
+ 		}), this.broadcast = new U(this.in), this.#r.cleanup(() => this.broadcast.close());
+-		let t = new $({
++		let t = new R({
++			broadcast: this.broadcast,
++			supported: P.supported
++		}), i = this.#r.computed((e) => {
++			let n = e.get(this.in.target);
++			if (n?.name || n?.bitrate != null) return n;
++			let r = e.get(this.in.probe)?.estimatedRecvRate;
++			if (r == null) return n;
++			let i = e.get(this.#t) ? e.get(t.out.config)?.bitrate : void 0;
++			return {
++				...n,
++				bitrate: Math.max(0, Math.round(r * .8) - (i ?? 0))
++			};
++		}), a = new $({
+ 			broadcast: this.broadcast,
+-			target: this.in.target,
++			target: i,
+ 			supported: Q.supported,
+ 			probe: this.in.probe
+-		}), i = new R({
+-			broadcast: this.broadcast,
+-			supported: P.supported
+ 		});
+ 		this.#r.cleanup(() => {
+-			t.close(), i.close();
+-		}), this.text = new He({
++			a.close(), t.close();
++		}), this.text = new Ue({
+ 			broadcast: this.broadcast,
+ 			target: this.in.captions
+ 		}), this.#r.cleanup(() => this.text.close()), this.sync = new G({
+@@ -2223,11 +2248,11 @@ var $ = class {
+ 			buffer: this.in.buffer,
+ 			probe: this.in.probe
+ 		}), this.#r.cleanup(() => this.sync.close()), this.video = new Q({
+-			source: t,
++			source: a,
+ 			sync: this.sync,
+ 			enabled: this.#e
+ 		}), this.audio = new P({
+-			source: i,
++			source: t,
+ 			sync: this.sync,
+ 			enabled: this.#t
+ 		}), this.#r.cleanup(() => {
+@@ -2243,7 +2268,7 @@ var $ = class {
+ 			visible: this.in.visible
+ 		}), this.#r.cleanup(() => {
+ 			this.emitter.close(), this.renderer.close();
+-		}), this.textRenderer = new ze({
++		}), this.textRenderer = new Be({
+ 			source: this.text,
+ 			sync: this.sync,
+ 			container: this.in.container,
+@@ -2265,6 +2290,4 @@ var $ = class {
+ 	}
+ };
+ //#endregion
+-export { L as _, He as a, X as c, Y as d, K as f, R as g, Ne as h, Q as i, q as l, U as m, $ as n, Ve as o, G as p, it as r, ze as s, ut as t, J as u, P as v };
+-
+-//# sourceMappingURL=player-B6mw85kT.js.map
+\ No newline at end of file
++export { L as _, Ue as a, ze as c, Y as d, K as f, R as g, Ne as h, Q as i, q as l, U as m, $ as n, He as o, G as p, it as r, Be as s, ut as t, J as u, P as v };

@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"crypto"
 	"crypto/rand"
 	"crypto/tls"
 	"encoding/json"
@@ -60,6 +61,8 @@ import (
 
 	_ "github.com/go-gst/go-glib/pkg/glib/v2"
 	_ "github.com/go-gst/go-gst/pkg/gst"
+	"stream.place/streamplace/pkg/access"
+	"stream.place/streamplace/pkg/accessctl"
 	"stream.place/streamplace/pkg/api"
 	"stream.place/streamplace/pkg/config"
 	"stream.place/streamplace/pkg/model"
@@ -67,6 +70,21 @@ import (
 
 // Additional jobs that can be injected by platforms
 type jobFunc func(ctx context.Context, cli *config.CLI) error
+
+func nodeAccessBootstrap(cli *config.CLI, signer crypto.Signer) (access.Bootstrap, error) {
+	bootstrap, err := cli.AccessBootstrap()
+	if err != nil {
+		return bootstrap, err
+	}
+	if cli.TestStream {
+		key, err := atproto.ParsePubKey(signer.Public())
+		if err != nil {
+			return bootstrap, err
+		}
+		bootstrap.Entries = append(bootstrap.Entries, access.Entry{Subject: key.DIDKey(), Capability: access.Streamer, Effect: access.Allow})
+	}
+	return bootstrap, nil
+}
 
 // parse the CLI and fire up an streamplace node!
 func start(build *config.BuildFlags, platformJobs []jobFunc) error {
@@ -258,7 +276,17 @@ func runMain(ctx context.Context, build *config.BuildFlags, platformJobs []jobFu
 	cli.ServiceAuthKey = serviceAuthKey
 
 	b := bus.NewBus()
+	bootstrap, err := nodeAccessBootstrap(cli, signer)
+	if err != nil {
+		return err
+	}
+	accessController, err := accessctl.New(ctx, bootstrap, state, b)
+	if err != nil {
+		return err
+	}
+	state.Access = accessController
 	atsync := &atproto.ATProtoSynchronizer{
+		Access:     accessController,
 		CLI:        cli,
 		Model:      mod,
 		StatefulDB: state,
@@ -269,6 +297,8 @@ func runMain(ctx context.Context, build *config.BuildFlags, platformJobs []jobFu
 	if err != nil {
 		return err
 	}
+	mm.Access = accessController
+	group.Go(func() error { return accessController.Run(ctx) })
 	// Every new playback session counts toward the streamer's running view
 	// total, filed under their current livestream record.
 	mm.SetViewRecorder(func(streamer string) {
@@ -559,6 +589,8 @@ func runMain(ctx context.Context, build *config.BuildFlags, platformJobs []jobFu
 		return err
 	}
 
+	a.Access = accessController
+
 	ctx = log.WithLogValues(ctx, "version", build.Version)
 
 	group.Go(func() error {
@@ -614,7 +646,7 @@ func runMain(ctx context.Context, build *config.BuildFlags, platformJobs []jobFu
 		})
 	}
 
-	// The MoQ listener is the websocket replicator's (see docs/moq.md). It
+	// The MoQ listener is the websocket replicator's (see docs/moq-for-devs.md). It
 	// reads its certificate from files, which Go keeps current.
 	if cli.MoqAddr != "" && wsrep != nil {
 		switch {
@@ -686,7 +718,6 @@ func runMain(ctx context.Context, build *config.BuildFlags, platformJobs []jobFu
 		if err != nil {
 			return err
 		}
-		cli.AllowedStreams = append(cli.AllowedStreams, did)
 		a.Aliases["self-test"] = did
 		group.Go(func() error {
 			return mm.TestSource(ctx, testMediaSigner)
@@ -713,7 +744,6 @@ func runMain(ctx context.Context, build *config.BuildFlags, platformJobs []jobFu
 		if err != nil {
 			return err
 		}
-		cli.AllowedStreams = append(cli.AllowedStreams, did2)
 		a.Aliases["intermittent-self-test"] = did2
 
 		group.Go(func() error {

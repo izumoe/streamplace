@@ -6,6 +6,23 @@ description: Export a node's branding as a zip, edit it by hand, and import it o
 Everything under **Settings → Branding** can be moved between nodes as a
 bundle: a zip file with `branding.yaml` at its root and one file per image.
 
+## Web admin editor
+
+In this fork, **Settings → Site branding** is available to node administrators.
+It edits the current node's name, description, logo, favicon, share image, and
+social/legal links. It loads the saved values; each field or link list is saved
+separately. Reset removes that override. Saving an empty link list hides those
+links. Failed writes retain the draft.
+
+The web editor does not expose colours, front-page routing, or the full branding
+vocabulary. Existing values for those keys are preserved. Advanced configuration
+and bundle import/export remain available through the API and terminal commands.
+The mobile app's broader Branding screen is separate from this web editor.
+
+Logo uploads accept PNG, JPEG or WebP up to 500 KB; favicons also accept ICO and
+are limited to 100 KB. Share images allow 2 MB, with 1200 × 630 recommended.
+Social and legal links must use absolute HTTP or HTTPS URLs.
+
 ## Export
 
 From the app: Settings → Branding → **Download bundle** (admins only).

@@ -9,10 +9,13 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"runtime/debug"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
+	"github.com/go-gst/go-gst/pkg/gst"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sync/errgroup"
 	"stream.place/streamplace/pkg/log"
@@ -192,4 +195,77 @@ func TestMediaDataParserConcurrentEOS(t *testing.T) {
 	// The fixture's initial zero-duration picture warns once per parse.
 	require.Equal(t, 16, strings.Count(logs.String(), "no duration found for track"))
 	require.NotContains(t, logs.String(), "level=ERROR")
+}
+
+func TestMediaDataParserReleasesBuffersBeforeGC(t *testing.T) {
+	if os.Getenv(IgnoreLeaks) != "" {
+		t.Skip("requires the existing GStreamer leak tracer")
+	}
+	LeakTestMutex.Lock()
+	defer LeakTestMutex.Unlock()
+	for _, test := range []struct{ fixture, video, audio string }{
+		{"h264-opus-frag.mp4", "h264", "opus"},
+		{"av1-aac-frag.mp4", "av1", "aac"},
+	} {
+		t.Run(test.fixture, func(t *testing.T) {
+			input, err := os.ReadFile(getFixture(test.fixture))
+			require.NoError(t, err)
+			previousGC := debug.SetGCPercent(-1)
+			defer debug.SetGCPercent(previousGC)
+			ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+			defer cancel()
+			process, err := os.FindProcess(os.Getpid())
+			require.NoError(t, err)
+			marker := gst.NewBufferAllocate(nil, 17, nil)
+			defer gst.UnsafeBufferUnref(marker)
+			marker.SetPTS(0)
+			markerAddress := fmt.Sprintf("address=(gpointer)%p", gst.UnsafeBufferToGlibNone(marker))
+			before := map[string]bool{}
+			for snapshot := range 2 {
+				if snapshot == 1 {
+					metadata, err := ParseSegmentMediaData(ctx, input)
+					require.NoError(t, err)
+					require.Len(t, metadata.Video, 1)
+					require.Len(t, metadata.Audio, 1)
+					require.Equal(t, test.video, metadata.Video[0].Codec)
+					require.Equal(t, test.audio, metadata.Audio[0].Codec)
+					require.Positive(t, metadata.Video[0].Width)
+					require.Positive(t, metadata.Video[0].Height)
+					require.Equal(t, 48000, metadata.Audio[0].Rate)
+					require.Positive(t, metadata.Duration)
+					require.Positive(t, metadata.BatchDuration)
+				}
+				// Snapshot directly: the normal leak helpers force Go GC.
+				LeakReportMutex.Lock()
+				LeakReport = nil
+				LeakReportMutex.Unlock()
+				require.NoError(t, process.Signal(syscall.SIGUSR1))
+				select {
+				case <-LeakDoneCh:
+				case <-ctx.Done():
+					t.Fatal("GStreamer leak snapshot did not finish")
+				}
+				LeakReportMutex.Lock()
+				report := append([]string(nil), LeakReport...)
+				LeakReportMutex.Unlock()
+				foundMarker := false
+				for _, line := range report {
+					if !strings.Contains(line, "type-name=(string)GstBuffer,") {
+						continue
+					}
+					start := strings.Index(line, "address=(gpointer)")
+					require.NotEqual(t, -1, start)
+					address := strings.SplitN(line[start:], ",", 2)[0]
+					foundMarker = foundMarker || address == markerAddress
+					if snapshot == 0 {
+						before[address] = true
+					} else if !strings.Contains(line, "pts 99:99:99.999999999") {
+						// Codec-data caps may outlive NULL; timestamped sample payloads must not.
+						require.True(t, before[address], "metadata parsing must release sample buffers before Go GC: %s", line)
+					}
+				}
+				require.True(t, foundMarker, "the tracer must report the retained timestamped control buffer")
+			}
+		})
+	}
 }

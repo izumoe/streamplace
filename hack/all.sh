@@ -1,16 +1,15 @@
 #!/usr/bin/env bash
 #
-# Run the GitLab build pipeline on this machine, in the pinned builder
+# Run the supported builds on this machine, in the pinned builder
 # container:
 #
 #   make all
 #
-# This mirrors the jobs in .gitlab-ci.yml: the test job, every cross-compiled
-# node target, both Android APKs, and iOS. Artifacts land in bin/ as the CI
-# jobs leave them; the iOS archive stays on the macOS machine that builds it.
+# This runs the test suite, Linux/macOS node targets, both Android APKs,
+# and iOS. Artifacts land in bin/; the iOS archive stays on the macOS
+# machine that builds it.
 #
-# The tag-only release/upload jobs (npm, GitLab release, deb, Homebrew) are
-# deliberately not run: they publish and need CI credentials.
+# Publishing is handled by the GitHub tag workflow, never by this script.
 #
 # iOS is the one job that cannot run on Linux. Set MAC_HOST (and optionally
 # MAC_REPO) to dispatch it to a macOS machine with the same checkout; otherwise
@@ -79,20 +78,20 @@ target() {
   if [ "$target" = "linux-amd64" ]; then
     run make test-vod
   fi
-  run make "pkg-$target"
+  if [[ "$target" == linux-* ]]; then
+    run make "pkg-$target"
+  fi
 }
 
 target linux-amd64
 target linux-arm64
-target windows-amd64
 target darwin-amd64
 target darwin-arm64
 
 # ---------------------------------------------------------------------------
 # android jobs
 # ---------------------------------------------------------------------------
-# The ci-android-* targets also upload to the GitLab package registry, which
-# needs CI_JOB_TOKEN and fails on a local machine.
+# Local builds leave artifacts in bin/ without uploading them.
 step "mobile prebuild"
 run make mobile-prebuild
 

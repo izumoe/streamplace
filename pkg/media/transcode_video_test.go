@@ -24,6 +24,10 @@ import (
 // The fixture re-encoded at a smaller size and fragmented with one keyframe
 // per second, so minting must sign each resulting GoP.
 func renditionMP4(t *testing.T, w, h int) []byte {
+	return renditionMP4AtRate(t, w, h, 30)
+}
+
+func renditionMP4AtRate(t *testing.T, w, h, fps int) []byte {
 	t.Helper()
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		t.Skip("ffmpeg not on PATH")
@@ -33,7 +37,7 @@ func renditionMP4(t *testing.T, w, h int) []byte {
 	// keyframed mid-segment, so minting has to sign per GoP.
 	cmd := exec.Command("ffmpeg", "-v", "error", "-y", "-i", getFixture("h264-opus-frag.mp4"),
 		"-t", "2", "-an", "-vf", fmt.Sprintf("scale=%d:%d", w, h), "-c:v", "libx264", "-preset", "ultrafast",
-		"-g", "30", "-keyint_min", "30", "-sc_threshold", "0", "-pix_fmt", "yuv420p",
+		"-r", fmt.Sprint(fps), "-g", fmt.Sprint(fps), "-keyint_min", fmt.Sprint(fps), "-sc_threshold", "0", "-pix_fmt", "yuv420p",
 		"-movflags", "+frag_keyframe+empty_moov", "-f", "mp4", out)
 	require.NoError(t, cmd.Run(), "ffmpeg")
 	b, err := os.ReadFile(out)
@@ -65,7 +69,7 @@ func sourceSegmentForTest(t *testing.T) []byte {
 	eventCh := make(chan *muxl.MuxlEvent, 16)
 	errCh := make(chan error, 1)
 	go func() {
-		err := ms.SignSegmentStream(ctx, bytes.NewReader(frag), eventCh)
+		err := ms.SignSegmentStream(ctx, bytes.NewReader(frag), eventCh, nil)
 		close(eventCh)
 		errCh <- err
 	}()
@@ -135,7 +139,7 @@ func TestMintVideoRenditions(t *testing.T) {
 	const did = "did:test:streamer"
 	t0 := time.Now()
 	mm.feedLiveWindow(ctx, did, src, t0, true)
-	mm.FeedLiveRenditions(ctx, did, addendum, t0, true)
+	require.NoError(t, mm.FeedLiveRenditions(ctx, did, addendum, t0, true))
 	w, _ := mm.GetLiveWindow(did)
 	require.NotNil(t, w)
 	master := w.MasterPlaylist(func(tid string) string { return tid + ".m3u8" })
@@ -157,7 +161,7 @@ func TestMintVideoRenditions(t *testing.T) {
 	// layout is remembered) and lands on the same track ids.
 	again, err := mm.mintVideoRenditions(ctx, src, []RenditionInput{{Name: "160p", MP4: r360}, {Name: "80p", MP4: r160}}, cert, keyPEM)
 	require.NoError(t, err)
-	mm.FeedLiveRenditions(ctx, did, again, t0, true)
+	require.NoError(t, mm.FeedLiveRenditions(ctx, did, again, t0, true))
 	require.Len(t, w.Track("100").Segments, 4)
 
 	// A broken rendition is skipped, the rest still mint.
@@ -190,7 +194,7 @@ func TestMintVideoRenditionsRetimes(t *testing.T) {
 	eventCh := make(chan *muxl.MuxlEvent, 16)
 	errCh := make(chan error, 1)
 	go func() {
-		err := ms.SignSegmentStream(ctx, bytes.NewReader(frag), eventCh)
+		err := ms.SignSegmentStream(ctx, bytes.NewReader(frag), eventCh, nil)
 		close(eventCh)
 		errCh <- err
 	}()

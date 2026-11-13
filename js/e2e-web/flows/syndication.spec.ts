@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 
 // The harness runs a second node that hears the test stream's origin record
 // on the firehose and pulls its segments from the first node over Media over
-// QUIC (see pkg/cmd/e2e.go and docs/moq.md). Playback from that node is the
+// QUIC (see pkg/cmd/e2e.go and docs/moq-for-devs.md). Playback from that node is the
 // whole transfer end to end: the origin advertising its MoQ URL, the peer
 // dialling it with the pinned certificate, the MUXL segments arriving and
 // validating, and the stream going live there.

@@ -18,7 +18,7 @@ import (
 	"stream.place/streamplace/pkg/ingestframe"
 )
 
-func workerSourceForTest(t *testing.T, fixture string) (string, []byte) {
+func workerSourceForTest(t testing.TB, fixture string) (string, []byte) {
 	t.Helper()
 	ms := newBareSegmentSigner(t)
 	var manifest map[string]any
@@ -77,8 +77,9 @@ func TestWorkerSourceFramePublishesBeforeCompletion(t *testing.T) {
 	require.Len(t, playback.C, 1, "verified source is playable before a completed frame arrives")
 	got := <-playback.C
 	require.Equal(t, source, got.Muxl, "source signatures and canonical bytes survive publication")
-	valid, err := ValidateMP4MediaC2PA(ctx, source)
+	valid, err := ValidateMP4Media(ctx, source)
 	require.NoError(t, err)
+	require.Equal(t, valid.Playable, got.Data, "published presentation is the validated source")
 	require.Equal(t, *valid.Manifest.Label, got.Filepath)
 	require.True(t, got.Published)
 	require.Len(t, webrtc.C, 1, "compatible packets retain the low-latency WHEP path")
@@ -86,12 +87,38 @@ func TestWorkerSourceFramePublishesBeforeCompletion(t *testing.T) {
 	require.NotNil(t, got.PacketizedData)
 	require.NotEmpty(t, got.PacketizedData.Video)
 	require.NotEmpty(t, got.PacketizedData.Audio)
+	wantPackets, err := Packetize(ctx, mm.cli, &bus.Seg{Muxl: source}, 0)
+	require.NoError(t, err)
+	require.Equal(t, wantPackets, got.PacketizedData, "packet samples and timing match canonical selection")
 	require.Empty(t, mm.BufferedSegments(streamer), "canonical distribution waits for completion")
 	window, published := mm.GetLiveWindow(streamer)
 	require.Nil(t, window)
 	require.False(t, published)
 	require.False(t, mm.bus.HasSegments(streamer, PlaybackSourceRendition), "source-only end cannot leave a live playback cache")
 	require.False(t, mm.bus.HasSegments(streamer, WebRTCSourceRendition), "source-only end releases compatible playback too")
+}
+
+func BenchmarkWorkerSourcePhase(b *testing.B) {
+	ctx := context.Background()
+	streamer, source := workerSourceForTest(b, "h264-opus-frag.mp4")
+	mm := &MediaManager{
+		cli: &config.CLI{BroadcasterHost: "node.test", AllowedStreams: []string{streamer}},
+		bus: bus.NewBus(),
+	}
+	want, err := Packetize(ctx, mm.cli, &bus.Seg{Muxl: source}, 0)
+	require.NoError(b, err)
+	got, err := mm.consumeSourcePhase(ctx, source, streamer, true)
+	require.NoError(b, err)
+	require.Equal(b, want, got.PacketizedData)
+	b.ReportAllocs()
+	for b.Loop() {
+		got, err = mm.consumeSourcePhase(ctx, source, streamer, true)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+	require.Equal(b, source, got.Muxl)
+	require.Equal(b, want, got.PacketizedData)
 }
 
 // A phase frame is subject to the same signature, identity and distribution

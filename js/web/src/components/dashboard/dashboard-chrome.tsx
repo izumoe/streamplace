@@ -12,6 +12,7 @@ import {
   ListVideo,
   Radio,
   Share2,
+  UserRound,
   Video,
   Webhook,
 } from "lucide-react";
@@ -56,6 +57,7 @@ const MAIN_NAV: NavLink[] = [
 
 /** Settings group; appears under a "Settings" header. */
 const SETTINGS_NAV: NavLink[] = [
+  { to: "/dashboard/profile", icon: UserRound, labelKey: "common:profile" },
   { to: "/dashboard/stream", icon: Radio, labelKey: "stream-settings" },
   { to: "/dashboard/keys", icon: Key, labelKey: "key-manager" },
   { to: "/dashboard/multistream", icon: Share2, labelKey: "multistream" },

@@ -29,12 +29,22 @@ func signedSegments(t *testing.T, ctx context.Context) [][]byte {
 	t.Helper()
 	ms, err := media.NewEphemeralMediaSigner("test-streamer")
 	require.NoError(t, err)
+	return signedSegmentsWithSigner(t, ctx, ms)
+}
+
+func signedSegmentsWithSigner(t *testing.T, ctx context.Context, ms *media.MediaSignerLocal) [][]byte {
+	t.Helper()
+	return signedSegmentsWithRemap(t, ctx, ms, nil)
+}
+
+func signedSegmentsWithRemap(t *testing.T, ctx context.Context, ms *media.MediaSignerLocal, remap map[uint32]uint32) [][]byte {
+	t.Helper()
 	frag, err := os.ReadFile("../../../test/fixtures/h264-opus-frag.mp4")
 	require.NoError(t, err)
 	events := make(chan *muxl.MuxlEvent, 16)
 	signed := make(chan error, 1)
 	go func() {
-		signed <- ms.SignSegmentStream(ctx, bytes.NewReader(frag), events)
+		signed <- ms.SignSegmentStream(ctx, bytes.NewReader(frag), events, remap)
 		close(events)
 	}()
 	var segments [][]byte
@@ -102,7 +112,7 @@ func TestMoqPlaybackGroupsFollowVideoSyncFrames(t *testing.T) {
 		events := make(chan *muxl.MuxlEvent, 16)
 		done := make(chan error, 1)
 		go func() {
-			done <- signer.SignSegmentStream(ctx, bytes.NewReader(input), events)
+			done <- signer.SignSegmentStream(ctx, bytes.NewReader(input), events, nil)
 			close(events)
 		}()
 		var signed []*muxl.MuxlEvent

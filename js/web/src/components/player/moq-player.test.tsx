@@ -119,7 +119,9 @@ describe("MoQ player discovery lifecycle", () => {
         ),
     );
     await render();
-    await act(async () => vi.advanceTimersByTimeAsync(10_000));
+    await act(async () => vi.advanceTimersByTimeAsync(1999));
+    expect(container.textContent).toBe("connecting");
+    await act(async () => vi.advanceTimersByTimeAsync(1));
     expect(container.textContent).toBe("WebRTC fallback");
     await act(async () => vi.advanceTimersByTimeAsync(20_000));
     expect(fallbackEvents).toEqual(["WebRTC fallback"]);

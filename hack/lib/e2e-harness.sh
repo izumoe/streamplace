@@ -24,6 +24,10 @@
 # OAuth flows then skip themselves. A machine that redirects loopback 443
 # elsewhere (an iptables REDIRECT rule) sets E2E_HTTPS_PORT to the target port.
 #
+# E2E_UNAPPROVED_STREAM=1 leaves the administrator without publishing approval,
+# makes the syndication peer receive-only, and exports E2E_STREAM_KEY plus the
+# loopback SERVER_INTERNAL_URL for access-policy acceptance tests.
+#
 # E2E_HARNESS_LOG, if set, is where the harness log goes; it is kept after the
 # run (CI uploads it). Otherwise the log is a temp file, shown on a failed
 # start and deleted afterwards.
@@ -74,6 +78,9 @@ e2e_harness_start() {
   if [ "${E2E_LATENCY:-}" = 1 ] || [ "${E2E_ERTMP:-}" = 1 ]; then
     args+=(--external-stream)
   fi
+  if [ "${E2E_UNAPPROVED_STREAM:-}" = 1 ]; then
+    args+=(--unapproved-stream)
+  fi
   if [ -n "$E2E_HTTPS_PDS_HOSTNAME" ]; then
     args+=(--https-pds-hostname "$E2E_HTTPS_PDS_HOSTNAME"
       --https-station-hostname "$E2E_HTTPS_STATION_HOSTNAME"
@@ -95,6 +102,7 @@ e2e_harness_start() {
   . "$E2E_ENVFILE"
   export SERVER_URL SERVER2_URL ACCOUNT_HANDLE ACCOUNT_DID ACCOUNT_PASSWORD VIDEO_URI
   export E2E_FIXTURE_MP4 PDS_HTTP_URL
+  export E2E_UNAPPROVED_STREAM SERVER_INTERNAL_URL
   export E2E_STREAM_KEY
   export E2E_RTMP_URL
   # Every node's log, for specs that check how something happened.

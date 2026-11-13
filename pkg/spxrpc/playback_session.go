@@ -73,9 +73,10 @@ var errBadSession = echo.NewHTTPError(http.StatusBadRequest, "InvalidSession")
 
 // resolveSession verifies the sid a playback request carries against
 // streamer, or mints one. A malformed or forged sid is refused; an expired
-// one is renewed in place, so a viewer who paused for a day resumes with
-// their own session id. When needsRedirect is set and the caller had no
-// valid session, the result asks for a redirect.
+// public one is renewed in place, so a viewer who paused for a day resumes
+// with their own session id. Expired owner access requires authentication.
+// When needsRedirect is set and the caller had no valid session, the result
+// asks for a redirect.
 func (s *Server) resolveSession(ctx context.Context, sid, streamer string, needsRedirect bool) (playbackSession, error) {
 	if sid != "" && !psession.WellFormed(sid) {
 		return playbackSession{}, errBadSession
@@ -102,6 +103,9 @@ func (s *Server) resolveSession(ctx context.Context, sid, streamer string, needs
 		}
 		return out, nil
 	case errors.Is(err, psession.ErrExpired):
+		if sess.Scope == psession.ScopeOwner {
+			return playbackSession{}, echo.NewHTTPError(http.StatusForbidden, "InvalidSession")
+		}
 		sess, value := psession.Renew(key, sess, streamer, sessionTTL(sess.Scope), now)
 		return playbackSession{Session: sess, SID: value, Redirect: needsRedirect}, nil
 	default:

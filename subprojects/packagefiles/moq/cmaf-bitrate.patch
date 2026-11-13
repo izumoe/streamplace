@@ -1,0 +1,339 @@
+diff --git a/rs/moq-ffi/src/producer.rs b/rs/moq-ffi/src/producer.rs
+index 8f4addc..777162b 100644
+--- a/rs/moq-ffi/src/producer.rs
++++ b/rs/moq-ffi/src/producer.rs
+@@ -1180,7 +1180,8 @@ impl MoqContainerStreamProducer {
+ /// A CMAF track whose fragments are delivered byte for byte.
+ ///
+ /// Made by [`MoqBroadcastProducer::publish_cmaf`]. The caller draws the groups. The track is not
+-/// enrolled in the broadcast's timeline, and its rendition carries no measured bitrate or jitter.
++/// enrolled in the broadcast's timeline. Its rendition advertises measured CMAF bitrate,
++/// without inferring encoder jitter from fragment arrival.
+ #[derive(uniffi::Object)]
+ pub struct MoqCmafProducer {
+ 	inner: std::sync::Mutex<Option<moq_mux::container::fmp4::Passthrough<Extra>>>,
+@@ -1225,11 +1226,11 @@ impl MoqCmafProducer {
+ #[derive(uniffi::Object)]
+ pub struct MoqCmafGroupProducer {
+ 	sequence: u64,
+-	inner: std::sync::Mutex<Option<moq_mux::container::fmp4::PassthroughGroup>>,
++	inner: std::sync::Mutex<Option<moq_mux::container::fmp4::PassthroughGroup<Extra>>>,
+ }
+ 
+ impl MoqCmafGroupProducer {
+-	fn new(group: moq_mux::container::fmp4::PassthroughGroup) -> Arc<Self> {
++	fn new(group: moq_mux::container::fmp4::PassthroughGroup<Extra>) -> Arc<Self> {
+ 		Arc::new(Self {
+ 			sequence: group.sequence(),
+ 			inner: std::sync::Mutex::new(Some(group)),
+diff --git a/rs/moq-mux/src/container/fmp4/import.rs b/rs/moq-mux/src/container/fmp4/import.rs
+index d9817a9..bab8cd4 100644
+--- a/rs/moq-mux/src/container/fmp4/import.rs
++++ b/rs/moq-mux/src/container/fmp4/import.rs
+@@ -105,7 +105,7 @@ pub(super) enum Rendition<E: crate::catalog::hang::CatalogExt> {
+ }
+ 
+ impl<E: crate::catalog::hang::CatalogExt> Rendition<E> {
+-	fn estimate(&mut self, estimate: crate::catalog::Estimate) -> crate::Result<()> {
++	pub(super) fn estimate(&mut self, estimate: crate::catalog::Estimate) -> crate::Result<()> {
+ 		match self {
+ 			Self::Video(rendition) => rendition.estimate(estimate),
+ 			Self::Audio(rendition) => rendition.estimate(estimate),
+diff --git a/rs/moq-mux/src/container/fmp4/passthrough.rs b/rs/moq-mux/src/container/fmp4/passthrough.rs
+index 433d6e1..a283b48 100644
+--- a/rs/moq-mux/src/container/fmp4/passthrough.rs
++++ b/rs/moq-mux/src/container/fmp4/passthrough.rs
+@@ -1,3 +1,5 @@
++use std::sync::{Arc, Mutex, Weak};
++
+ use bytes::Bytes;
+ use hang::catalog::Container;
+ use mp4_atom::{Atom, DecodeAtom, DecodeMaybe, Header, Mdat, Moof};
+@@ -6,6 +8,7 @@ use super::import::{Rendition, init_audio, init_video};
+ use super::{Error, Kind, Wire};
+ use crate::Result;
+ use crate::catalog::hang::CatalogExt;
++use crate::catalog::{Estimate, Estimator};
+ 
+ /// Publishes one CMAF track whose fragments go out byte for byte, advertised in the catalog.
+ ///
+@@ -13,14 +16,22 @@ use crate::catalog::hang::CatalogExt;
+ /// top-level boxes it doesn't know, which breaks anything signed over the fragment's bytes. This
+ /// writes each fragment as one frame, unchanged, and leaves grouping to the caller.
+ ///
+-/// The track is not enrolled in the broadcast's timeline, and its rendition carries no measured
+-/// bitrate or jitter. The catalog entry lasts as long as this producer.
++/// The track is not enrolled in the broadcast's timeline. Its catalog bitrate is measured over
++/// media time, including the fragment headers, without inferring jitter from batch arrival.
++/// The catalog entry lasts as long as this producer.
+ pub struct Passthrough<E: CatalogExt = ()> {
+ 	track: moq_net::track::Producer,
+ 	track_id: u32,
+ 	timescale: moq_net::Timescale,
+ 	// Retires the catalog entry on drop.
+-	_rendition: Rendition<E>,
++	measured: Arc<Mutex<MeasuredRendition<E>>>,
++}
++
++// Groups can outlive their track. A weak reference lets them update measurements without
++// keeping a retired rendition in the catalog.
++struct MeasuredRendition<E: CatalogExt> {
++	rendition: Rendition<E>,
++	estimator: Estimator,
+ }
+ 
+ impl<E: CatalogExt> Passthrough<E> {
+@@ -50,12 +61,17 @@ impl<E: CatalogExt> Passthrough<E> {
+ 		let rendition = match kind {
+ 			Kind::Video => {
+ 				let mut rendition = reserved.init(track.name())?;
+-				rendition.set(init_video(trak, container)?)?;
++				let mut config = init_video(trak, container)?;
++				config.bitrate = None;
++				rendition.set(config)?;
+ 				Rendition::Video(rendition)
+ 			}
+ 			Kind::Audio => {
+ 				let mut rendition = reserved.init(track.name())?;
+-				rendition.set(init_audio(trak, container)?)?;
++				let mut config = init_audio(trak, container)?;
++				// Descriptor rates describe elementary audio, not this signed CMAF track.
++				config.bitrate = None;
++				rendition.set(config)?;
+ 				Rendition::Audio(rendition)
+ 			}
+ 		};
+@@ -64,7 +80,10 @@ impl<E: CatalogExt> Passthrough<E> {
+ 			track,
+ 			track_id,
+ 			timescale,
+-			_rendition: rendition,
++			measured: Arc::new(Mutex::new(MeasuredRendition {
++				rendition,
++				estimator: Estimator::new(),
++			})),
+ 		})
+ 	}
+ 
+@@ -74,22 +93,24 @@ impl<E: CatalogExt> Passthrough<E> {
+ 	}
+ 
+ 	/// Open the group numbered `sequence`.
+-	pub fn create_group(&mut self, sequence: u64) -> Result<PassthroughGroup> {
++	pub fn create_group(&mut self, sequence: u64) -> Result<PassthroughGroup<E>> {
+ 		let group = self.track.create_group(moq_net::group::Info { sequence })?;
+ 		Ok(self.group(group))
+ 	}
+ 
+ 	/// Open the group after the latest one.
+-	pub fn append_group(&mut self) -> Result<PassthroughGroup> {
++	pub fn append_group(&mut self) -> Result<PassthroughGroup<E>> {
+ 		let group = self.track.append_group()?;
+ 		Ok(self.group(group))
+ 	}
+ 
+-	fn group(&self, group: moq_net::group::Producer) -> PassthroughGroup {
++	fn group(&self, group: moq_net::group::Producer) -> PassthroughGroup<E> {
+ 		PassthroughGroup {
+ 			group,
+ 			track_id: self.track_id,
+ 			timescale: self.timescale,
++			measured: Arc::downgrade(&self.measured),
++			first: true,
+ 		}
+ 	}
+ 
+@@ -107,13 +128,15 @@ impl<E: CatalogExt> Passthrough<E> {
+ }
+ 
+ /// One group of a [`Passthrough`] track, where each fragment is one frame.
+-pub struct PassthroughGroup {
++pub struct PassthroughGroup<E: CatalogExt = ()> {
+ 	group: moq_net::group::Producer,
++	measured: Weak<Mutex<MeasuredRendition<E>>>,
++	first: bool,
+ 	track_id: u32,
+ 	timescale: moq_net::Timescale,
+ }
+ 
+-impl PassthroughGroup {
++impl<E: CatalogExt> PassthroughGroup<E> {
+ 	/// The group's sequence number within the track.
+ 	pub fn sequence(&self) -> u64 {
+ 		self.group.sequence
+@@ -126,12 +149,25 @@ impl PassthroughGroup {
+ 	/// sample's presentation time (`tfdt` plus the first `trun` entry's composition offset) on the
+ 	/// track's timescale.
+ 	pub fn write(&mut self, fragment: Bytes) -> Result<()> {
+-		let timestamp = self.timestamp(&fragment)?;
++		let (timestamp, decode) = self.timestamps(&fragment)?;
++		let bytes = fragment.len();
+ 		self.group.write_frame(timestamp, fragment)?;
++		if let Some(measured) = self.measured.upgrade() {
++			let mut measured = measured.lock().unwrap();
++			// The next group's first decode time closes the previous media span, including
++			// its last sample. DTS keeps reordered presentation times out of the rate.
++			if self.first {
++				measured.estimator.cut(Some(decode));
++				self.first = false;
++			}
++			measured.estimator.write(decode, bytes);
++			let estimate = Estimate::default().with_bitrate(measured.estimator.estimate().bitrate);
++			measured.rendition.estimate(estimate)?;
++		}
+ 		Ok(())
+ 	}
+ 
+-	fn timestamp(&self, fragment: &[u8]) -> Result<moq_net::Timestamp> {
++	fn timestamps(&self, fragment: &[u8]) -> Result<(moq_net::Timestamp, moq_net::Timestamp)> {
+ 		let mut buf = fragment;
+ 		let mut moof = None;
+ 		let mut mdat = false;
+@@ -179,7 +215,10 @@ impl PassthroughGroup {
+ 			.checked_add_signed(first.cts.unwrap_or_default() as i64)
+ 			.ok_or(Error::PtsOverflow)?;
+ 
+-		Ok(moq_net::Timestamp::new(pts, self.timescale)?)
++		Ok((
++			moq_net::Timestamp::new(pts, self.timescale)?,
++			moq_net::Timestamp::new(tfdt.base_media_decode_time, self.timescale)?,
++		))
+ 	}
+ 
+ 	/// Mark the group complete.
+@@ -245,6 +284,29 @@ mod tests {
+ 		// The raw AudioSpecificConfig: AAC-LC at 48 kHz, stereo.
+ 		assert_eq!(audio.description.unwrap().as_ref(), &[0x11, 0x90]);
+ 		assert_eq!(audio.container, Container::Cmaf { init: AAC_INIT.into() });
++		assert_eq!(
++			audio.bitrate, None,
++			"a codec descriptor's nominal rate omits CMAF overhead"
++		);
++
++		let mut input = AAC_INIT;
++		let mut nominal = Vec::new();
++		while let Some(mut atom) = mp4_atom::Any::decode_maybe(&mut input).unwrap() {
++			if let mp4_atom::Any::Moov(moov) = &mut atom {
++				let mp4_atom::Codec::Mp4a(mp4a) = &mut moov.trak[0].mdia.minf.stbl.stsd.codecs[0] else {
++					panic!("AAC fixture codec");
++				};
++				mp4a.esds.es_desc.dec_config.avg_bitrate = 64_000;
++				mp4a.esds.es_desc.dec_config.max_bitrate = 64_000;
++			}
++			atom.encode(&mut nominal).unwrap();
++		}
++		let (_broadcast, nominal_catalog, _nominal_track) = publish(&nominal);
++		assert_eq!(
++			nominal_catalog.snapshot().audio.renditions["track"].bitrate,
++			None,
++			"a nominal descriptor must not override measured fragment cost"
++		);
+ 
+ 		// The entry lasts as long as the producer.
+ 		drop(track);
+@@ -297,6 +359,105 @@ mod tests {
+ 		out.into()
+ 	}
+ 
++	/// Keep the real encoded payload and change only the sample's timeline.
++	fn at_frame(frame: u64, cts: i32) -> Bytes {
++		let fragment = with_cts(cts);
++		let mut buf = fragment.as_ref();
++		let mut moof = Moof::decode(&mut buf).unwrap();
++		moof.traf[0].tfdt.as_mut().unwrap().base_media_decode_time = 48_000 + frame * 4_800;
++		let mut out = Vec::new();
++		moof.encode(&mut out).unwrap();
++		out.extend_from_slice(buf);
++		out.into()
++	}
++
++	#[test]
++	fn bitrate_measures_media_time_and_preserves_container() {
++		for reordered in [false, true] {
++			let (_broadcast, catalog, mut track) = publish(OPUS_INIT);
++			let mut group = track.append_group().unwrap();
++			let mut bytes = 0;
++			for frame in 0..10 {
++				let fragment = at_frame(frame, if reordered && frame % 2 == 0 { -2_400 } else { 0 });
++				bytes += fragment.len();
++				group.write(fragment).unwrap();
++			}
++			group.finish().unwrap();
++			// A partial window remains unknown, rather than claiming zero or timing this burst.
++			assert_eq!(catalog.snapshot().audio.renditions["track"].bitrate, None);
++			let mut next = track.append_group().unwrap();
++			next.write(at_frame(10, 0)).unwrap();
++			let config = catalog.snapshot().audio.renditions["track"].clone();
++			assert_eq!(config.bitrate, Some(bytes as u64 * 8));
++			assert_eq!(config.container, Container::Cmaf { init: OPUS_INIT.into() });
++			assert_eq!(config.jitter, None, "import arrival time is not encoder jitter");
++			let mut high_bytes = at_frame(10, 0).len();
++			for frame in 11..20 {
++				let fragment = at_frame(frame, 0);
++				let padded: Bytes = [uuid_box().as_slice(), fragment.as_ref()].concat().into();
++				high_bytes += padded.len();
++				next.write(padded).unwrap();
++			}
++			next.finish().unwrap();
++			let mut lower = track.append_group().unwrap();
++			lower.write(at_frame(20, 0)).unwrap();
++			assert_eq!(
++				catalog.snapshot().audio.renditions["track"].bitrate,
++				Some(high_bytes as u64 * 8)
++			);
++			for frame in 21..30 {
++				lower.write(at_frame(frame, 0)).unwrap();
++			}
++			lower.finish().unwrap();
++			track.append_group().unwrap().write(at_frame(30, 0)).unwrap();
++			assert_eq!(
++				catalog.snapshot().audio.renditions["track"].bitrate,
++				Some(high_bytes as u64 * 8),
++				"the catalog is a conservative peak, not current throughput"
++			);
++		}
++	}
++
++	#[test]
++	fn bitrate_accumulates_single_fragment_groups_per_track() {
++		let (broadcast, catalog, mut small) = publish(OPUS_INIT);
++		let mut large =
++			Passthrough::new(&broadcast, catalog.reserve(), "large", Bytes::from_static(OPUS_INIT)).unwrap();
++		let mut bytes = [0, 0];
++		for frame in 0..=10 {
++			for (index, track) in [&mut small, &mut large].into_iter().enumerate() {
++				let mut group = track.append_group().unwrap();
++				let fragment = at_frame(frame, 0);
++				let fragment: Bytes = if index == 1 {
++					[uuid_box().as_slice(), fragment.as_ref()].concat().into()
++				} else {
++					fragment
++				};
++				if frame < 10 {
++					bytes[index] += fragment.len();
++				}
++				assert!(group.write(Bytes::from_static(b"bad fragment")).is_err());
++				group.write(fragment).unwrap();
++				group.finish().unwrap();
++			}
++		}
++		let snapshot = catalog.snapshot();
++		assert_eq!(snapshot.audio.renditions["track"].bitrate, Some(bytes[0] as u64 * 8));
++		assert_eq!(snapshot.audio.renditions["large"].bitrate, Some(bytes[1] as u64 * 8));
++	}
++
++	#[test]
++	fn group_does_not_keep_a_retired_rendition_in_the_catalog() {
++		let (_broadcast, catalog, mut track) = publish(OPUS_INIT);
++		let mut group = track.append_group().unwrap();
++		group.write(at_frame(0, 0)).unwrap();
++		drop(track);
++		assert!(catalog.snapshot().audio.renditions.is_empty());
++		group.write(at_frame(1, 0)).unwrap();
++		group.finish().unwrap();
++		assert!(catalog.snapshot().audio.renditions.is_empty());
++	}
++
+ 	#[test]
+ 	fn malformed_fragments_are_refused() {
+ 		let (_broadcast, _catalog, mut track) = publish(OPUS_INIT);

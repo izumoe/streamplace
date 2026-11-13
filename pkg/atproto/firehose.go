@@ -25,6 +25,7 @@ import (
 	glex "github.com/streamplace/glex/runtime"
 	"github.com/streamplace/oatproxy/pkg/oatproxy"
 	"golang.org/x/sync/errgroup"
+	"stream.place/streamplace/pkg/access"
 	"stream.place/streamplace/pkg/aqhttp"
 	"stream.place/streamplace/pkg/aqtime"
 	"stream.place/streamplace/pkg/bus"
@@ -45,6 +46,7 @@ import (
 const dedupWindow = 5 * time.Minute
 
 type ATProtoSynchronizer struct {
+	Access     access.Checker
 	CLI        *config.CLI
 	Model      model.Model
 	StatefulDB *statedb.StatefulDB
@@ -569,6 +571,9 @@ func (atsync *ATProtoSynchronizer) handleIndexedOps(ctx context.Context, evt *in
 			})
 			if err != nil {
 				log.Error(ctx, "failed to handle create update", "err", err)
+				if collection.String() == constants.PLACE_STREAM_BIO_PAGE {
+					complete = false
+				}
 				continue
 			}
 
@@ -638,7 +643,7 @@ func (atsync *ATProtoSynchronizer) handleIndexedOps(ctx context.Context, evt *in
 			}
 
 			if collection.String() == constants.PLACE_STREAM_CHAT_MESSAGE {
-				msg, err := atsync.Model.GetChatMessage(uri)
+				msg, err := atsync.Model.GetChatMessage(ctx, uri)
 				if err != nil {
 					log.Error(ctx, "failed to get chat message", "err", err)
 					continue
@@ -728,6 +733,13 @@ func (atsync *ATProtoSynchronizer) handleIndexedOps(ctx context.Context, evt *in
 				log.Debug(ctx, "deleting video", "uri", uri)
 				if err := atsync.Model.DeleteVideo(ctx, uri); err != nil {
 					log.Error(ctx, "failed to delete video", "err", err)
+				}
+			}
+
+			if collection.String() == constants.PLACE_STREAM_BIO_PAGE && rkey.String() == "self" {
+				if err := atsync.Model.DeleteBioPage(ctx, evt.Repo, evt.Rev); err != nil {
+					log.Error(ctx, "failed to delete bio page", "err", err)
+					complete = false
 				}
 			}
 

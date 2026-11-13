@@ -1,6 +1,15 @@
 package eip712_test
 
 import (
+	"context"
+	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+
+	"github.com/ethereum/go-ethereum/accounts/keystore"
+	"github.com/ethereum/go-ethereum/crypto"
 	"testing"
 	"time"
 
@@ -79,3 +88,67 @@ func TestSignIdentity(t *testing.T) {
 // 		require.Error(t, err)
 // 	})
 // }
+
+// Use a fresh process so other tests cannot hide retained startup scratch space.
+func TestKeystoreStartup(t *testing.T) {
+	if os.Getenv("STREAMPLACE_KEYSTORE_STARTUP_TEST") != "1" {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestKeystoreStartup$")
+		cmd.Env = append(os.Environ(), "STREAMPLACE_KEYSTORE_STARTUP_TEST=1")
+		output, err := cmd.CombinedOutput()
+		require.NoError(t, err, "%s", output)
+		return
+	}
+	path := t.TempDir()
+	opts := &eip712.EIP712SignerOptions{EthKeystorePath: path, EthKeystorePassword: "startup-test-password"}
+	signer := &eip712.EIP712Signer{Opts: opts}
+	require.NoError(t, signer.InitKeystore(context.Background()))
+	hash := crypto.Keccak256([]byte("keystore startup"))
+	signature, err := signer.EthSign(hash)
+	require.NoError(t, err)
+	var memory runtime.MemStats
+	runtime.ReadMemStats(&memory)
+	require.Less(t, memory.HeapSys-memory.HeapReleased, uint64(64<<20), "unused scratch pages must be returned to the OS")
+	files, err := os.ReadDir(path)
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+	keyPath := filepath.Join(path, files[0].Name())
+	info, err := os.Stat(keyPath)
+	require.NoError(t, err)
+	require.Zero(t, info.Mode().Perm()&0077, "encrypted key must be private")
+	data, err := os.ReadFile(keyPath)
+	require.NoError(t, err)
+	var encrypted struct {
+		Version int                 `json:"version"`
+		Crypto  keystore.CryptoJSON `json:"crypto"`
+	}
+	require.NoError(t, json.Unmarshal(data, &encrypted))
+	require.Equal(t, 3, encrypted.Version)
+	require.Equal(t, "aes-128-ctr", encrypted.Crypto.Cipher)
+	require.Equal(t, "scrypt", encrypted.Crypto.KDF)
+	require.Equal(t, float64(keystore.StandardScryptN), encrypted.Crypto.KDFParams["n"])
+	require.Equal(t, float64(keystore.StandardScryptP), encrypted.Crypto.KDFParams["p"])
+	require.Equal(t, float64(8), encrypted.Crypto.KDFParams["r"])
+	require.Equal(t, float64(32), encrypted.Crypto.KDFParams["dklen"])
+
+	restarted := &eip712.EIP712Signer{Opts: opts}
+	require.NoError(t, restarted.InitKeystore(context.Background()))
+	require.Equal(t, signer.Hex(), restarted.Hex())
+	restartedSignature, err := restarted.EthSign(hash)
+	require.NoError(t, err)
+	require.Equal(t, signature, restartedSignature)
+	runtime.ReadMemStats(&memory)
+	require.Less(t, memory.HeapSys-memory.HeapReleased, uint64(64<<20), "unlock must return unused scratch pages to the OS")
+	wrongOpts := *opts
+	wrongOpts.EthKeystorePassword = "wrong-password"
+	wrong := &eip712.EIP712Signer{Opts: &wrongOpts}
+	require.ErrorIs(t, wrong.InitKeystore(context.Background()), keystore.ErrDecrypt)
+	require.Nil(t, wrong.KeyStore)
+	require.Nil(t, wrong.Account)
+	runtime.ReadMemStats(&memory)
+	require.Less(t, memory.HeapSys-memory.HeapReleased, uint64(64<<20), "failed unlock must also release scratch pages")
+	unchanged, err := os.ReadFile(keyPath)
+	require.NoError(t, err)
+	require.Equal(t, data, unchanged, "failed unlock must not rewrite the protected key")
+	runtime.KeepAlive(signer)
+	runtime.KeepAlive(restarted)
+}

@@ -41,7 +41,7 @@ func (m *DBModel) CreateChatProfile(ctx context.Context, profile *ChatProfile) e
 
 func (m *DBModel) GetChatProfile(ctx context.Context, repoDID string) (*ChatProfile, error) {
 	var profile ChatProfile
-	err := m.DB.Where("repo_did = ?", repoDID).First(&profile).Error
+	err := m.DB.WithContext(ctx).Where("repo_did = ?", repoDID).First(&profile).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}

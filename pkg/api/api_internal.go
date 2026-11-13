@@ -401,7 +401,7 @@ func (a *StreamplaceAPI) InternalHandler(ctx context.Context) (http.Handler, err
 			errors.WriteHTTPBadRequest(w, "uri required", nil)
 			return
 		}
-		msg, err := a.Model.GetChatMessage(uri)
+		msg, err := a.Model.GetChatMessage(r.Context(), uri)
 		if err != nil {
 			errors.WriteHTTPInternalServerError(w, "unable to get chat posts", err)
 			return

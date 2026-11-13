@@ -36,8 +36,11 @@ func TestLivestreamRecordingEligibility(t *testing.T) {
 		closedDB  bool
 		want      bool
 		wantLog   string
+		policy    string
 	}{
 		{name: "open node defaults to recording", want: true},
+		{name: "streaming allowance cannot override disabled recording", allowed: []string{creator}, policy: "vod=off"},
+		{name: "recording eligibility is independent of publishing", policy: "streamer=off,vod=open", want: true},
 		{name: "allowed account defaults to recording", allowed: []string{creator}, want: true},
 		{name: "account outside allowlist is not recorded", allowed: []string{"did:plc:other"}},
 		{name: "explicit consent permits recording", allowed: []string{creator}, settings: true, recording: &on, want: true},
@@ -67,7 +70,7 @@ func TestLivestreamRecordingEligibility(t *testing.T) {
 				t.Cleanup(func() { require.NoError(t, db.Close()) })
 			}
 			logs.Reset()
-			ss := &StreamSession{mod: m, cli: &config.CLI{BroadcasterHost: "stream.example", AllowedStreams: tc.allowed}}
+			ss := &StreamSession{mod: m, cli: &config.CLI{BroadcasterHost: "stream.example", AllowedStreams: tc.allowed, AccessPolicy: tc.policy}}
 			require.Equal(t, tc.want, ss.shouldRecordLivestream(context.Background(), creator))
 			if tc.wantLog != "" {
 				require.Contains(t, logs.String(), tc.wantLog)

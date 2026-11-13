@@ -1,8 +1,8 @@
 // Sentry capture helper.
 //
 // The web app initialises @sentry/react conditionally in main.tsx (only
-// when VITE_SENTRY_DSN is set). When uninitialised, captureException is
-// a no-op, so we don't need to gate the call ourselves.
+// when VITE_SENTRY_DSN is set). Gate reporting on the same build-time
+// setting so unconfigured builds can omit the SDK entirely.
 //
 // `captureError` is the one place code that catches a known error should
 // route through when it wants the error to be reported. It builds a
@@ -23,6 +23,7 @@ export function captureError(
     console.error(message, context);
     return;
   }
+  if (!import.meta.env.VITE_SENTRY_DSN) return;
   const err = new Error(message);
   if (context) {
     Sentry.withScope((scope) => {

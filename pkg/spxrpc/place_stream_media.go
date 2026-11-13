@@ -8,6 +8,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/streamplace/oatproxy/pkg/oatproxy"
+	"stream.place/streamplace/pkg/access"
 	"stream.place/streamplace/pkg/log"
 	placestream "stream.place/streamplace/pkg/placestream"
 )
@@ -24,8 +25,14 @@ func (s *Server) handlePlaceStreamMediaCreateUpload(ctx context.Context, body *p
 	} else if banned {
 		return nil, echo.NewHTTPError(http.StatusForbidden, "account is not permitted to upload videos")
 	}
-	if err := s.cli.StreamIsAllowed(session.DID); err != nil {
-		return nil, echo.NewHTTPError(http.StatusForbidden, err.Error())
+	var allowed bool
+	if s.Access != nil {
+		allowed = s.Access.Check(session.DID, access.VOD).Allowed
+	} else {
+		allowed = s.cli.CapabilityAllowed(session.DID, access.VOD)
+	}
+	if !allowed {
+		return nil, echo.NewHTTPError(http.StatusForbidden, "account is not permitted to upload videos")
 	}
 	if s.uploadManager == nil {
 		return nil, echo.NewHTTPError(http.StatusServiceUnavailable, "upload manager not configured")

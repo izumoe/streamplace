@@ -121,6 +121,7 @@ ffmpeg_opts = {
   'mpegaudio_parser': 'enabled',
   'mpegts_demuxer': 'enabled',
   'mpegts_muxer': 'enabled',
+  'nanosleep': 'enabled',
   'network': 'enabled',
   'null_muxer': 'enabled',
   'opus_decoder': 'enabled',
@@ -157,10 +158,6 @@ ffmpeg_opts = {
   'latm_muxer': 'enabled',
   'vvc_mp4toannexb_bsf': 'enabled',
 }
-
-if host_machine.system() != 'windows'
-  ffmpeg_opts += {'nanosleep': 'enabled'}
-endif
 
 # Someday maybe once the meson port of ffmpeg supports cuda
 
@@ -240,13 +237,6 @@ elif host_machine.system() == 'darwin'
     'CGO_CFLAGS': '-mmacosx-version-min=12.3',
     'CGO_LDFLAGS': '-L' + native_libdir + ' -lmoq_ffi -mmacosx-version-min=12.3',
   }
-elif host_machine.system() == 'windows'
-  # GNU import libs, not the published MSVC archive/legacy_stdio_definitions.
-  # AWS-LC's MinGW backend uses pthread TLS/rwlocks; bundle winpthreads too.
-  native_system_libs = ['-lws2_32', '-luserenv', '-lbcrypt', '-lntdll', '-ldbghelp', '-ladvapi32', '-lcrypt32', '-liphlpapi', '-l:libstdc++.a', '-l:libwinpthread.a', '-static-libgcc']
-  env += {
-    'CGO_LDFLAGS': '-L' + native_libdir + ' -lmoq_ffi -Wl,-Bstatic -lstdc++ -lwinpthread -Wl,-Bdynamic -static-libgcc',
-  }
 endif
 streamplace_deps += declare_dependency(link_args: native_system_libs)
 
@@ -261,19 +251,6 @@ if host_machine.system() == 'darwin'
       ],
     ),
   ]
-endif
-if host_machine.system() == 'windows'
-  add_project_link_arguments(
-    [
-      '-lntdll',
-      '-luserenv',
-      '-lcrypt32',
-      '-lbcrypt',
-      '-static-libstdc++',
-      '-static-libgcc',
-    ],
-    language: ['c', 'cpp'],
-  )
 endif
 
 pkg = import('pkgconfig')
@@ -409,30 +386,16 @@ if get_option('default_library') == 'static'
     )
   endif
 
-  if host_machine.system() == 'windows'
-    prog_zip = find_program('zip')
-    archive_name = 'streamplace-' + version + '-' + GOOS + '-' + GOARCH + '.zip'
-    custom_target(
-      'archive',
-      input: [streamplace],
-      output: ['streamplace.zip'],
-      command: [prog_zip, '../bin/' + archive_name, '@INPUT@'],
-      install: true,
-      install_dir: './bin',
-      build_by_default: false,
-    )
-  else
-    prog_tar = find_program('tar')
-    # archive_name = streamplace-$(VERSION)-$$GOOS-$$GOARCH.tar.gz
-    archive_name = 'streamplace-' + version + '-' + GOOS + '-' + GOARCH + '.tar.gz'
-    custom_target(
-      'archive',
-      input: [streamplace],
-      output: ['streamplace.tar.gz'],
-      command: [prog_tar, '-czvf', '../bin/' + archive_name, '@INPUT@'],
-      install: true,
-      install_dir: './bin',
-      build_by_default: false,
-    )
-  endif
+  prog_tar = find_program('tar')
+  # archive_name = streamplace-$(VERSION)-$$GOOS-$$GOARCH.tar.gz
+  archive_name = 'streamplace-' + version + '-' + GOOS + '-' + GOARCH + '.tar.gz'
+  custom_target(
+    'archive',
+    input: [streamplace],
+    output: ['streamplace.tar.gz'],
+    command: [prog_tar, '-czvf', '../bin/' + archive_name, '@INPUT@'],
+    install: true,
+    install_dir: './bin',
+    build_by_default: false,
+  )
 endif

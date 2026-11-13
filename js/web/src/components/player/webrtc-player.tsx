@@ -8,6 +8,7 @@ import { useTranslation } from "react-i18next";
 import { place, type StreamplaceAgent } from "streamplace";
 import { getStreamplaceUrl } from "../../lib/streamplace-url";
 import type { PlayerBackendHandle, PlayerStats } from "./player";
+import { getWebRTCVideoTiming } from "./webrtc-stats";
 
 export type WebRTCPlayerProps = {
   /** The video element managed by the parent <Player>. */
@@ -36,21 +37,9 @@ const STATS_POLL_MS = 1000;
 // stop hammering a clearly-broken stream.
 const MAX_RECONNECT_ATTEMPTS = 15;
 
-/**
- * The RTCStatsReport inbound-rtp entry carries fields that the TS DOM
- * types don't expose (they're part of the WebRTC stats spec but not
- * included in lib.dom.d.ts). This interface covers just the fields we
- * read, so the stats polling code doesn't need `as any` casts inline.
- */
-interface InboundRtpStats extends RTCStats {
+// Older browsers may expose mediaType instead of kind.
+interface InboundRtpStats extends RTCInboundRtpStreamStats {
   mediaType?: string;
-  kind?: string;
-  framesReceived?: number;
-  frameWidth?: number;
-  frameHeight?: number;
-  bytesReceived?: number;
-  codecId?: string;
-  lastPacketReceivedTimestamp?: number;
 }
 
 interface CodecStats extends RTCStats {
@@ -160,8 +149,10 @@ export function WebRTCPlayer({
         reconnectTimerRef.current = null;
         if (!cancelled && activeRef.current && !gaveUpRef.current) {
           // Tear down old connection, spin up a new one.
-          pcRef.current?.close();
+          stopStatsPolling();
+          const previous = pcRef.current;
           pcRef.current = null;
+          previous?.close();
           connect();
         }
       }, RECONNECT_DELAY_MS);
@@ -227,21 +218,24 @@ export function WebRTCPlayer({
       let hasReceivedFrames = false;
 
       statsIntervalRef.current = setInterval(async () => {
-        if (cancelled) return;
+        if (cancelled || pc !== pcRef.current) return;
         try {
           const stats = await pc.getStats();
+          if (cancelled || pc !== pcRef.current) return;
           let framesReceived = 0;
           let audioReceived = 0;
           let width = 0;
           let height = 0;
           let codec = "";
           let bytesReceived = 0;
+          let timing: ReturnType<typeof getWebRTCVideoTiming> | undefined;
 
           stats.forEach((report) => {
             if (report.type !== "inbound-rtp") return;
             const r = report as InboundRtpStats;
             const kind = r.mediaType ?? r.kind ?? "";
             if (kind === "video") {
+              timing = getWebRTCVideoTiming(r);
               framesReceived = r.framesReceived ?? 0;
               width = r.frameWidth ?? 0;
               height = r.frameHeight ?? 0;
@@ -319,6 +313,7 @@ export function WebRTCPlayer({
               : 0;
 
           onStatsChangeRef.current?.({
+            ...timing,
             width,
             height,
             viewportWidth:
@@ -371,7 +366,7 @@ export function WebRTCPlayer({
 
       // Detect disconnection and schedule a reconnect.
       peerConnection.addEventListener("connectionstatechange", () => {
-        if (cancelled) return;
+        if (cancelled || peerConnection !== pcRef.current) return;
         const state = peerConnection.connectionState;
         if (
           state === "failed" ||
@@ -408,6 +403,7 @@ export function WebRTCPlayer({
       }
       pcRef.current?.close();
       pcRef.current = null;
+      video.srcObject = null;
     };
   }, [src, active, videoRef]);
 

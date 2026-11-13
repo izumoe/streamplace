@@ -1,0 +1,119 @@
+---
+title: place.stream.access.setMode
+description: Reference for the place.stream.access.setMode lexicon
+---
+
+**Lexicon Version:** 1
+
+## Definitions
+
+<a name="main"></a>
+
+### `main`
+
+**Type:** `procedure`
+
+Set a persisted node-local capability mode. Omit mode to restore the startup default. Requires node administrator authorization and the current policy revision. Administrator and public-viewing policies are fixed.
+
+**Parameters:** _(None defined)_
+
+**Input:**
+
+- **Encoding:** `application/json`
+- **Schema:**
+
+**Schema Type:** `object`
+
+| Name               | Type     | Req'd | Description                                                 | Constraints                                  |
+| ------------------ | -------- | ----- | ----------------------------------------------------------- | -------------------------------------------- |
+| `capability`       | `string` | ✅    |                                                             | Enum: `streamer`, `chat`, `syndicate`, `vod` |
+| `mode`             | `string` | ❌    |                                                             | Enum: `open`, `allowlist`, `off`             |
+| `expectedRevision` | `string` | ✅    | The current getStatus revision encoded as a decimal string. | Min Length: 1<br/>Max Length: 20             |
+
+**Output:**
+
+- **Encoding:** `application/json`
+- **Schema:**
+
+**Schema Type:** `object`
+
+| Name      | Type      | Req'd | Description | Constraints |
+| --------- | --------- | ----- | ----------- | ----------- |
+| `success` | `boolean` | ✅    |             |             |
+
+**Possible Errors:**
+
+- `Unauthorized`
+- `Forbidden`
+- `InvalidRequest`
+- `Conflict`
+- `Unavailable`
+
+---
+
+## Lexicon Source
+
+```json
+{
+  "lexicon": 1,
+  "id": "place.stream.access.setMode",
+  "defs": {
+    "main": {
+      "type": "procedure",
+      "description": "Set a persisted node-local capability mode. Omit mode to restore the startup default. Requires node administrator authorization and the current policy revision. Administrator and public-viewing policies are fixed.",
+      "input": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": ["capability", "expectedRevision"],
+          "properties": {
+            "capability": {
+              "type": "string",
+              "enum": ["streamer", "chat", "syndicate", "vod"]
+            },
+            "mode": {
+              "type": "string",
+              "enum": ["open", "allowlist", "off"]
+            },
+            "expectedRevision": {
+              "type": "string",
+              "description": "The current getStatus revision encoded as a decimal string.",
+              "minLength": 1,
+              "maxLength": 20
+            }
+          }
+        }
+      },
+      "output": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": ["success"],
+          "properties": {
+            "success": {
+              "type": "boolean"
+            }
+          }
+        }
+      },
+      "errors": [
+        {
+          "name": "Unauthorized"
+        },
+        {
+          "name": "Forbidden"
+        },
+        {
+          "name": "InvalidRequest"
+        },
+        {
+          "name": "Conflict"
+        },
+        {
+          "name": "Unavailable"
+        }
+      ]
+    }
+  }
+}
+```

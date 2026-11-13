@@ -117,6 +117,30 @@ async fn one_node() -> TestResult<()> {
     Ok(())
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shutdown_stops_database_before_dropping_its_gossip_router() -> TestResult<()> {
+    for _ in 0..64 {
+        let node = TestNode::new_with_config(
+            HandlerMode::Sender,
+            Config {
+                key: vec![0; 32],
+                topic: vec![0; 32],
+                max_send_duration: Duration::from_secs(1),
+                disable_relay: true,
+            },
+        )
+        .await?;
+        node.shutdown().await?;
+        assert!(
+            node.node_scope()
+                .put(None, b"after-shutdown".to_vec(), vec![1])
+                .await
+                .is_err()
+        );
+    }
+    Ok(())
+}
+
 struct TestHandler<T> {
     info: T,
     sender: tokio::sync::mpsc::Sender<(T, String, Vec<u8>)>,

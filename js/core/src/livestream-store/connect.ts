@@ -23,6 +23,15 @@ export type LivestreamWebsocketHandle = {
   disconnect: () => void;
 };
 
+// Chat cached under a prior connection may predate a node restriction.
+const emptyChatState = () => ({
+  chat: [],
+  chatIndex: {},
+  authors: {},
+  pinnedComment: null,
+  replyToMessage: null,
+});
+
 export function connectLivestreamWebsocket(
   store: LivestreamStore,
   url: string,
@@ -66,6 +75,7 @@ export function connectLivestreamWebsocket(
     // restore the teleport, including one that started while disconnected.
     store.setState({
       websocketConnected: false,
+      ...emptyChatState(),
       activeTeleport: null,
       activeTeleportUri: null,
       activeTeleportCID: null,
@@ -112,6 +122,7 @@ export function connectLivestreamWebsocket(
     };
   };
 
+  store.setState(emptyChatState());
   connect();
 
   return {
@@ -123,6 +134,7 @@ export function connectLivestreamWebsocket(
       if (reconnectTimeout) clearTimeout(reconnectTimeout);
       store.setState({
         websocketConnected: false,
+        ...emptyChatState(),
         activeTeleport: null,
         activeTeleportUri: null,
         activeTeleportCID: null,

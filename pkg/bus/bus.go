@@ -237,24 +237,21 @@ func (b *Bus) SetViewerCount(user string, origin string, count int) {
 }
 
 func (b *Bus) IncrementViewerCount(user string, origin string) {
-	b.viewerCountsMutex.Lock()
-	defer b.viewerCountsMutex.Unlock()
-	_, ok := b.viewerCounts[user]
-	if !ok {
-		b.viewerCounts[user] = make(map[string]int)
-	}
-	b.viewerCounts[user][origin] += 1
-	b.notifyViewerCountSubscribers(user, b.viewerCounts[user][origin], origin)
+	b.AddViewerCount(user, origin, 1)
 }
 
 func (b *Bus) DecrementViewerCount(user string, origin string) {
+	b.AddViewerCount(user, origin, -1)
+}
+
+// AddViewerCount adjusts one source without overwriting other playback protocols.
+func (b *Bus) AddViewerCount(user string, origin string, delta int) {
 	b.viewerCountsMutex.Lock()
 	defer b.viewerCountsMutex.Unlock()
-	_, ok := b.viewerCounts[user]
-	if !ok {
+	if b.viewerCounts[user] == nil {
 		b.viewerCounts[user] = make(map[string]int)
 	}
-	b.viewerCounts[user][origin] -= 1
+	b.viewerCounts[user][origin] += delta
 	b.notifyViewerCountSubscribers(user, b.viewerCounts[user][origin], origin)
 }
 

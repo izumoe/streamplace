@@ -6,14 +6,40 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"testing"
 	"time"
 
+	"github.com/go-gst/go-glib/pkg/gobject/v2"
+	"github.com/go-gst/go-gst/pkg/gst"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sync/errgroup"
 	"stream.place/streamplace/pkg/log"
 	"stream.place/streamplace/test/remote"
 )
+
+func TestThumbnailDecoderThreads(t *testing.T) {
+	withNoGSTLeaks(t, func() {
+		for _, name := range []string{"avdec_h264", "avdec_libdav1d"} {
+			t.Run(name, func(t *testing.T) {
+				decoder := gst.ElementFactoryMake(name, "")
+				require.NotNil(t, decoder)
+				require.NotEqual(t, gobject.InvalidValue, decoder.ObjectProperty("max-threads"), "software decoder must expose its thread limit")
+				decoder.SetObjectProperty("max-threads", int32(8))
+				pipeline := gst.NewPipeline("").(gst.Pipeline)
+				handler := pipeline.ConnectDeepElementAdded(boundThumbnailDecoderThreads)
+				defer pipeline.HandlerDisconnect(handler)
+				defer pipeline.SetState(gst.StateNull)
+				nested := gst.NewBin("").(gst.Bin)
+				require.True(t, pipeline.Add(nested))
+				require.True(t, nested.Add(decoder))
+				require.Equal(t, int32(min(runtime.NumCPU(), 4)), decoder.ObjectProperty("max-threads"))
+				other := gst.ElementFactoryMake(name, "")
+				require.Equal(t, int32(0), other.ObjectProperty("max-threads"), "other media pipelines keep automatic threading")
+			})
+		}
+	})
+}
 
 var thumbnailTestCases = []struct {
 	name      string

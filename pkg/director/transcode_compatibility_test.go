@@ -83,7 +83,7 @@ func TestAV1CompatibilityRenditionFeedsLegacyTransports(t *testing.T) {
 	events := make(chan *muxl.MuxlEvent, 16)
 	signErr := make(chan error, 1)
 	go func() {
-		signErr <- signer.SignSegmentStream(ctx, bytes.NewReader(presentation.Bytes()), events)
+		signErr <- signer.SignSegmentStream(ctx, bytes.NewReader(presentation.Bytes()), events, nil)
 		close(events)
 	}()
 	var source []byte

@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pion/webrtc/v4"
 	"go.opentelemetry.io/otel"
+	"stream.place/streamplace/pkg/access"
 	"stream.place/streamplace/pkg/aqtime"
 	"stream.place/streamplace/pkg/atproto"
 	"stream.place/streamplace/pkg/bus"
@@ -32,8 +33,6 @@ import (
 	"github.com/piprate/json-gold/ld"
 
 	irohStreamplace "stream.place/streamplace/pkg/iroh/generated/iroh_streamplace"
-
-	_ "stream.place/streamplace/pkg/streamplacedeps"
 )
 
 const CertFile = "cert.pem"
@@ -42,6 +41,7 @@ const SegmentsDir = "segments"
 const StreamplaceMetadata = "cawg.metadata"
 
 type MediaManager struct {
+	Access         access.Checker
 	cli            *config.CLI
 	liveWindows    map[string]*liveWindowState
 	liveWindowsMut sync.Mutex
@@ -67,7 +67,9 @@ type MediaManager struct {
 
 	// hlsSessions tracks live HLS playback sessions by (streamer, sid) so
 	// stateless HLS requests feed the viewer count. See hls_sessions.go.
-	hlsSessions *hlsSessionTracker
+	hlsSessions *playbackSessionTracker
+	moqSessions *playbackSessionTracker
+	moqViewers  moqViewerCounts
 	// viewRecorder, when set, is told about every new playback session
 	// (see SetViewRecorder).
 	viewRecorder func(streamer string)
@@ -83,7 +85,7 @@ type MediaManager struct {
 
 	// Per-stream continuous audio transcoders, keyed by repoDID. A single-codec
 	// stream's segments are fed here in order; each completed dual-codec segment
-	// is distributed asynchronously (~1 GoP later). See transcode_stream.go.
+	// is distributed asynchronously at its input boundary. See transcode_stream.go.
 	transcoders map[string]*streamTranscoder
 	// renditionVideoTID remembers, per rendition name, the track id a
 	// transcoder's MP4s carry their video under (see canonicalRenditionTrack).
@@ -122,12 +124,14 @@ type NewSegmentNotification struct {
 	// Muxl is the bare canonical .m4s: blindly concatenatable signed segments
 	// with no container header. Consumers synthesize whatever wrapper they
 	// need. The long-term wire format; Data retires once all consumers are MUXL.
-	Muxl     []byte
-	Metadata *SegmentMetadata
-	Local    bool
+	Muxl                []byte
+	Metadata            *SegmentMetadata
+	Local               bool
+	PublisherGeneration uint64
 	// PlaybackPublished means the worker's source phase owns playback, so codec
 	// completion must not publish the same GoP to viewers again.
 	PlaybackPublished bool
+	AudioOnly         bool // independently signed continuation of an admitted audio track
 }
 
 func RunSelfTest(ctx context.Context) error {
@@ -162,11 +166,39 @@ func MakeMediaManager(ctx context.Context, cli *config.CLI, signer crypto.Signer
 		localDB:      ldb,
 		transcoders:  map[string]*streamTranscoder{},
 	}
-	mm.hlsSessions = newHLSSessionTracker(hlsSessionTTL,
+	mm.hlsSessions = newPlaybackSessionTracker(playbackSessionTTL,
 		func(streamer string) { mm.IncrementViewerCount(streamer, "hls") },
 		func(streamer string) { mm.DecrementViewerCount(streamer, "hls") },
 	)
+	mm.initMoqViewers()
+	go mm.runCacheExpiry(ctx)
 	return mm, nil
+}
+
+// runCacheExpiry releases expired media even when ingest and playback reads stop.
+func (mm *MediaManager) runCacheExpiry(ctx context.Context) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			mm.segBuffersMut.Lock()
+			mm.evictSegmentBuffersLocked(now)
+			mm.segBuffersMut.Unlock()
+
+			mm.liveWindowsMut.Lock()
+			dids := make([]string, 0, len(mm.liveWindows))
+			for did := range mm.liveWindows {
+				dids = append(dids, did)
+			}
+			mm.liveWindowsMut.Unlock()
+			for _, did := range dids {
+				mm.GetLiveWindow(did)
+			}
+		}
+	}
 }
 
 func (mm *MediaManager) HandleData(node *irohStreamplace.PublicKey, data []byte) {

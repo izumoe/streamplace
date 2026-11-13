@@ -1,6 +1,9 @@
 import { useFullscreen } from "@/contexts/fullscreen-context";
 import { useSonare } from "@/lib/useSonare";
+import { CatchBoundary } from "@tanstack/react-router";
 import {
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useRef,
@@ -10,6 +13,7 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { cn } from "../../lib/utils";
+import { Button } from "../ui/button";
 import { Loader } from "../ui/loader";
 import { ContentWarningOverlay } from "./content-warning-overlay";
 import { HLSPlayer } from "./hls-player";
@@ -23,6 +27,8 @@ import {
 } from "./player-buffering";
 import { PlayerControls } from "./player-controls";
 import { WebRTCPlayer } from "./webrtc-player";
+
+const StatsOverlay = lazy(() => import("./stats-overlay"));
 
 export type PlayerProps = {
   /** Full URL to the media source. Scheme/route is dispatched to a backend. */
@@ -99,6 +105,10 @@ export type PlayerStats = {
   fps?: number;
   /** Current stream bitrate in bits per second. */
   bitrate?: number;
+  /** Selected video rendition's conservative catalog estimate, in bits per second. */
+  renditionBitrate?: number;
+  /** Connection's estimated available bandwidth, in bits per second. */
+  availableBandwidth?: number;
   /** hls.js's time-to-first-byte estimate in milliseconds (HLS-specific). */
   ttfbEstimate?: number;
   /** Current level index (-1 for auto in HLS). */
@@ -107,8 +117,20 @@ export type PlayerStats = {
   codecs?: string;
   /** hls.js package version, e.g. "1.5.17" (HLS-specific). */
   hlsVersion?: string;
-  /** Seconds between the playhead and the live edge (HLS-specific). */
-  latencyToBroadcaster?: number;
+  /** Estimated seconds behind the receiver's live edge; excludes capture/ingest delay. */
+  liveEdgeDelay?: number;
+  /** Receiver's configured playback delay, including buffering. */
+  playbackDelayMs?: number;
+  /** Signed media duration published in a burst, not time spent processing it. */
+  publicationBatchMs?: number;
+  /** Round-trip time to the connected relay. */
+  roundTripTimeMs?: number;
+  /** Video media timestamp minus audio playout timestamp (positive means video ahead). */
+  avSyncMs?: number;
+  /** WebRTC averages since the inbound video stream started, in milliseconds. */
+  processingDelayMs?: number;
+  decodeTimeMs?: number;
+  jitterBufferMs?: number;
 };
 
 /**
@@ -213,6 +235,27 @@ export function Player({
             : "webrtc";
   const [showStats, setShowStats] = useState(false);
   const [stats, setStats] = useState<PlayerStats | null>(null);
+  const StatsError = useCallback(
+    () => (
+      <div
+        role="dialog"
+        aria-label={t("player-stats")}
+        onClick={(event) => event.stopPropagation()}
+        className="bg-background/95 text-foreground absolute top-4 right-4 z-20 max-w-full space-y-3 rounded-lg border p-3 text-sm"
+      >
+        <h3 className="font-medium">{t("player-stats")}</h3>
+        <p role="alert">{t("unexpected-error")}</p>
+        <Button
+          className="min-h-11"
+          variant="ghost"
+          onClick={() => setShowStats(false)}
+        >
+          {t("close")}
+        </Button>
+      </div>
+    ),
+    [t],
+  );
   // Stable per-mount id for video playback
   const [sessionId] = useSonare();
 
@@ -234,7 +277,6 @@ export function Player({
       // WebRTC failed; fall back to HLS automatically.
       if (useWebRTCRef.current) {
         setUseWebRTC(false);
-        writeTransportPreference(false);
       }
     },
     [isStreamer],
@@ -269,13 +311,18 @@ export function Player({
     onPlaying?.();
   }, [onPlaying]);
 
-  const handleMoqUnavailable = useCallback(() => {
-    if (videoRef.current) {
-      videoRef.current.muted = moqMuted;
-      videoRef.current.volume = moqVolume;
-    }
-    setMoqUnavailableFor(src);
-  }, [src, moqMuted, moqVolume]);
+  const handleMoqUnavailable = useCallback(
+    (reason?: string, error?: unknown) => {
+      if (reason)
+        console.warn("[moq-player] falling back:", reason, error ?? "");
+      if (videoRef.current) {
+        videoRef.current.muted = moqMuted;
+        videoRef.current.volume = moqVolume;
+      }
+      setMoqUnavailableFor(src);
+    },
+    [src, moqMuted, moqVolume],
+  );
 
   const toggleMoqPlay = useCallback(() => {
     setMoqPaused(playing);
@@ -552,23 +599,33 @@ export function Player({
       )}
 
       {active && showStats && stats && (
-        <StatsOverlay
-          stats={stats}
-          protocol={
-            transport === "moq"
-              ? "MoQ"
-              : transport === "webrtc"
-                ? t("player-protocol-webrtc")
-                : t("player-protocol-hls")
-          }
-          latencyMode={
-            transport === "hls"
-              ? t("player-latency-standard")
-              : t("player-latency-low")
-          }
-          renderSurface={transport === "moq" ? "canvas" : "video"}
-          sessionId={sessionId}
-        />
+        <CatchBoundary
+          getResetKey={() => `${src}:${mode}:${transport}`}
+          errorComponent={StatsError}
+        >
+          <Suspense fallback={null}>
+            <StatsOverlay
+              key={`${src}:${mode}:${transport}`}
+              onClose={() => setShowStats(false)}
+              stats={stats}
+              live={mode === "live"}
+              protocol={
+                transport === "moq"
+                  ? "MoQ"
+                  : transport === "webrtc"
+                    ? t("player-protocol-webrtc")
+                    : t("player-protocol-hls")
+              }
+              latencyMode={
+                transport === "hls" && !lowLatency
+                  ? t("player-latency-standard")
+                  : t("player-latency-low")
+              }
+              renderSurface={transport === "moq" ? "canvas" : "video"}
+              sessionId={sessionId}
+            />
+          </Suspense>
+        </CatchBoundary>
       )}
 
       {error && (
@@ -640,139 +697,5 @@ function PlayerBackend({
       onCurrentQualityChange={onCurrentQualityChange}
       onStatsChange={onStatsChange}
     />
-  );
-}
-
-function StatsOverlay({
-  stats,
-  protocol,
-  latencyMode,
-  renderSurface,
-  sessionId,
-}: {
-  stats: PlayerStats;
-  protocol: string;
-  latencyMode: string;
-  renderSurface: "canvas" | "video";
-  sessionId: string;
-}) {
-  const { t } = useTranslation();
-  const [position, setPosition] = useState({ x: 0, y: 0 });
-  const [isDragging, setIsDragging] = useState(false);
-  const dragStart = useRef({ x: 0, y: 0, posX: 0, posY: 0 });
-
-  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    e.currentTarget.setPointerCapture(e.pointerId);
-    setIsDragging(true);
-    dragStart.current = {
-      x: e.clientX,
-      y: e.clientY,
-      posX: position.x,
-      posY: position.y,
-    };
-  };
-
-  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!isDragging) return;
-    const dx = e.clientX - dragStart.current.x;
-    const dy = e.clientY - dragStart.current.y;
-    setPosition({
-      x: dragStart.current.posX + dx,
-      y: dragStart.current.posY + dy,
-    });
-  };
-
-  const onPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-      e.currentTarget.releasePointerCapture(e.pointerId);
-    }
-    setIsDragging(false);
-  };
-
-  const kbps = stats.bitrate ? Math.round(stats.bitrate / 1000) : null;
-  const mbps = kbps ? (kbps / 1000).toFixed(2) : null;
-  const bitrateDisplay =
-    mbps && kbps && kbps > 1000
-      ? `${mbps} Mbps`
-      : kbps
-        ? `${kbps} Kbps`
-        : "N/A";
-  return (
-    <div
-      role="dialog"
-      aria-label={t("player-stats")}
-      // Stop the synthetic click from bubbling to the player's
-      // click-to-toggle when the user just taps the panel (no drag).
-      onClick={(e) => e.stopPropagation()}
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
-      onPointerCancel={onPointerUp}
-      className={cn(
-        "absolute top-12 right-2 z-20 min-w-48 touch-none rounded bg-black/80 font-mono text-[11px] leading-snug text-white select-none",
-        isDragging
-          ? "cursor-grabbing shadow-lg ring-1 ring-white/20"
-          : "cursor-grab hover:bg-black/90",
-      )}
-      style={{ transform: `translate(${position.x}px, ${position.y}px)` }}
-    >
-      <div className="bg-muted/50 mb-1 w-full rounded-t px-2.5 pt-1.5 pb-0.5 font-mono text-sm text-white/40 select-none">
-        {t("player-stats")}
-      </div>
-      <div className="px-2.5 py-1.5">
-        <Row
-          label={t("player-stats-resolution")}
-          value={`${stats.width}×${stats.height}`}
-        />
-        <Row
-          label={t("player-stats-viewport")}
-          value={`${stats.viewportWidth}×${stats.viewportHeight}`}
-        />
-        {stats.bitrate !== undefined && (
-          <Row label={t("player-stats-bitrate")} value={bitrateDisplay} />
-        )}
-        {stats.ttfbEstimate !== undefined && stats.ttfbEstimate > 0 && (
-          <Row label="TTFB" value={`${Math.round(stats.ttfbEstimate)} ms`} />
-        )}
-        {stats.fps !== undefined && (
-          <Row label="FPS" value={Math.round(stats.fps).toString()} />
-        )}
-        {stats.droppedFrames !== undefined && (
-          <Row
-            label={t("player-stats-skipped")}
-            value={`${stats.droppedFrames} / ${stats.totalFrames}`}
-          />
-        )}
-        <Row
-          label={t("player-stats-buffer")}
-          value={`${stats.buffered.toFixed(2)} sec`}
-        />
-        {stats.latencyToBroadcaster !== undefined && (
-          <Row
-            label={t("player-latency")}
-            value={`${stats.latencyToBroadcaster.toFixed(2)} sec`}
-          />
-        )}
-        {stats.codecs && (
-          <Row label={t("player-stats-codecs")} value={stats.codecs} />
-        )}
-        <Row label={t("player-stats-protocol")} value={protocol} />
-        <Row label={t("player-stats-latency-mode")} value={latencyMode} />
-        <Row label={t("player-stats-render-surface")} value={renderSurface} />
-        {stats.hlsVersion && (
-          <Row label="hls.js version" value={stats.hlsVersion} />
-        )}
-        <Row label={t("player-stats-session")} value={sessionId} />
-      </div>
-    </div>
-  );
-}
-
-function Row({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-center justify-between gap-3 text-xs">
-      <span className="text-primary/50 font-mono text-sm">{label}</span>
-      <span className="font-mono text-sm tabular-nums">{value}</span>
-    </div>
   );
 }

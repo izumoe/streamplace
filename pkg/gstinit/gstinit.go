@@ -4,6 +4,7 @@ import (
 	"sync"
 
 	"github.com/go-gst/go-gst/pkg/gst"
+	_ "stream.place/streamplace/pkg/streamplacedeps"
 )
 
 var initOnce sync.Once

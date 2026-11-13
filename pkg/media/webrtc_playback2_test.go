@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -448,3 +449,78 @@ a=rtpmap:101 telephone-event/8000
 a=setup:actpass
 a=ssrc:543748180 cname:{d6f4dc1f-0f71-4a23-8ba7-8c95370e5479}
 `
+
+func TestWebRTCPlayback2DistinguishesAudioTailFromMissingVideo(t *testing.T) {
+	var fixture *bus.PacketizedSegment
+	withNoGSTLeaks(t, func() { fixture = playbackPacketFixture(t) })
+	require.NotEmpty(t, fixture.Video)
+	require.GreaterOrEqual(t, len(fixture.Audio), 4)
+	var logs logCapture
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	defer slog.SetDefault(previousLogger)
+	previousVerbosity := flag.Lookup("v").Value.String()
+	require.NoError(t, flag.Set("v", "3"))
+	defer func() { require.NoError(t, flag.Set("v", previousVerbosity)) }()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	mm := loopbackPlaybackManager()
+	client := createPlaybackReceiver(t, ctx, mm.webrtcAPI, "source")
+	defer func() { require.NoError(t, client.Close()) }()
+	audio := make(chan []byte, 4)
+	client.OnTrack(func(track *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
+		if track.Kind() != webrtc.RTPCodecTypeAudio {
+			return
+		}
+		for {
+			packet, _, err := track.ReadRTP()
+			if err != nil {
+				return
+			}
+			select {
+			case audio <- packet.Payload:
+			case <-ctx.Done():
+				return
+			}
+		}
+	})
+	answer, err := mm.WebRTCPlayback2(ctx, t.Name(), "source", client.LocalDescription(), "")
+	require.NoError(t, err)
+	require.NoError(t, client.SetRemoteDescription(*answer))
+	subscriptions := spmetrics.SegmentSubscriptionsOpen.WithLabelValues(t.Name(), WebRTCSourceRendition)
+	var metric dto.Metric
+	require.Eventually(t, func() bool { return subscriptions.Write(&metric) == nil && metric.GetGauge().GetValue() == 1 }, time.Second, time.Millisecond)
+
+	video := fixture.Video[0]
+	video.Duration = 40 * time.Millisecond
+	packets := make([]bus.PacketizedSample, 4)
+	for i := range packets {
+		packets[i] = fixture.Audio[i]
+		packets[i].Duration = 20 * time.Millisecond
+	}
+	mm.bus.PublishSegment(ctx, t.Name(), WebRTCSourceRendition, &bus.Seg{
+		Published: true, PacketizedData: &bus.PacketizedSegment{
+			Duration: 40 * time.Millisecond, Video: []bus.PacketizedSample{video}, Audio: packets[:2],
+		},
+	})
+	mm.bus.PublishSegment(ctx, t.Name(), WebRTCSourceRendition, &bus.Seg{
+		Published: true, AudioOnly: true, PacketizedData: &bus.PacketizedSegment{Duration: 20 * time.Millisecond, Audio: packets[2:3]},
+	})
+	mm.bus.PublishSegment(ctx, t.Name(), WebRTCSourceRendition, &bus.Seg{
+		Published: true, PacketizedData: &bus.PacketizedSegment{Duration: 20 * time.Millisecond, Audio: packets[3:]},
+	})
+	for i, want := range packets {
+		select {
+		case got := <-audio:
+			require.Equal(t, want.Data, got, "audio packet %d must arrive unchanged, including the EOS tail", i)
+		case <-ctx.Done():
+			t.Fatal("receiver did not receive the source and tail audio")
+		}
+	}
+	require.Equal(t, 1, strings.Count(logs.String(), "no video samples to write"), "only an ordinary source without video warns and resets video pacing")
+	cancel()
+	require.NoError(t, client.Close())
+	require.Eventually(t, func() bool { return subscriptions.Write(&metric) == nil && metric.GetGauge().GetValue() == 0 }, time.Second, time.Millisecond)
+	require.NotContains(t, logs.String(), "level=ERROR")
+}

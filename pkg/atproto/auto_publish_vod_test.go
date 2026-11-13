@@ -9,8 +9,10 @@ import (
 
 	indigoatproto "github.com/bluesky-social/indigo/api/atproto"
 	"github.com/bluesky-social/indigo/atproto/syntax"
+	"github.com/streamplace/oatproxy/pkg/oatproxy"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
+	"stream.place/streamplace/pkg/access"
 	"stream.place/streamplace/pkg/comatproto"
 	"stream.place/streamplace/pkg/devenv"
 	"stream.place/streamplace/pkg/model"
@@ -175,5 +177,58 @@ func TestDeletedServerSettingsWithdrawAutoPublishConsent(t *testing.T) {
 		settings, err := mod.GetServerSettings(ctx, key[0], key[1])
 		require.NoError(t, err)
 		require.NotNil(t, settings, "deletion must be scoped to the server and account")
+	}
+}
+
+func TestLivestreamTasksKeepOwnedCleanupIndependentOfPublishing(t *testing.T) {
+	for _, tc := range []struct {
+		name                  string
+		stream, vod           access.Mode
+		local                 bool
+		wantFinalize, wantVOD int
+	}{
+		{"publishing only", access.Open, access.Off, true, 1, 0},
+		{"publishing revoked", access.Off, access.Open, true, 1, 1},
+		{"remote stream", access.Open, access.Off, false, 0, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			atsync, mod, _ := offlineSynchronizer(t)
+			const did = "did:plc:aaaaaaaaaaaaaaaaaaaaaaaa"
+			require.NoError(t, mod.UpdateRepo(&model.Repo{DID: did, Handle: "author.test", PDS: "http://127.0.0.1:1", Version: "3lrev00000000"}))
+			policy, err := access.NewSnapshot(access.Bootstrap{Authority: "did:web:node.test", Modes: map[access.Capability]access.Mode{access.Streamer: tc.stream, access.VOD: tc.vod}}, 1, nil, nil)
+			require.NoError(t, err)
+			atsync.Access = policy
+			if tc.local {
+				require.NoError(t, atsync.StatefulDB.CreateOAuthSession("local-session", &oatproxy.OAuthSession{DID: did, DownstreamDPoPJKT: "local-session"}))
+			}
+			on := true
+			var settings bytes.Buffer
+			require.NoError(t, (&placestream.ServerSettings{AutoPublishVods: &on}).MarshalCBOR(&settings))
+			rawSettings := settings.Bytes()
+			require.NoError(t, mod.UpdateServerSettings(ctx, &model.ServerSettings{Server: atsync.CLI.BroadcasterHost, RepoDID: did, Record: &rawSettings}))
+			now := time.Now().UTC().Format(time.RFC3339)
+			timeout := int64(60)
+			for _, ended := range []bool{false, true} {
+				record := &placestream.Livestream{CreatedAt: now, LastSeenAt: &now, IdleTimeoutSeconds: &timeout}
+				key := syntax.RecordKey("3llive0000000")
+				if ended {
+					record.EndedAt = &now
+					key = syntax.RecordKey("3lended000000")
+				}
+				var buf bytes.Buffer
+				require.NoError(t, record.MarshalCBOR(&buf))
+				raw := buf.Bytes()
+				cid, err := spid.GetCID(record)
+				require.NoError(t, err)
+				require.NoError(t, atsync.handleCreateUpdate(ctx, did, key, &raw, cid.String(), syntax.NSID("place.stream.livestream"), false, false, ""))
+			}
+			tasks, err := atsync.StatefulDB.ListTasks(ctx, statedb.TaskFilters{Type: statedb.TaskFinalizeLivestream})
+			require.NoError(t, err)
+			require.Len(t, tasks, tc.wantFinalize)
+			tasks, err = atsync.StatefulDB.ListTasks(ctx, statedb.TaskFilters{Type: statedb.TaskAutoPublishVOD})
+			require.NoError(t, err)
+			require.Len(t, tasks, tc.wantVOD)
+		})
 	}
 }

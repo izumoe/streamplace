@@ -437,3 +437,139 @@ time-ago-hours = {$hours}h ago
 time-ago-minutes = {$minutes}m ago
 time-ago-seconds = {$seconds}s ago
 upload-videos = Upload Videos
+
+# Node-local publishing and chat capabilities.
+node-access-title = Node access
+node-access-sign-in = Sign in to manage node access.
+node-access-loading = Loading node access…
+node-access-admin-required = Node administrator access is required.
+node-access-description = Approve accounts to publish on this node, or restrict chat. Viewing remains public.
+node-access-subject = Account DID
+node-access-capability = Capability
+node-access-publishing = Publishing
+node-access-chat = Chat
+node-access-action = Action
+node-access-allow-chat = Allow chat
+node-access-approve-publishing = Approve publishing
+node-access-ban-chat = Ban chat
+node-access-deny-publishing = Deny publishing
+node-access-reason = Reason (optional)
+node-access-expires = Expires at (optional, local time)
+node-access-save = Save access entry
+node-access-entries = Access entries
+node-access-refresh = Refresh
+node-access-permitted = permitted
+node-access-denied = denied
+node-access-unban-chat = Unban chat
+node-access-remove-denial = Remove denial
+node-access-revoke-approval = Revoke approval
+node-access-allowance = Allowance
+node-access-denial = Denial
+node-access-stored = Saved on this node
+node-access-configuration = Configuration entry
+node-access-expiry = Expiry
+node-access-wrong-node = Reload to sign in to this node before managing access.
+node-access-reload = Reload
+
+node-access-admin-setup = Ask the operator to add your DID to SP_ADMIN_DIDS and restart the node. Signing in alone does not grant administrator access.
+
+node-access-policy = Streaming policy
+
+node-access-policy-help = Saved policies take effect without a restart and override startup defaults. Restrictions disconnect existing publishers; reopening requires them to reconnect.
+
+node-access-who-streams = Who can stream
+
+node-access-who-chats = Who can chat
+
+node-access-remote-streams = Remote streams carried here
+
+node-access-uploads = Who can start uploads and recordings
+
+node-access-approved-only = Approved accounts only
+
+node-access-any-account = Any authenticated account
+
+node-access-any-source = Any account
+
+node-access-disabled = Disabled
+
+node-access-startup-default = Using startup default
+
+node-access-save-policy = Save policy
+
+node-access-reset-policy = Use startup default
+
+node-access-policy-limits = Explicit denials still apply in open mode. Public viewing stays open. Network services disabled at startup remain disabled.
+
+node-access-people = People and approvals
+
+node-access-find-account = Find an account
+
+node-access-account-placeholder = Handle or DID
+
+node-access-searching = Searching accounts…
+
+node-access-search-error = Search is unavailable. You can paste an account DID instead.
+
+node-access-no-accounts = No matching accounts. You can paste a DID instead.
+
+node-access-approve = Approve account
+
+node-access-deny = Deny account
+
+node-access-entry-options = Reason and expiry (optional)
+
+node-access-carriage = Remote carriage
+
+node-access-vod = Uploads and recordings
+
+node-access-administration = Node administration
+
+node-access-public-viewing = Public viewing
+
+node-access-read-only = Read-only
+node-access-add-account = Add account
+node-access-set-rule = Set rule
+node-access-default-policy = Default policy
+
+# Node site branding
+branding-sign-in = Sign in to manage site branding.
+branding-wrong-node = Sign in to this node before managing its branding.
+branding-checking = Checking administrator access…
+branding-admin-required = Node administrator access is required.
+branding-retry = Retry
+branding-loading = Loading site branding…
+branding-saved-reload-failed = Your change was saved. Retry loading the current values.
+site-branding-title = Site branding
+branding-node-description = Public identity and links for this node.
+branding-saved = Saved
+branding-site-name = Site name
+branding-description = Site description
+branding-logo = Logo
+branding-icon = Favicon
+branding-share-image = Share image
+branding-save-name = Save site name
+branding-save-description = Save site description
+branding-save = Save
+branding-image-too-large = Choose a non-empty image within the size limit.
+branding-image-format = Choose a PNG, JPEG or WebP image (ICO is also supported for the favicon).
+branding-image-read-failed = Could not read the image.
+branding-share-size = Recommended: 1200 × 630.
+branding-replace-image = Choose image
+branding-reset-logo = Reset logo
+branding-reset-icon = Reset favicon
+branding-reset-share = Reset share image
+branding-invalid-link = Use an http or https URL and a label for every link.
+branding-links-too-large = Links must fit within 16 KB.
+branding-link-label = Label
+branding-add-social = Add social link
+branding-add-legal = Add legal link
+branding-save-social = Save social links
+branding-save-legal = Save legal links
+branding-max-size = Maximum { $size } KB
+branding-invalid-saved-links = Could not read the saved links. Reset them to start again.
+branding-social-link = Social link
+branding-legal-link = Legal link
+branding-link-label-number = { $kind } { $number } label
+branding-link-url-number = { $kind } { $number } URL
+branding-remove-link-number = Remove { $kind } { $number }

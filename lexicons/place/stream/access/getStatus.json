@@ -1,0 +1,51 @@
+{
+  "lexicon": 1,
+  "id": "place.stream.access.getStatus",
+  "defs": {
+    "main": {
+      "type": "query",
+      "description": "Get effective capabilities on this node for the caller. Only administrators may inspect another DID. Anonymous callers can inspect their own public defaults.",
+      "parameters": {
+        "type": "params",
+        "properties": {
+          "subject": {
+            "type": "string",
+            "format": "did"
+          }
+        }
+      },
+      "output": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": ["revision", "capabilities"],
+          "properties": {
+            "revision": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "subject": {
+              "type": "string",
+              "format": "did"
+            },
+            "capabilities": {
+              "type": "array",
+              "items": {
+                "type": "ref",
+                "ref": "place.stream.access.defs#decision"
+              }
+            }
+          }
+        }
+      },
+      "errors": [
+        {
+          "name": "Forbidden"
+        },
+        {
+          "name": "Unavailable"
+        }
+      ]
+    }
+  }
+}

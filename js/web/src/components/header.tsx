@@ -19,6 +19,7 @@ export default function Header() {
   const { state } = useSession();
   const userProfile = useUserProfile();
   const siteTitle = useSiteTitle();
+  const logo = useStore((state) => state.branding?.mainLogo?.data);
   useAvatars(state.status === "authenticated" ? [state.session.did] : []);
 
   const did = state.status === "authenticated" ? state.session.did : null;
@@ -109,7 +110,11 @@ export default function Header() {
       <header className="bg-sidebar flex h-12 items-center gap-4 py-2 pt-4 pb-4">
         {/* logo */}
         <div className="fixed top-2.5 left-4 z-50 flex items-center gap-2">
-          <StreamplaceSvg className="h-6 w-6" />
+          {logo ? (
+            <img src={logo} alt="" className="h-6 w-6 object-contain" />
+          ) : (
+            <StreamplaceSvg className="h-6 w-6" />
+          )}
           <h1 className="hidden text-lg md:block">{siteTitle}</h1>
           <SidebarTrigger />
         </div>

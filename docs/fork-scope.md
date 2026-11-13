@@ -16,9 +16,11 @@ Retired updater and desktop download routes return 404.
 
 Beta invites and requests are removed from the API, lexicons, indexing,
 notifications, database models and interfaces. Uploads and durable recording use
-the existing operator stream allowlist. Authentication and bans still apply;
-recording also requires the user's existing recording setting. Old database
-tables are left intact, with no destructive migration.
+an independent VOD capability, bootstrapped from the existing operator stream
+allowlist. Local publishing approval and node chat restrictions use
+[node access](node-access.md). Authentication and bans still apply; recording
+also honors the user's existing recording setting. Old database tables are left
+intact, with no destructive migration.
 
 ## Useful core
 
@@ -34,7 +36,7 @@ the existing reconnect buffer after a five-second deadline. HLS keeps each
 stream's writer and publication status together, with distinct writers across
 preview/public transitions. The browser retains live audio ordering and adds a
 200 ms scheduling reserve through its existing MoQ sync mechanism. See
-[measurement and limits](moq.md#measuring-live-latency).
+[measurement and limits](moq-for-devs.md#measuring-live-latency).
 
 Native RTMP ingest accepts one to six H.264 or AV1 video tracks and exactly one
 AAC audio track. It sends encoded packets directly to the shared signer,

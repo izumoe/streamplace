@@ -33,8 +33,17 @@ export function observeAudioOutput() {
           type?: string;
           timestamp: number;
           data: Float32Array[];
+          control: SharedArrayBuffer;
+          state: SharedArrayBuffer;
+          rate: number;
         };
-        if (message?.type === "data") {
+        if (message?.type === "init-shared") {
+          buffer.shared = {
+            control: new Int32Array(message.control),
+            state: new BigInt64Array(message.state),
+            rate: message.rate,
+          };
+        } else if (message?.type === "data") {
           buffer.end =
             message.timestamp +
             (message.data[0].length / node.context.sampleRate) * 1_000_000;
@@ -66,6 +75,11 @@ declare global {
       end?: number;
       stalled: boolean;
       positions: { at: number; timestamp: number; stalled: boolean }[];
+      shared?: {
+        control: Int32Array;
+        state: BigInt64Array;
+        rate: number;
+      };
     }[];
   }
 }

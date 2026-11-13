@@ -1,0 +1,5 @@
+[wrap-git]
+url = https://github.com/moq-dev/noq.git
+revision = 79070726cbae339553765897250e9561f91ab95b
+depth = 1
+diff_files = moq-noq/bandwidth-estimate.patch

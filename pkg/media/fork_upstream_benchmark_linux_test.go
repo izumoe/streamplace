@@ -59,7 +59,7 @@ func forkBenchmarkSigner(tb testing.TB, role string) *MediaSignerLocal {
 
 func forkBenchmarkSign(ctx context.Context, signer *MediaSignerLocal, input []byte) ([][]byte, error) {
 	events, err := collectMuxlEvents(func(ch chan *muxl.MuxlEvent) error {
-		return signer.SignSegmentStream(ctx, bytes.NewReader(input), ch)
+		return signer.SignSegmentStream(ctx, bytes.NewReader(input), ch, nil)
 	})
 	if err != nil {
 		return nil, err
@@ -194,8 +194,8 @@ func forkBenchmarkComplete(ctx context.Context, signer *MediaSignerLocal, segmen
 	}
 	manager := &MediaManager{cli: &config.CLI{BroadcasterHost: "benchmark.example"}}
 	var completed [][]byte
-	transcoder := manager.newStreamTranscoder(ctx, target, signer.Cert, key, func(_ any, segment []byte) {
-		completed = append(completed, segment)
+	transcoder := manager.newStreamTranscoder(ctx, target, signer.Cert, key, func(_ any, segment []byte, audioOnly bool) {
+		appendAudioCompletion(&completed, segment, audioOnly)
 	})
 	for i, segment := range segments {
 		if err := transcoder.Feed(segment, i); err != nil {

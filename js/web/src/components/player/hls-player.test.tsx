@@ -11,7 +11,7 @@ import {
   vi,
 } from "vitest";
 import { HLSPlayer } from "./hls-player";
-import type { QualityOption } from "./player";
+import type { PlayerStats, QualityOption } from "./player";
 
 const { importWarning } = vi.hoisted(() => {
   vi.stubEnv("DEV", false);
@@ -42,11 +42,12 @@ let server: Server;
 let root: Root;
 let container: HTMLDivElement;
 let origin: string;
+let liveManifest = false;
 
 beforeEach(async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   // The unit exercises hls.js's real loader and level parser. The jsdom
-  // boundary supplies codec support and an unopened media source, not decode.
+  // boundary supplies codec support and media attachment, not decode.
   vi.stubGlobal(
     "MediaSource",
     class extends EventTarget {
@@ -61,7 +62,15 @@ beforeEach(async () => {
   vi.stubGlobal(
     "URL",
     class extends NativeURL {
-      static createObjectURL() {
+      static createObjectURL(source: MediaSource) {
+        if (liveManifest)
+          queueMicrotask(() => {
+            Object.defineProperty(source, "readyState", {
+              value: "open",
+              configurable: true,
+            });
+            source.dispatchEvent(new Event("sourceopen"));
+          });
         return "blob:hls-quality-test";
       }
       static revokeObjectURL() {}
@@ -69,12 +78,17 @@ beforeEach(async () => {
   );
   vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
   vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
+  liveManifest = false;
   server = createServer((request, response) => {
     response.setHeader("Access-Control-Allow-Origin", "*");
     response.setHeader("Content-Type", "application/vnd.apple.mpegurl");
     const url = new URL(request.url!, `http://${request.headers.host}`);
     if (url.searchParams.has("track")) {
-      response.end("#EXTM3U\n#EXT-X-TARGETDURATION:1\n#EXT-X-ENDLIST\n");
+      response.end(
+        liveManifest
+          ? "#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n#EXTINF:2,\n0.ts\n#EXTINF:2,\n1.ts\n#EXTINF:2,\n2.ts\n"
+          : "#EXTM3U\n#EXT-X-TARGETDURATION:1\n#EXT-X-ENDLIST\n",
+      );
       return;
     }
     const variant =
@@ -135,4 +149,33 @@ it.each([
     { index: -1, label: "player-quality-auto" },
     ...labels.map((label, index) => ({ index, label })),
   ]);
+});
+
+it("reports distance to the HLS live edge rather than distance to its delayed sync target", async () => {
+  liveManifest = true;
+  let stats: PlayerStats | undefined;
+  const video = document.createElement("video");
+  video.currentTime = 1;
+  await act(async () =>
+    root.render(
+      <HLSPlayer
+        active
+        videoRef={{ current: video }}
+        src={origin + "/external.m3u8"}
+        onStatsChange={(value) => {
+          stats = value;
+        }}
+      />,
+    ),
+  );
+  await expect
+    .poll(
+      () => {
+        video.dispatchEvent(new Event("timeupdate"));
+        return stats?.liveEdgeDelay;
+      },
+      { timeout: 3000 },
+    )
+    .toBeGreaterThanOrEqual(5);
+  expect(stats?.playbackDelayMs).toBe(10_000);
 });

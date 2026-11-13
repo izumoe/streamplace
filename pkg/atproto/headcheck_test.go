@@ -113,7 +113,7 @@ func TestHeadCheckHealsSilentGap(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, indexed.Version)
 	require.True(t, indexed.BackfillDone, "the sweep read the whole repo")
-	messages, err := mod.MostRecentChatMessages(user.DID, time.Time{})
+	messages, err := mod.MostRecentChatMessages(ctx, user.DID, time.Time{})
 	require.NoError(t, err)
 	require.Len(t, messages, 1)
 
@@ -149,7 +149,7 @@ func TestHeadCheckHealsSilentGap(t *testing.T) {
 	require.Equal(t, hostRev, healed.Version, "the repair caught the index up to the host")
 	require.True(t, healed.BackfillDone, "repairing a day of history does not un-index the rest")
 	require.Empty(t, healed.RepairFrom, "the repair it asked for is the one that ran")
-	messages, err = mod.MostRecentChatMessages(user.DID, time.Time{})
+	messages, err = mod.MostRecentChatMessages(ctx, user.DID, time.Time{})
 	require.NoError(t, err)
 	require.Len(t, messages, 2, "the record written during the gap is indexed")
 
@@ -159,7 +159,7 @@ func TestHeadCheckHealsSilentGap(t *testing.T) {
 	current, err := mod.GetRepo(user.DID)
 	require.NoError(t, err)
 	require.Equal(t, hostRev, current.Version)
-	messages, err = mod.MostRecentChatMessages(user.DID, time.Time{})
+	messages, err = mod.MostRecentChatMessages(ctx, user.DID, time.Time{})
 	require.NoError(t, err)
 	require.Len(t, messages, 2)
 }

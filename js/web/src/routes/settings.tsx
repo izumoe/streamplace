@@ -1,3 +1,4 @@
+import { useNodeAccess } from "@/hooks/use-node-access";
 import { useSession } from "@/lib/session";
 import { useStore } from "@/lib/store";
 import { useUserProfile } from "@/lib/store/hooks";
@@ -32,6 +33,7 @@ import {
 } from "../components/ui/select";
 
 interface NavLink {
+  requiresAdmin?: boolean;
   needsAuth?: boolean;
   /** Only show when danmu is unlocked (about-page easter egg). */
   requiresDanmuUnlock?: boolean;
@@ -53,6 +55,20 @@ type NavItem =
   | { role: "divider" };
 
 const NAV_ITEMS: NavItem[] = [
+  {
+    role: "link",
+    to: "/settings/branding",
+    icon: Palette,
+    labelKey: "site-branding-title",
+    requiresAdmin: true,
+  },
+  {
+    role: "link",
+    to: "/settings/access",
+    icon: Lock,
+    labelKey: "node-access-title",
+    requiresAdmin: true,
+  },
   {
     role: "link",
     to: "/settings/account",
@@ -180,7 +196,13 @@ function NavGroupItem({ item }: { item: NavGroup }) {
   );
 }
 
-function DisplayNavItem({ item }: { item: NavItem }) {
+function DisplayNavItem({
+  item,
+  isAdmin,
+}: {
+  item: NavItem;
+  isAdmin: boolean;
+}) {
   const { t } = useTranslation("settings");
   // get auth state from context or store
   const { state } = useSession();
@@ -195,6 +217,7 @@ function DisplayNavItem({ item }: { item: NavItem }) {
   if ("requiresDanmuUnlock" in item && item.requiresDanmuUnlock) {
     if (!danmuUnlocked) return null;
   }
+  if ("requiresAdmin" in item && item.requiresAdmin && !isAdmin) return null;
   if (item.role === "divider") {
     return (
       <div className="my-0.5 border-b border-(--color-border) lg:mx-2 lg:my-2 lg:border-b-0" />
@@ -215,7 +238,7 @@ function DisplayNavItem({ item }: { item: NavItem }) {
   );
 }
 
-function MobileSettingsNav() {
+function CompactSettingsNav({ isAdmin }: { isAdmin: boolean }) {
   const { t } = useTranslation("settings");
   const { state } = useSession();
   const userProfile = useUserProfile();
@@ -229,6 +252,7 @@ function MobileSettingsNav() {
     if (item.needsAuth && (state.status !== "authenticated" || !userProfile)) {
       return false;
     }
+    if (item.requiresAdmin && !isAdmin) return false;
     return !item.requiresDanmuUnlock || danmuUnlocked;
   });
 
@@ -238,7 +262,7 @@ function MobileSettingsNav() {
   if (!activeLink) return null;
 
   return (
-    <div className="lg:hidden">
+    <div>
       <label htmlFor="settings-mobile-nav" className="sr-only">
         {t("settings-title")}
       </label>
@@ -268,20 +292,33 @@ function MobileSettingsNav() {
 }
 
 function SettingsLayout() {
+  const { isAdmin } = useNodeAccess();
   const { t } = useTranslation("settings");
+  const matchRoute = useMatchRoute();
+  const accessPage = !!matchRoute({ to: "/settings/access", fuzzy: true });
 
   return (
-    <div className="mx-auto flex max-w-screen flex-col gap-6 px-4 py-6 lg:flex-row lg:gap-8 lg:px-6 lg:py-10">
-      {/* Mobile: compact sticky nav */}
-      <div className="sticky top-0 z-30 -mx-4 bg-(--color-bg)/80 px-4 py-2 backdrop-blur-md lg:hidden">
+    <div
+      className={cn(
+        "mx-auto flex max-w-screen flex-col gap-6 px-4 py-6 lg:gap-8 lg:px-6 lg:py-10",
+        accessPage ? "w-full" : "lg:flex-row",
+      )}
+    >
+      {/* Compact navigation leaves room for the permissions grid. */}
+      <div
+        className={cn(
+          "sticky top-0 z-30 -mx-4 bg-(--color-bg)/80 px-4 py-2 backdrop-blur-md",
+          !accessPage && "lg:hidden",
+        )}
+      >
         <h2 className="font-display mb-2 text-lg font-semibold tracking-tight">
           {t("settings-title")}
         </h2>
-        <MobileSettingsNav />
+        <CompactSettingsNav isAdmin={isAdmin} />
       </div>
 
       {/* Desktop: sidebar */}
-      <div className="hidden shrink-0 lg:block lg:w-56">
+      <div className={cn("hidden shrink-0 lg:w-56", !accessPage && "lg:block")}>
         <nav className="sticky top-6 flex flex-col gap-0.5 self-start">
           <p className="font-display px-2 pb-3 text-2xl font-semibold">
             {t("settings-title")}
@@ -290,12 +327,19 @@ function SettingsLayout() {
             <DisplayNavItem
               key={"labelKey" in item ? item.labelKey : `divider-${i}`}
               item={item}
+              isAdmin={isAdmin}
             />
           ))}
         </nav>
       </div>
 
-      <div className="mt-0.75 w-full min-w-0 flex-1 md:w-screen md:max-w-md xl:max-w-xl">
+      <div
+        data-settings-content
+        className={cn(
+          "mt-0.75 w-full min-w-0 flex-1",
+          !accessPage && "md:w-screen md:max-w-md xl:max-w-xl",
+        )}
+      >
         <Outlet />
       </div>
     </div>

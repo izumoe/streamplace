@@ -51,6 +51,9 @@ func TestBundledWebFrontend(t *testing.T) {
 				handler.ServeHTTP(rec, req)
 				require.Equal(t, http.StatusOK, rec.Code, path)
 				require.Contains(t, rec.Body.String(), script, path)
+				require.Equal(t, "isolate-and-credentialless", rec.Header().Get("Document-Isolation-Policy"))
+				require.Empty(t, rec.Header().Get("Cross-Origin-Opener-Policy"))
+				require.Empty(t, rec.Header().Get("Cross-Origin-Embedder-Policy"))
 				require.NotContains(t, rec.Body.String(), "_expo/static/js/web", path)
 			}
 		})

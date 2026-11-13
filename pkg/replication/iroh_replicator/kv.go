@@ -84,7 +84,7 @@ func NewSwarm(ctx context.Context, cli *config.CLI, secret []byte, topic []byte,
 
 	// workaround to get context into the HandleData callback
 	swarm.handleDataScoped = func(_ *iroh_streamplace.PublicKey, topic string, data []byte) {
-		if ctx.Err() != nil {
+		if ctx.Err() != nil || !swarm.mm.ShouldSyndicate(topic) {
 			return
 		}
 		err := swarm.mm.ValidateMP4(context.Background(), bytes.NewReader(data), false)
@@ -346,15 +346,20 @@ func (swarm *IrohSwarm) handleOriginMessage(ctx context.Context, view *placestre
 
 func (swarm *IrohSwarm) checkOrigins(ctx context.Context, streamer string, nodeID string) error {
 	ctx = log.WithLogValues(ctx, "streamer", streamer, "nodeID", nodeID, "func", "checkOrigins")
-	err := swarm.cli.StreamIsAllowed(streamer)
-	if err != nil {
-		return fmt.Errorf("user %s is not allowlisted on this node: %w", streamer, err)
+	if nodeID == swarm.NodeID {
+		return nil
+	}
+	var allowed bool
+	if swarm.mm != nil {
+		allowed = swarm.mm.ShouldSyndicate(streamer)
+	} else {
+		allowed = swarm.cli.ShouldSyndicate(streamer)
 	}
 	swarm.originMutex.Lock()
 	defer swarm.originMutex.Unlock()
 	oldSub, ok := swarm.activeSubs[streamer]
 	if ok {
-		if oldSub.NodeID == nodeID {
+		if allowed && oldSub.NodeID == nodeID {
 			log.Debug(ctx, "node hasn't changed", "streamer", streamer)
 			// mmyep. same node still has the stream. great news.
 			return nil
@@ -373,10 +378,8 @@ func (swarm *IrohSwarm) checkOrigins(ctx context.Context, streamer string, nodeI
 		}
 		delete(swarm.activeSubs, streamer)
 	}
-	if nodeID == swarm.NodeID {
-		log.Debug(ctx, "I already have this stream", "streamer", streamer)
-		// oh, i have this stream. cool. do nothing.
-		return nil
+	if !allowed {
+		return fmt.Errorf("node does not syndicate %s", streamer)
 	}
 	log.Log(ctx, "Subscribing to stream start", "new_node", nodeID, "streamer", streamer)
 	pubKey, err := iroh_streamplace.PublicKeyFromString(nodeID)

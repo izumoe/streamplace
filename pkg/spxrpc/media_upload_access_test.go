@@ -34,14 +34,17 @@ func TestCreateUploadAccess(t *testing.T) {
 		allowed []string
 		banned  bool
 		status  int
+		policy  string
 	}{
-		{"login required even on an open node", "", nil, false, http.StatusUnauthorized},
-		{"open node permits an authenticated account", creator, nil, false, http.StatusServiceUnavailable},
-		{"operator allowlist permits the account", creator, []string{creator}, false, http.StatusServiceUnavailable},
-		{"operator allowlist rejects another account", creator, []string{"did:plc:other"}, false, http.StatusForbidden},
-		{"ban overrides operator allowance", creator, []string{creator}, true, http.StatusForbidden},
-		{"open node still rejects an unlisted test key", "did:key:zTest", nil, false, http.StatusForbidden},
-		{"operator may allow the test key", "did:key:zTest", []string{"did:key:zTest"}, false, http.StatusServiceUnavailable},
+		{"login required even on an open node", "", nil, false, http.StatusUnauthorized, ""},
+		{"open node permits an authenticated account", creator, nil, false, http.StatusServiceUnavailable, ""},
+		{"operator allowlist permits the account", creator, []string{creator}, false, http.StatusServiceUnavailable, ""},
+		{"operator allowlist rejects another account", creator, []string{"did:plc:other"}, false, http.StatusForbidden, ""},
+		{"ban overrides operator allowance", creator, []string{creator}, true, http.StatusForbidden, ""},
+		{"open node still rejects an unlisted test key", "did:key:zTest", nil, false, http.StatusForbidden, ""},
+		{"operator may allow the test key", "did:key:zTest", []string{"did:key:zTest"}, false, http.StatusServiceUnavailable, ""},
+		{"streaming approval does not bypass disabled uploads", creator, []string{creator}, false, http.StatusForbidden, "vod=off"},
+		{"uploads remain open independently of restricted publishing", creator, nil, false, http.StatusServiceUnavailable, "streamer=off,vod=open"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := newTestModel(t)
@@ -51,7 +54,7 @@ func TestCreateUploadAccess(t *testing.T) {
 			if tc.banned {
 				putLabel(t, m, tc.did, atproto.LabelTakedown)
 			}
-			s := &Server{model: m, cli: &config.CLI{AllowedStreams: tc.allowed}}
+			s := &Server{model: m, cli: &config.CLI{AllowedStreams: tc.allowed, AccessPolicy: tc.policy}}
 			ctx := context.Background()
 			if tc.did != "" {
 				ctx = context.WithValue(ctx, oatproxy.OATProxyContextKey, oatproxy.New(&oatproxy.Config{Host: "stream.example"}))

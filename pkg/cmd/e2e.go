@@ -76,6 +76,10 @@ func makeE2eCommand(build *config.BuildFlags) *urfavecli.Command {
 				Name:  "external-stream",
 				Usage: "export the test account's stream key instead of publishing the fixture",
 			},
+			&urfavecli.BoolFlag{
+				Name:  "unapproved-stream",
+				Usage: "start without publishing approval and make the syndication peer receive-only",
+			},
 			&urfavecli.StringFlag{
 				Name:    "dev-env",
 				Usage:   "path to js/dev-env/run.mjs",
@@ -114,7 +118,7 @@ func makeE2eCommand(build *config.BuildFlags) *urfavecli.Command {
 			if (pdsHost == "") != (stationHost == "") {
 				return errors.New("--https-pds-hostname and --https-station-hostname go together")
 			}
-			return runE2E(ctx, cmd.String("dev-env"), pdsHost, stationHost, int(cmd.Int("https-port")), cmd.String("app-bundle-id"), cmd.Bool("external-stream"))
+			return runE2E(ctx, cmd.String("dev-env"), pdsHost, stationHost, int(cmd.Int("https-port")), cmd.String("app-bundle-id"), cmd.Bool("external-stream"), cmd.Bool("unapproved-stream"))
 		},
 	}
 }
@@ -159,6 +163,13 @@ func startNode(ctx context.Context, self string, env e2eDevEnv, dataDir string, 
 	for _, kv := range os.Environ() {
 		if !strings.HasPrefix(kv, "SP_") {
 			nodeCmd.Env = append(nodeCmd.Env, kv)
+		}
+	}
+	// heaptrack removes its preload environment during initialization. Apply
+	// node-specific overrides here so profiling the harness also reaches nodes.
+	for _, name := range []string{"LD_PRELOAD", "DUMP_HEAPTRACK_OUTPUT"} {
+		if value, ok := os.LookupEnv("E2E_NODE_" + name); ok {
+			nodeCmd.Env = append(nodeCmd.Env, name+"="+value)
 		}
 	}
 	nodeCmd.Env = append(nodeCmd.Env,
@@ -215,7 +226,7 @@ func waitForNode(ctx context.Context, httpAddr string) error {
 	}
 }
 
-func runE2E(ctx context.Context, devEnvPath, httpsPDSHost, httpsStationHost string, httpsPort int, appBundleID string, externalStream bool) error {
+func runE2E(ctx context.Context, devEnvPath, httpsPDSHost, httpsStationHost string, httpsPort int, appBundleID string, externalStream, unapprovedStream bool) error {
 	// Ctrl-C / SIGTERM must unwind through the normal path, or none of the
 	// teardown below runs: Go's default handling exits immediately, which left
 	// the dev-env node, the forked node and the temp data dir behind.
@@ -376,6 +387,9 @@ func runE2E(ctx context.Context, devEnvPath, httpsPDSHost, httpsStationHost stri
 		fmt.Sprintf("SP_WEBSOCKET_URL=ws://%s", httpAddr),
 		fmt.Sprintf("SP_MOQ_URL=moqt://127.0.0.1:%d", moqPort),
 	}
+	if !unapprovedStream {
+		nodeEnv = append(nodeEnv, fmt.Sprintf("SP_ALLOWED_STREAMS=%s", out.Did))
+	}
 	if tlsEnv != nil {
 		nodeEnv = append(nodeEnv, tlsEnv.NodeEnv()...)
 	}
@@ -395,7 +409,7 @@ func runE2E(ctx context.Context, devEnvPath, httpsPDSHost, httpsStationHost stri
 
 	// A second node, a peer that syndicates whatever the first ingests: it
 	// hears the origin record on the shared PDS firehose and pulls the
-	// stream over MoQ (see docs/moq.md), and playing the stream from it is
+	// stream over MoQ (see docs/moq-for-devs.md), and playing the stream from it is
 	// what proves that transfer end to end. Started now, before the records
 	// below, so it indexes the stream key as it is created like the first.
 	peerHTTPPort, err := freePort()
@@ -421,6 +435,7 @@ func runE2E(ctx context.Context, devEnvPath, httpsPDSHost, httpsStationHost stri
 	}
 	defer os.RemoveAll(peerDataDir) //nolint:errcheck
 	peerEnv := []string{
+		fmt.Sprintf("SP_ALLOWED_STREAMS=%s", out.Did),
 		fmt.Sprintf("SP_HTTP_ADDR=%s", peerAddr),
 		fmt.Sprintf("SP_HTTP_INTERNAL_ADDR=127.0.0.1:%d", peerInternalPort),
 		fmt.Sprintf("SP_RTMP_ADDR=127.0.0.1:%d", peerRTMPPort),
@@ -430,6 +445,9 @@ func runE2E(ctx context.Context, devEnvPath, httpsPDSHost, httpsStationHost stri
 		fmt.Sprintf("SP_ATPROTO_DID=%s", out.Did),
 		fmt.Sprintf("SP_WEBSOCKET_URL=ws://%s", peerAddr),
 		"SP_SYNDICATE=*",
+	}
+	if unapprovedStream {
+		peerEnv = append(peerEnv, "SP_ACCESS_POLICY=streamer=off")
 	}
 	if tlsEnv != nil {
 		// The peer syncs the streamer's repo from the same HTTPS PDS.
@@ -543,8 +561,13 @@ func runE2E(ctx context.Context, devEnvPath, httpsPDSHost, httpsStationHost stri
 	// plain-HTTP listener, for host-side checks of the records it stores.
 	vars := fmt.Sprintf("SERVER_URL=http://%s\nSERVER2_URL=http://%s\nACCOUNT_HANDLE=%s\nACCOUNT_DID=%s\nACCOUNT_PASSWORD=%s\nVIDEO_URI=%s\nE2E_FIXTURE_MP4=%s\nPDS_HTTP_URL=%s\n",
 		httpAddr, peerAddr, out.Handle, out.Did, password, videoURI, fixture, env.PDSURL)
-	if externalStream {
+	if externalStream || unapprovedStream {
 		vars += "E2E_STREAM_KEY=" + priv + "\n"
+	}
+	if unapprovedStream {
+		vars += fmt.Sprintf("SERVER_INTERNAL_URL=http://127.0.0.1:%d\n", internalPort)
+	}
+	if externalStream {
 		vars += fmt.Sprintf("E2E_RTMP_URL=rtmp://127.0.0.1:%d/live\n", rtmpPort)
 	}
 	if tlsEnv != nil {

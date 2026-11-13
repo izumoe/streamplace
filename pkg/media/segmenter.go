@@ -17,6 +17,7 @@ import (
 	"stream.place/streamplace/pkg/config"
 	"stream.place/streamplace/pkg/gstpipeline"
 	"stream.place/streamplace/pkg/log"
+	"stream.place/streamplace/pkg/muxl"
 	"stream.place/streamplace/pkg/spmetrics"
 )
 
@@ -152,13 +153,20 @@ func SegmentElem(ctx context.Context, cli *config.CLI, streamer string, doH264Pa
 
 func (mm *MediaManager) SegmentAndSignElem(ctx context.Context, ms MediaSigner, videoTrackCount int) (gst.Element, error) {
 	streamer := ms.Streamer()
-
 	// Stamp a fresh ingest-session epoch on the context that flows down to every
 	// segment of this session (onSegment → ValidateMP4 → feedStreamTranscoder). A
 	// new live session (RTMP/WHIP (re)connect) restarts the media timeline; the
 	// per-DID continuous transcoder keys on this epoch and rebuilds rather than
 	// feeding the restarted timeline into the previous session's encoder.
-	ctx = withIngestSession(ctx, mm.nextIngestSession())
+	ctx, err := mm.admitPublisher(ctx, streamer)
+	if err != nil {
+		return nil, err
+	}
+
+	signer, err := ms.SigningInput()
+	if err != nil {
+		return nil, err
+	}
 
 	// muxl path: stream the fMP4 through the per-segment signer. Each GoP
 	// arrives as a bare canonical .m4s, which ValidateMP4 verifies, archives
@@ -166,12 +174,24 @@ func (mm *MediaManager) SegmentAndSignElem(ctx context.Context, ms MediaSigner, 
 	// segment, so ValidateMP4 derives StartTime from the segment itself — no
 	// per-GoP wall-clock is threaded through here.
 	onSegment := func(ctx context.Context, segment []byte) error {
-		return mm.receiveSignedSegment(ctx, streamer, segment)
+		return mm.receiveSignedSegment(ctx, streamer, segment, signer)
 	}
-	return MuxlSignSegmentElem(ctx, mm.cli, ms, videoTrackCount, onSegment)
+	elem, done, err := muxlSignSegmentElem(ctx, mm.cli, func(ctx context.Context, input io.Reader, events chan *muxl.MuxlEvent) error {
+		return ms.SignSegmentStream(ctx, input, events, nil)
+	}, videoTrackCount, onSegment)
+	if err != nil {
+		return nil, err
+	}
+	go func() {
+		<-done
+		if err := mm.closeStreamTranscoder(ctx, streamer); err != nil {
+			log.Error(ctx, "drain completed ingest audio failed", "streamer", streamer, "error", err)
+		}
+	}()
+	return elem, nil
 }
 
-func (mm *MediaManager) receiveSignedSegment(ctx context.Context, streamer string, segment []byte) error {
+func (mm *MediaManager) receiveSignedSegment(ctx context.Context, streamer string, segment []byte, signer muxl.SignerInput) error {
 	ctx, span := otel.Tracer("signer").Start(ctx, "SegmentAndSign", trace.WithAttributes(
 		attribute.String("streamer", streamer),
 		attribute.Int("segment_bytes", len(segment)),
@@ -182,7 +202,7 @@ func (mm *MediaManager) receiveSignedSegment(ctx context.Context, streamer strin
 		spmetrics.SegmentDeliveryDuration.WithLabelValues(streamer).
 			Observe(float64(time.Since(startTime).Milliseconds()))
 	}()
-	if err := mm.ValidateMP4(ctx, bytes.NewReader(segment), true); err != nil {
+	if err := mm.validateMP4(ctx, bytes.NewReader(segment), true, streamer, &signer); err != nil {
 		span.SetAttributes(attribute.String("error", "validate"))
 		mm.cli.DumpDebugSegment(ctx, "just-signed-segment.m4s", bytes.NewReader(segment))
 		return fmt.Errorf("error validating signed segment: %w", err)

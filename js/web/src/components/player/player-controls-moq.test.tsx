@@ -92,4 +92,31 @@ describe("canvas playback controls", () => {
       container.querySelector('button[title="player-unmute"]'),
     ).not.toBeNull();
   });
+
+  it("leaves dialog keyboard interactions alone while keeping playback shortcuts outside dialogs", async () => {
+    const dialog = document.createElement("div");
+    dialog.setAttribute("role", "dialog");
+    const button = document.createElement("button");
+    dialog.appendChild(button);
+    container.appendChild(dialog);
+    for (const key of [" ", "m"]) {
+      await act(async () =>
+        button.dispatchEvent(
+          new KeyboardEvent("keydown", { key, bubbles: true }),
+        ),
+      );
+    }
+    expect(
+      container.querySelector('button[title="player-pause"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('button[title="player-unmute"]'),
+    ).not.toBeNull();
+    await act(async () =>
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: " " })),
+    );
+    expect(
+      container.querySelector('button[title="player-play"]'),
+    ).not.toBeNull();
+  });
 });

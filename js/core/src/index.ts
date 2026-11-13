@@ -7,6 +7,10 @@ export * from "./slash-commands/teleport";
 
 export * from "./hooks/use-actor-typeahead";
 export * from "./lib/badge-label";
+export * from "./lib/bio-document";
+export * from "./lib/bio-editor";
+export * from "./lib/bio-image";
+export * from "./lib/bio-panels";
 export * from "./lib/browser";
 export * from "./lib/did";
 export * from "./lib/facet";

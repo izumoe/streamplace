@@ -102,6 +102,8 @@ func WriterNewSample(ctx context.Context, output io.Writer) func(sink app.AppSin
 			log.Error(ctx, "failed to map output buffer")
 			return gst.FlowError
 		}
+		// Failed mappings retain the sample through their MapInfo finalizer.
+		defer gst.UnsafeSampleUnref(sample)
 		defer mapped.Unmap()
 
 		_, err := output.Write(mapped.Data())

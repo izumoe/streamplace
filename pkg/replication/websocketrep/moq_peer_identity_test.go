@@ -78,7 +78,7 @@ func TestMoqPeerPreservesPrimarySourcePolicy(t *testing.T) {
 		events := make(chan *muxl.MuxlEvent, 16)
 		done := make(chan error, 1)
 		go func() {
-			done <- signer.SignSegmentStream(ctx, bytes.NewReader(fmp4.Bytes()), events)
+			done <- signer.SignSegmentStream(ctx, bytes.NewReader(fmp4.Bytes()), events, nil)
 			close(events)
 		}()
 		var signed []byte
@@ -154,7 +154,7 @@ func TestMoqPeerPreservesPrimarySourcePolicy(t *testing.T) {
 			require.NoError(t, err)
 			tracks := moqTracks{}
 			defer tracks.finish()
-			require.NoError(t, tracks.publish(ctx, producer, source, func(track *official.CMAFProducer) (*official.CMAFGroupProducer, error) {
+			require.NoError(t, tracks.publish(ctx, producer, source, false, func(track *official.CMAFProducer) (*official.CMAFGroupProducer, error) {
 				return track.CreateGroup(0)
 			}))
 			finished := errors.New("received source batch")

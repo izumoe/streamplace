@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -22,6 +23,7 @@ import (
 	"github.com/bluenviron/mediacommon/v2/pkg/codecs/av1"
 	"github.com/bluenviron/mediacommon/v2/pkg/codecs/h264"
 	"github.com/bluenviron/mediacommon/v2/pkg/codecs/mpeg4audio"
+	"github.com/go-gst/go-gst/pkg/gst"
 	"github.com/stretchr/testify/require"
 	"stream.place/streamplace/pkg/bus"
 	"stream.place/streamplace/pkg/config"
@@ -36,7 +38,7 @@ type rtmpFixture struct {
 	audioFrames []*RTMPAACData
 }
 
-func rtmpAVConfig(t *testing.T, data []byte, sampleEntry, config mp4.BoxType) mp4.IBox {
+func rtmpAVConfig(t testing.TB, data []byte, sampleEntry, config mp4.BoxType) mp4.IBox {
 	t.Helper()
 	boxes, err := mp4.ExtractBoxWithPayload(bytes.NewReader(data), nil, mp4.BoxPath{
 		mp4.BoxTypeMoov(), mp4.BoxTypeTrak(), mp4.BoxTypeMdia(), mp4.BoxTypeMinf(),
@@ -49,10 +51,15 @@ func rtmpAVConfig(t *testing.T, data []byte, sampleEntry, config mp4.BoxType) mp
 
 // Extract encoded samples through muxl's existing per-sample tables. No decoder
 // or re-encoder sits between the fixture and the ingest boundary under test.
-func readRTMPFixture(t *testing.T, name string) rtmpFixture {
+func readRTMPFixture(t testing.TB, name string) rtmpFixture {
 	t.Helper()
 	fixture, err := os.ReadFile(getFixture(name))
 	require.NoError(t, err)
+	return rtmpFixtureFromMP4(t, fixture)
+}
+
+func rtmpFixtureFromMP4(t testing.TB, fixture []byte) rtmpFixture {
+	t.Helper()
 	events, err := segmentMuxlEvents(t.Context(), fixture)
 	require.NoError(t, err)
 	cat, _ := catalogAndTracks(events)
@@ -121,11 +128,7 @@ func readRTMPFixture(t *testing.T, name string) rtmpFixture {
 				} else {
 					var nalus h264.AVCC
 					require.NoError(t, nalus.Unmarshal(data))
-					for _, nal := range nalus {
-						if typ := nal[0] & 31; typ >= 1 && typ <= 5 {
-							au = append(au, nal)
-						}
-					}
+					au = nalus
 				}
 				stamp := time.Duration(dts-videoBase) * time.Second / time.Duration(video.Timescale())
 				cts := time.Duration(samples.CtsOffsets[i]) * time.Second / time.Duration(video.Timescale())
@@ -161,7 +164,9 @@ func readRTMPFixture(t *testing.T, name string) rtmpFixture {
 
 func rtmpSessionForFixtures(t *testing.T, audio rtmpFixture, videos ...rtmpFixture) *RTMPSession {
 	t.Helper()
-	session := &RTMPSession{AudioTrack: audio.audio, MediaSigner: newBareSegmentSigner(t)}
+	signer := newBareSegmentSigner(t)
+	signer.StreamerName = signer.DID()
+	session := &RTMPSession{AudioTrack: audio.audio, MediaSigner: signer}
 	var events []any
 	for id, fixture := range videos {
 		session.VideoTracks = append(session.VideoTracks, fixture.video)
@@ -201,17 +206,20 @@ func TestRTMPDirectIngestSignsOriginalVideoTracks(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		videos []rtmpFixture
+		remap  map[uint32]uint32
 	}{
-		{"H264", []rtmpFixture{h264Fixture}},
-		{"AV1 sequence-start config", []rtmpFixture{av1Fixture}},
-		{"mixed H264 AV1", []rtmpFixture{h264Fixture, av1Fixture}},
+		{"H264", []rtmpFixture{h264Fixture}, nil},
+		{"AV1 sequence-start config", []rtmpFixture{av1Fixture}, nil},
+		{"mixed H264 AV1", []rtmpFixture{h264Fixture, av1Fixture}, nil},
+		{"H264 ladder", []rtmpFixture{h264Fixture, h264Fixture, h264Fixture}, map[uint32]uint32{2: 65538, 3: 65539, 4: 65540}},
+		{"AV1 and H264 ladder", []rtmpFixture{av1Fixture, h264Fixture, h264Fixture}, map[uint32]uint32{3: 65539, 4: 65540}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 			defer cancel()
 			session := rtmpSessionForFixtures(t, av1Fixture, tc.videos...)
 			close(session.EventChan)
-			mm := &MediaManager{cli: &config.CLI{}, bus: bus.NewBus()}
+			mm := &MediaManager{cli: &config.CLI{AllowedStreams: []string{session.MediaSigner.Streamer()}}, bus: bus.NewBus()}
 			var signed [][]byte
 			require.NoError(t, mm.rtmpIngestSession(ctx, session, func(_ context.Context, segment []byte) error {
 				signed = append(signed, segment)
@@ -229,15 +237,20 @@ func TestRTMPDirectIngestSignsOriginalVideoTracks(t *testing.T) {
 				require.NotNil(t, cat.Video)
 				for _, v := range cat.Video.Renditions {
 					require.Positive(t, v.TrackID())
-					require.LessOrEqual(t, v.TrackID(), uint32(len(tc.videos)))
-					require.Less(t, v.TrackID(), uint32(100))
-					require.Equal(t, strings.HasPrefix(v.Codec, "av01"), tc.videos[v.TrackID()-1].video.AV1Config != nil)
+					originalID := v.TrackID() & 0xffff
+					require.LessOrEqual(t, originalID, uint32(len(tc.videos)))
+					wantID := originalID
+					if mapped, ok := tc.remap[originalID]; ok {
+						wantID = mapped
+					}
+					require.Equal(t, wantID, v.TrackID())
+					require.Equal(t, strings.HasPrefix(v.Codec, "av01"), tc.videos[originalID-1].video.AV1Config != nil)
 					if strings.HasPrefix(v.Codec, "av01") {
 						var init, description bytes.Buffer
 						require.NoError(t, muxl.RunMuxlWrapInit(ctx, bytes.NewReader(segment), &init))
 						_, err := mp4.Marshal(&description, rtmpAVConfig(t, init.Bytes(), mp4.BoxTypeAv01(), mp4.BoxTypeAv1C()), mp4.Context{})
 						require.NoError(t, err)
-						require.Equal(t, tc.videos[v.TrackID()-1].video.AV1Config, description.Bytes())
+						require.Equal(t, tc.videos[originalID-1].video.AV1Config, description.Bytes())
 						for _, event := range unwrapped {
 							for _, cts := range event.Samples[strconv.FormatUint(uint64(v.TrackID()), 10)].CtsOffsets {
 								require.InDelta(t, float64(33*time.Millisecond), float64(cts)*float64(time.Second)/float64(v.Timescale()), float64(time.Microsecond))
@@ -252,9 +265,17 @@ func TestRTMPDirectIngestSignsOriginalVideoTracks(t *testing.T) {
 				}
 			}
 			for id, fixture := range tc.videos {
-				require.EqualValues(t, len(fixture.frames), counts[strconv.Itoa(id+1)], "track %d loses no encoded frames", id)
+				out := uint32(id + 1)
+				if mapped, ok := tc.remap[out]; ok {
+					out = mapped
+				}
+				require.EqualValues(t, len(fixture.frames), counts[strconv.FormatUint(uint64(out), 10)], "track %d loses no encoded frames", id)
 			}
-			require.EqualValues(t, len(av1Fixture.audioFrames), counts[strconv.Itoa(len(tc.videos)+1)], "source AAC is copied intact")
+			audioID := uint32(len(tc.videos) + 1)
+			if mapped, ok := tc.remap[audioID]; ok {
+				audioID = mapped
+			}
+			require.EqualValues(t, len(av1Fixture.audioFrames), counts[strconv.FormatUint(uint64(audioID), 10)], "source AAC is copied intact")
 		})
 	}
 }
@@ -281,6 +302,8 @@ func TestRTMPDirectIngestPublishesPlayableMultitrackBatches(t *testing.T) {
 		videos []rtmpFixture
 		error  string
 	}{
+		{"one video", red, []rtmpFixture{red}, ""},
+		{"one video AAC tail", tail, []rtmpFixture{red}, ""},
 		{"three tracks", red, []rtmpFixture{red, blue, green}, ""},
 		{"unequal video cadence", red, []rtmpFixture{red, unequal, green}, ""},
 		{"AAC tail", tail, []rtmpFixture{red, blue, green}, ""},
@@ -306,7 +329,7 @@ func assertRTMPPlayableBatches(t *testing.T, audio rtmpFixture, videos []rtmpFix
 		events := make(chan *muxl.MuxlEvent, 16)
 		signed := make(chan error, 1)
 		go func() {
-			signed <- session.MediaSigner.SignSegmentStream(ctx, input, events)
+			signed <- session.MediaSigner.SignSegmentStream(ctx, input, events, nil)
 			close(events)
 		}()
 		for event := range events {
@@ -361,29 +384,138 @@ func assertRTMPPlayableBatches(t *testing.T, audio rtmpFixture, videos []rtmpFix
 	}
 }
 
+func TestRTMPDirectPipelineRejectsInvalidH264Configuration(t *testing.T) {
+	gstinit.InitGST()
+	video := readRTMPFixture(t, "ertmp-red-h264.mp4")
+	codec := video.video.Track.Codec.(*codecs.H264)
+	for _, tc := range []struct {
+		name     string
+		sps, pps []byte
+	}{
+		{"missing SPS", nil, codec.PPS},
+		{"truncated SPS", codec.SPS[:3], codec.PPS},
+		{"oversized SPS", bytes.Repeat([]byte{0x67}, 1<<16), codec.PPS},
+		{"missing PPS", codec.SPS, nil},
+		{"oversized PPS", codec.SPS, bytes.Repeat([]byte{0x68}, 1<<16)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			session := &RTMPSession{VideoTracks: []RTMPVideoTrack{{Track: &gortmplib.Track{Codec: &codecs.H264{SPS: tc.sps, PPS: tc.pps}}}}, AudioTrack: video.audio}
+			muxer := gst.ElementFactoryMakeWithProperties("mp4mux", nil)
+			require.NotNil(t, muxer.RequestPadSimple("video_%u"))
+			require.NotNil(t, muxer.RequestPadSimple("audio_%u"))
+			pipeline, _, err := newRTMPDirectPipeline(session, muxer)
+			if pipeline != nil {
+				require.NotEqual(t, gst.StateChangeFailure, pipeline.SetState(gst.StateNull))
+			}
+			require.ErrorContains(t, err, "SPS/PPS")
+		})
+	}
+}
+
 func TestRTMPDirectIngestPublishesMultitrackBeforeEOF(t *testing.T) {
 	gstinit.InitGST()
 	red := readRTMPFixture(t, "ertmp-red-h264.mp4")
+	seiIndex := slices.IndexFunc(red.frames[0].AU, func(unit []byte) bool {
+		return len(unit) > 0 && unit[0]&31 == 6
+	})
+	require.NotEqual(t, -1, seiIndex, "live ingest coverage must include the source's SEI alongside its picture")
+	sei := red.frames[0].AU[seiIndex]
 	blue := readRTMPFixture(t, "ertmp-blue-h264.mp4")
 	green := readRTMPFixture(t, "ertmp-green-av1.mp4")
-	session := rtmpSessionForFixtures(t, red, red, blue, green)
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-	mm := &MediaManager{cli: &config.CLI{}, bus: bus.NewBus()}
-	var first []byte
-	err := mm.rtmpIngestSession(ctx, session, func(_ context.Context, segment []byte) error {
-		if first == nil {
-			first = segment
-			cancel()
-		}
-		return nil
-	})
-	require.ErrorIs(t, err, context.Canceled, "a complete live batch must publish while packet input remains open")
-	require.NotEmpty(t, first)
-	result, err := ValidateMP4Media(t.Context(), first)
-	require.NoError(t, err)
-	require.Len(t, result.MediaData.Video, 3)
-	require.Len(t, result.MediaData.Audio, 1)
+	for _, tc := range []struct {
+		name    string
+		videos  []rtmpFixture
+		bursts  bool
+		framing string
+	}{
+		{"mixed codecs", []rtmpFixture{red, blue, green}, false, ""},
+		{"three H264", []rtmpFixture{red, blue, red}, false, ""},
+		{"three H264 uneven arrival", []rtmpFixture{red, blue, red}, true, ""},
+		{"three H264 access-unit delimiters", []rtmpFixture{red, blue, red}, false, "AUD"},
+		{"three H264 trailing SEI", []rtmpFixture{red, blue, red}, false, "trailing SEI"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			session := rtmpSessionForFixtures(t, red, tc.videos...)
+			if tc.framing != "" {
+				for range len(session.EventChan) {
+					event := <-session.EventChan
+					if packet, ok := event.(*RTMPVideoData); ok {
+						framedPacket := *packet
+						switch tc.framing {
+						case "AUD":
+							framedPacket.AU = append([][]byte{{0x09, 0xf0}}, packet.AU...)
+						case "trailing SEI":
+							if slices.ContainsFunc(packet.AU, func(unit []byte) bool {
+								return len(unit) > 0 && unit[0]&31 == 5
+							}) {
+								framedPacket.AU = append(append([][]byte(nil), packet.AU...), sei)
+							}
+						}
+						event = &framedPacket
+					}
+					session.EventChan <- event
+				}
+			}
+
+			if tc.bursts {
+				// Independent encoders can deliver one track ahead of another.
+				// Keep each track ordered, but deliver audio and then each video's
+				// samples in 200ms bursts rather than a merged DTS ordering.
+				events := make([]any, 0, len(session.EventChan))
+				for len(session.EventChan) > 0 {
+					events = append(events, <-session.EventChan)
+				}
+				stamp := func(event any) (time.Duration, int) {
+					switch packet := event.(type) {
+					case *RTMPVideoData:
+						return packet.DTS / (200 * time.Millisecond), packet.TrackID + 1
+					case *RTMPAACData:
+						return packet.PTS / (200 * time.Millisecond), 0
+					}
+					panic("unexpected test event")
+				}
+				sort.SliceStable(events, func(i, j int) bool {
+					ti, trackI := stamp(events[i])
+					tj, trackJ := stamp(events[j])
+					if ti != tj {
+						return ti < tj
+					}
+					return trackI < trackJ
+				})
+				for _, event := range events {
+					session.EventChan <- event
+				}
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			mm := &MediaManager{cli: &config.CLI{AllowedStreams: []string{session.MediaSigner.Streamer()}}, bus: bus.NewBus()}
+			var first []byte
+			err := mm.rtmpIngestSession(ctx, session, func(_ context.Context, segment []byte) error {
+				if first == nil {
+					first = segment
+					cancel()
+				}
+				return nil
+			})
+			require.ErrorIs(t, err, context.Canceled, "a complete live batch must publish while packet input remains open")
+			require.NotEmpty(t, first)
+			if tc.framing == "trailing SEI" {
+				expected := len(tc.videos)
+				for _, video := range tc.videos {
+					for _, unit := range video.frames[0].AU {
+						if bytes.Equal(unit, sei) {
+							expected++
+						}
+					}
+				}
+				require.GreaterOrEqual(t, bytes.Count(first, sei), expected, "all leading and trailing SEI bytes reach the signed batch")
+			}
+			result, err := ValidateMP4Media(t.Context(), first)
+			require.NoError(t, err)
+			require.Len(t, result.MediaData.Video, 3)
+			require.Len(t, result.MediaData.Audio, 1)
+		})
+	}
 }
 
 func TestRTMPMultitrackCompletionAndExtraction(t *testing.T) {
@@ -395,7 +527,7 @@ func TestRTMPMultitrackCompletionAndExtraction(t *testing.T) {
 	close(session.EventChan)
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
-	mm := &MediaManager{cli: &config.CLI{BroadcasterHost: "test.example.com"}, bus: bus.NewBus()}
+	mm := &MediaManager{cli: &config.CLI{BroadcasterHost: "test.example.com", AllowedStreams: []string{session.MediaSigner.Streamer()}}, bus: bus.NewBus()}
 	var sources [][]byte
 	require.NoError(t, mm.rtmpIngestSession(ctx, session, func(_ context.Context, segment []byte) error {
 		sources = append(sources, segment)
@@ -415,13 +547,25 @@ func TestRTMPMultitrackCompletionAndExtraction(t *testing.T) {
 					counts[id] += event.SampleCounts[id]
 				}
 			}
+			var first *muxl.MuxlEvent
+			for _, event := range events {
+				if event.Type == "segment" || event.Type == "signed-segment" {
+					first = event
+					break
+				}
+			}
+			require.NotNil(t, first)
+			for id, data := range expected {
+				require.True(t, bytes.Equal(data, first.Tracks[id]), "older peers retain only the first media event: track %s must carry its complete signed GOP", id)
+			}
+
 			tracks, err := MuxlTracks(ctx, source)
 			require.NoError(t, err)
 			require.Equal(t, 4, len(tracks), "all source videos and common AAC reach MoQ")
 			for id, data := range expected {
 				name := "video" + id
-				if id == "4" {
-					name = "audio4"
+				if id == "65540" {
+					name = "audio65540"
 				}
 				require.True(t, bytes.Equal(data, tracks[name]), "track %s preserves every signed fragment in order", id)
 			}
@@ -430,9 +574,9 @@ func TestRTMPMultitrackCompletionAndExtraction(t *testing.T) {
 			require.NoError(t, err)
 		}
 		for i, fixture := range []rtmpFixture{red, blue, green} {
-			require.EqualValues(t, len(fixture.frames), counts[strconv.Itoa(i+1)])
+			require.EqualValues(t, len(fixture.frames), counts[[]string{"1", "65538", "3"}[i]])
 		}
-		require.EqualValues(t, len(red.audioFrames), counts["4"])
+		require.EqualValues(t, len(red.audioFrames), counts["65540"])
 	})
 	t.Run("continuous AAC completion", func(t *testing.T) {
 		var logs logCapture
@@ -445,9 +589,9 @@ func TestRTMPMultitrackCompletionAndExtraction(t *testing.T) {
 		cert, key := nodeSignerForTest(t)
 		var mu sync.Mutex
 		var completed [][]byte
-		encoder := mm.newStreamTranscoder(ctx, "opus", cert, key, func(_ any, segment []byte) {
+		encoder := mm.newStreamTranscoder(ctx, "opus", cert, key, func(_ any, segment []byte, audioOnly bool) {
 			mu.Lock()
-			completed = append(completed, segment)
+			appendAudioCompletion(&completed, segment, audioOnly)
 			mu.Unlock()
 		})
 		for i, source := range sources {
@@ -464,7 +608,7 @@ func TestRTMPMultitrackCompletionAndExtraction(t *testing.T) {
 			tracks, err := MuxlTracks(ctx, segment)
 			require.NoError(t, err)
 			require.Len(t, tracks, 5)
-			require.NotEmpty(t, tracks["audio5"], "the node adds the Opus track")
+			require.NotEmpty(t, tracks["audio65541"], "the node adds Opus after the supplied video tracks")
 		}
 		require.Empty(t, logs.String(), "healthy completion emits no errors")
 	})
@@ -487,7 +631,7 @@ func TestRTMPDirectIngestStopsOpenInput(t *testing.T) {
 			session := rtmpSessionForFixtures(t, fixture, fixture)
 			// Leave input open after the real encoded samples. Cancellation and
 			// sink failure must stop a feeder waiting for the next RTMP packet.
-			mm := &MediaManager{cli: &config.CLI{}, bus: bus.NewBus()}
+			mm := &MediaManager{cli: &config.CLI{AllowedStreams: []string{session.MediaSigner.Streamer()}}, bus: bus.NewBus()}
 			sinkErr := errors.New("RTMP test sink rejected signed segment")
 			count := 0
 			done := make(chan error, 1)
@@ -550,5 +694,227 @@ func TestRTMPPacketsBoundHeaderAccumulation(t *testing.T) {
 			err := feedRTMPPackets(t.Context(), session, nil)
 			require.ErrorContains(t, err, "H264 pending headers exceed")
 		})
+	}
+}
+
+func TestRTMPAV1SegmentsDecodeIndependently(t *testing.T) {
+	gstinit.InitGST()
+	fixture := readRTMPFixture(t, "av1-aac-frag.mp4")
+	session := rtmpSessionForFixtures(t, fixture, fixture)
+	close(session.EventChan)
+	mm := &MediaManager{cli: &config.CLI{AllowedStreams: []string{session.MediaSigner.Streamer()}}, bus: bus.NewBus()}
+	var segments [][]byte
+	require.NoError(t, mm.rtmpIngestSession(t.Context(), session, func(_ context.Context, segment []byte) error {
+		segments = append(segments, segment)
+		return nil
+	}))
+	require.Greater(t, len(segments), 1, "test must include a later GoP")
+	for i, segment := range segments {
+		t.Run(strconv.Itoa(i), func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			var presentation, image bytes.Buffer
+			require.NoError(t, muxl.RunMuxlWrap(ctx, bytes.NewReader(segment), "flat", &presentation))
+			require.NoError(t, Thumbnail(ctx, bytes.NewReader(presentation.Bytes()), &image, "jpeg"), "each AV1 GoP must initialize a fresh decoder")
+			checkThumbnailImage(t, image.Bytes(), "jpeg", 160, 120, false)
+		})
+	}
+}
+
+func TestRTMPAV1SequenceHeaders(t *testing.T) {
+	fixture := readRTMPFixture(t, "av1-aac-frag.mp4")
+	for _, tc := range []struct {
+		name                                  string
+		unit                                  []byte
+		first, reduced, wantHeader, wantError bool
+	}{
+		{name: "key frame", unit: []byte{0x30, 0x10}, wantHeader: true},
+		{name: "separate frame header", unit: []byte{0x18, 0x10}, wantHeader: true},
+		{name: "inter frame", unit: []byte{0x30, 0x20}},
+		{name: "intra-only frame", unit: []byte{0x30, 0x40}},
+		{name: "switch frame", unit: []byte{0x30, 0x60}},
+		{name: "existing frame", unit: []byte{0x30, 0x80}},
+		{name: "initial frame", unit: []byte{0x30, 0x20}, first: true, wantHeader: true},
+		{name: "reduced header", unit: []byte{0x30, 0x20}, reduced: true, wantHeader: true},
+		{name: "sized frame", unit: []byte{0x32, 1, 0x10}, wantHeader: true},
+		{name: "empty frame", unit: []byte{0x30}, wantError: true},
+		{name: "bad size", unit: []byte{0x32, 2, 0x10}, wantError: true},
+		{name: "truncated size", unit: []byte{0x32, 0x80}, wantError: true},
+		{name: "bad OBU header", unit: []byte{0xb0, 0x10}, wantError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			config, err := newRTMPAV1Config(fixture.video.AV1Config)
+			require.NoError(t, err)
+			config.reducedStillPictureHeader = tc.reduced
+			encoded, err := config.marshal([][]byte{tc.unit}, tc.first)
+			if tc.wantError {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			var got av1.Bitstream
+			require.NoError(t, got.Unmarshal(encoded))
+			require.Equal(t, tc.wantHeader, av1.IsRandomAccess2(got))
+			// Framing sizes may normalize, but the encoded frame payload does not.
+			require.Equal(t, []byte{0x30, tc.unit[len(tc.unit)-1]}, append([]byte{0x30}, got[len(got)-1][1:]...))
+		})
+	}
+	t.Run("existing sequence header", func(t *testing.T) {
+		config, err := newRTMPAV1Config(fixture.video.AV1Config)
+		require.NoError(t, err)
+		units := append(av1.Bitstream(nil), config.headers...)
+		units = append(units, []byte{0x30, 0x10})
+		want, err := units.Marshal()
+		require.NoError(t, err)
+		got, err := config.marshal(units, true)
+		require.NoError(t, err)
+		require.Equal(t, want, got, "do not duplicate in-band sequence headers")
+	})
+}
+
+func TestRTMPAV1ConfigurationErrors(t *testing.T) {
+	fixture := readRTMPFixture(t, "av1-aac-frag.mp4")
+	for _, data := range [][]byte{nil, fixture.video.AV1Config[:2]} {
+		_, err := newRTMPAV1Config(data)
+		require.Error(t, err)
+	}
+	config, err := newRTMPAV1Config(fixture.video.AV1Config)
+	require.NoError(t, err)
+	_, err = config.marshal([][]byte{{0x08}}, false)
+	require.Error(t, err, "truncated in-band sequence header must fail")
+}
+
+func TestRTMPAV1UpdatedSequenceHeader(t *testing.T) {
+	fixture := readRTMPFixture(t, "av1-aac-frag.mp4")
+	config, err := newRTMPAV1Config(fixture.video.AV1Config)
+	require.NoError(t, err)
+	updated := bytes.Clone(config.headers[0])
+	updated[1] ^= 0x10 // still_picture changes without changing the header layout.
+	expected := bytes.Clone(updated)
+	_, err = config.marshal([][]byte{updated, {0x30, 0x10}}, false)
+	require.NoError(t, err)
+	updated[1] ^= 0x10
+	encoded, err := config.marshal([][]byte{{0x30, 0x10}}, false)
+	require.NoError(t, err)
+	var units av1.Bitstream
+	require.NoError(t, units.Unmarshal(encoded))
+	require.Equal(t, expected, units[0], "future GoPs use the updated header, independent of caller buffer reuse")
+}
+
+func BenchmarkRTMPAV1Packets(b *testing.B) {
+	fixture := readRTMPFixture(b, "av1-aac-frag.mp4")
+	require.Greater(b, len(fixture.frames), 1)
+	for _, tc := range []struct {
+		name  string
+		units [][]byte
+	}{
+		{"key", fixture.frames[0].AU},
+		{"delta", fixture.frames[1].AU},
+	} {
+		b.Run(tc.name, func(b *testing.B) {
+			b.Run("marshal", func(b *testing.B) {
+				b.ReportAllocs()
+				for b.Loop() {
+					if _, err := av1.Bitstream(tc.units).Marshal(); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+			b.Run("configured", func(b *testing.B) {
+				config, err := newRTMPAV1Config(fixture.video.AV1Config)
+				require.NoError(b, err)
+				b.ReportAllocs()
+				for b.Loop() {
+					if _, err := config.marshal(tc.units, false); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+		})
+	}
+}
+
+func TestRTMPTrackRemapKeepsLargestAVCAsSource(t *testing.T) {
+	small := readRTMPFixture(t, "ertmp-red-h264.mp4")
+	large := readRTMPFixture(t, "h264-opus-frag.mp4")
+	av1 := readRTMPFixture(t, "av1-aac-frag.mp4")
+	session := rtmpSessionForFixtures(t, small, small, av1, large)
+	remap, err := rtmpReplicationTrackRemap(session)
+	require.NoError(t, err)
+	require.Equal(t, map[uint32]uint32{1: 65537, 4: 65540}, remap, "AV1 and the largest AVC keep their source IDs; audio follows the smaller AVC rendition")
+	session.VideoTracks[0].Track = &gortmplib.Track{Codec: &codecs.H264{SPS: []byte{1}}}
+	_, err = rtmpReplicationTrackRemap(session)
+	require.Error(t, err, "malformed H264 configuration is rejected before signing")
+}
+
+func TestRTMPCompletionUsesStreamAuthorityForLegacyPeers(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	audio := readRTMPFixture(t, "ertmp-red-h264.mp4")
+	high := rtmpFixtureFromMP4(t, renditionMP4AtRate(t, 320, 240, 60))
+	low := rtmpFixtureFromMP4(t, renditionMP4AtRate(t, 160, 120, 30))
+	session := rtmpSessionForFixtures(t, audio, high, low)
+	session.MediaSigner = audioSignerForTest(t)
+	close(session.EventChan)
+	mm := NewOffline(&config.CLI{BroadcasterHost: "node.test", AllowedStreams: []string{session.MediaSigner.Streamer()}})
+	mm.bus = bus.NewBus()
+	mm.transcoders = map[string]*streamTranscoder{}
+	cert, key := nodeSignerForTest(t)
+	mm.nodeSignerOnce.Do(func() { mm.nodeCert, mm.nodeKeyPEM = cert, key })
+	require.NoError(t, mm.RTMPIngest(ctx, session))
+	segments := mm.BufferedSegments(session.MediaSigner.Streamer())
+	require.NotEmpty(t, segments)
+	peer := NewOffline(&config.CLI{BroadcasterHost: "peer.test", Syndicate: []string{session.MediaSigner.Streamer()}})
+	peer.bus = bus.NewBus()
+	lower := peer.bus.SubscribeSegment(ctx, session.MediaSigner.Streamer(), RenditionName(160, 120))
+	defer peer.bus.UnsubscribeSegment(ctx, session.MediaSigner.Streamer(), RenditionName(160, 120), lower)
+	for _, segment := range segments {
+		source, extra, err := H264ReplicationSource(ctx, segment.Data)
+		require.NoError(t, err)
+		require.NotEmpty(t, extra)
+		valid, err := ValidateMP4MediaC2PA(ctx, source)
+		require.NoError(t, err)
+		tracks, err := MuxlTracks(ctx, source)
+		require.NoError(t, err)
+		require.Len(t, tracks, 3, "legacy source must already contain both AAC and Opus")
+		for _, signingKey := range valid.trackSigningKeys {
+			require.Equal(t, session.MediaSigner.DID(), signingKey, "legacy peers require no additional transcoder trust")
+		}
+		_, needsCompletion := peer.audioCompletionTarget(ctx, source)
+		require.False(t, needsCompletion, "the receiver must not defer source publication for another audio encode")
+		require.NoError(t, peer.ValidateReplicatedMP4(ctx, bytes.NewReader(source), session.MediaSigner.Streamer()))
+		sourceEvents, err := unwrapMuxlEvents(ctx, source)
+		require.NoError(t, err)
+		sourceCatalog, sourceTracks := catalogAndTracks(sourceEvents)
+		originalVideo, ok := primaryVideoTrack(sourceCatalog, 0, "avc1")
+		require.True(t, ok)
+		sourceTime, ok := firstTfdt(sourceTracks[fmt.Sprint(originalVideo.TrackID())])
+		require.True(t, ok)
+		extraEvents, err := unwrapMuxlEvents(ctx, extra)
+		require.NoError(t, err)
+		extraCatalog, extraTracks := catalogAndTracks(extraEvents)
+		var opusID uint32
+		for _, audio := range sourceCatalog.Audio.Renditions {
+			if isOpusCodec(audio.Codec) {
+				opusID = audio.TrackID()
+			}
+		}
+		require.NotZero(t, opusID)
+		for _, video := range extraCatalog.Video.Renditions {
+			require.Less(t, video.TrackID(), opusID, "legacy receivers concatenate video before Opus; descending IDs lose the audio timeline origin")
+			tick, ok := firstTfdt(extraTracks[fmt.Sprint(video.TrackID())])
+			require.True(t, ok)
+			require.Equal(t, originalVideo.Timescale(), video.Timescale(), "older receivers pair raw ticks across different frame rates")
+			require.Equal(t, sourceTime, tick, "aligned rendition boundaries retain identical raw decode clocks")
+		}
+		require.NoError(t, peer.ReceiveRenditions(ctx, session.MediaSigner.Streamer(), extra))
+		select {
+		case frame := <-lower.C:
+			require.True(t, frame.Published)
+			require.NotEmpty(t, frame.PacketizedData.Video, "the lower WebRTC rendition actually publishes video")
+			require.NotEmpty(t, frame.PacketizedData.Audio, "the lower rendition keeps Opus audio")
+		case <-ctx.Done():
+			t.Fatal("lower WebRTC rendition did not publish", ctx.Err())
+		}
 	}
 }

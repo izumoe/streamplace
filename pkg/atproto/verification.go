@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/bluesky-social/indigo/xrpc"
+	"stream.place/streamplace/pkg/access"
 	"stream.place/streamplace/pkg/appbsky"
 	"stream.place/streamplace/pkg/aqtime"
 	"stream.place/streamplace/pkg/constants"
@@ -19,8 +20,8 @@ import (
 // Chat access on this node is decided per streamer by their
 // place.stream.chat.access records: allow and deny rules whose subjects name
 // a verifier (accounts holding one of its app.bsky.graph.verification
-// records) or a labeler and label. Nothing is configured on the node: the
-// verifiers and labelers to index are whatever the indexed rules name, and a
+// records) or a labeler and label. These channel rules compose with node access.
+// The verifiers and labelers to index are whatever the indexed rules name, and a
 // rule naming a new one starts its indexing right away. A verification from
 // a verifier the streamer allows is what puts the badge on a chat author,
 // on that streamer's stream.
@@ -218,6 +219,9 @@ func (atsync *ATProtoSynchronizer) currentVerifications(ctx context.Context, did
 // streamer's rules: with no rules everyone may; a matching deny rule always
 // refuses; when any allow rule exists, only a match on one of them admits.
 func (atsync *ATProtoSynchronizer) ChatAllowed(ctx context.Context, streamer, did string) bool {
+	if !atsync.NodeChatAllowed(did) {
+		return false
+	}
 	rules, err := atsync.rulesFor(ctx, streamer)
 	if err != nil {
 		// Fail closed: a database hiccup must not open a locked chat.
@@ -392,4 +396,30 @@ func (atsync *ATProtoSynchronizer) seedVerifier(ctx context.Context, did string)
 	}
 	log.Log(ctx, "seeded verifications", "verifier", did, "records", total)
 	return nil
+}
+
+// NodeChatAllowed applies local node policy independently of channel moderation.
+// Standalone synchronizers without a policy retain their existing behavior.
+func (atsync *ATProtoSynchronizer) NodeChatAllowed(did string) bool {
+	return atsync.Access == nil || atsync.Access.Check(did, access.Chat).Allowed
+}
+
+// FilterChatMessage withholds restricted authors and reply previews without
+// changing the indexed record or a message shared with other bus consumers.
+func (atsync *ATProtoSynchronizer) FilterChatMessage(ctx context.Context, streamer string, message *placestream.ChatDefs_MessageView) *placestream.ChatDefs_MessageView {
+	if message == nil || !atsync.ChatAllowed(ctx, streamer, message.Author.Did) {
+		return nil
+	}
+	if message.ReplyTo != nil && message.ReplyTo.ChatDefs_MessageView != nil {
+		reply := atsync.FilterChatMessage(ctx, streamer, message.ReplyTo.ChatDefs_MessageView)
+		if reply != message.ReplyTo.ChatDefs_MessageView {
+			filtered := *message
+			filtered.ReplyTo = nil
+			if reply != nil {
+				filtered.ReplyTo = &placestream.ChatDefs_MessageView_ReplyTo{ChatDefs_MessageView: reply}
+			}
+			return &filtered
+		}
+	}
+	return message
 }

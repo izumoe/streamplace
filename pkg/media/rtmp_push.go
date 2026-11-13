@@ -93,6 +93,26 @@ func (mm *MediaManager) writeRTMPSource(ctx context.Context, user, rendition str
 				log.Warn(ctx, "source segment has no MUXL bytes, skipping", "file", seg.Filepath)
 				continue
 			}
+			if seg.AudioOnly {
+				if first {
+					return fmt.Errorf("audio continuation arrived before RTMP initialization")
+				}
+				events, err := unwrapMuxlEvents(ctx, seg.Muxl)
+				if err != nil {
+					return err
+				}
+				cat := catalogFromEvents(events)
+				if cat != nil && cat.Audio != nil {
+					for _, audio := range cat.Audio.Renditions {
+						if isAACCodec(audio.Codec) {
+							if _, err := w.Write(concatTrackAcrossSegments(events, fmt.Sprint(audio.TrackID()))); err != nil {
+								return err
+							}
+						}
+					}
+				}
+				continue
+			}
 			// RTMP wants AAC: select video + the AAC audio track from the
 			// dual-codec segment and feed only those, so flvmux gets AAC with no
 			// transcode.

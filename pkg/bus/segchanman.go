@@ -20,6 +20,7 @@ type Seg struct {
 	PacketizedData    *PacketizedSegment
 	Published         bool
 	PlaybackPublished bool
+	AudioOnly         bool // an independently signed audio addendum, without replaying video
 }
 
 // PacketizedSample is one WebRTC-writable sample — a video access unit or an
@@ -145,6 +146,7 @@ func (b *Bus) PublishSegment(ctx context.Context, user string, rendition string,
 	}
 	curBuf = append(curBuf, seg)
 	if len(curBuf) > bufSize {
+		curBuf[0] = nil
 		curBuf = curBuf[1:]
 	}
 	b.segBuf[key] = curBuf

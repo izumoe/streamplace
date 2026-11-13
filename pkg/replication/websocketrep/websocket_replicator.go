@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"net/url"
 	"strings"
 	"sync"
@@ -21,7 +22,6 @@ import (
 	"stream.place/streamplace/pkg/media"
 	"stream.place/streamplace/pkg/model"
 	"stream.place/streamplace/pkg/moq"
-	"stream.place/streamplace/pkg/muxl"
 	"stream.place/streamplace/pkg/placestream"
 	"stream.place/streamplace/pkg/spmetrics"
 	"stream.place/streamplace/pkg/statedb"
@@ -95,6 +95,15 @@ var (
 func (r *WebsocketReplicator) rememberOrigin(view *placestream.BroadcastDefs_BroadcastOriginView, streamer string) {
 	r.latestMutex.Lock()
 	defer r.latestMutex.Unlock()
+	if previous, ok := r.latest[streamer]; ok {
+		incoming := view.Record.Val.(*placestream.BroadcastOrigin)
+		current := previous.view.Record.Val.(*placestream.BroadcastOrigin)
+		nextTime, nextErr := time.Parse(time.RFC3339Nano, incoming.UpdatedAt)
+		currentTime, currentErr := time.Parse(time.RFC3339Nano, current.UpdatedAt)
+		if currentErr == nil && (nextErr != nil || nextTime.Before(currentTime)) {
+			return
+		}
+	}
 	r.latest[streamer] = latestOrigin{view: view, seen: time.Now()}
 }
 
@@ -116,12 +125,13 @@ func (r *WebsocketReplicator) Start(ctx context.Context, cli *config.CLI) error 
 			return nil
 		})
 	}
-	if cli.MoqAddr != "" {
+	if cli.MoqAddr != "" || cli.MoqRelayURL != "" {
 		r.group.Go(func() error {
 			return r.serveMoQ(ctx)
 		})
 	}
-	return r.startBusSubscribe(ctx)
+	r.group.Go(func() error { return r.startBusSubscribe(ctx) })
+	return r.group.Wait()
 }
 
 // pollOrigins learns about origins from the station's shared statedb rather
@@ -224,10 +234,21 @@ func (r *WebsocketReplicator) handleOriginMessage(ctx context.Context, view *pla
 		spmetrics.BroadcastOriginsTotal.WithLabelValues("no_url").Inc()
 		return fmt.Errorf("origin has no websocket URL author=%s", view.Author.Did)
 	}
-	if !r.cli.ShouldSyndicate(origin.Streamer) {
+	var syndicate bool
+	if r.mm != nil {
+		syndicate = r.mm.ShouldSyndicate(origin.Streamer)
+	} else {
+		syndicate = r.cli.ShouldSyndicate(origin.Streamer)
+	}
+	if !syndicate {
 		spmetrics.BroadcastOriginsTotal.WithLabelValues("not_syndicated").Inc()
 		log.Debug(ctx, "not replicating streamer", "streamer", origin.Streamer)
-		return nil
+		if len(r.cli.MoqStatsURLs) == 0 || r.mm == nil {
+			return nil
+		}
+		if _, published := r.mm.GetLiveWindow(origin.Streamer); !published {
+			return nil
+		}
 	}
 	myURL := r.getMyWebsocketURL()
 	u, err := url.Parse(*origin.WebsocketURL)
@@ -243,7 +264,11 @@ func (r *WebsocketReplicator) handleOriginMessage(ctx context.Context, view *pla
 	// Remembered before the connected check: a running pull re-reads the
 	// newest origin on every attempt (the stream may have moved nodes) and
 	// each refresh keeps it from concluding the stream is over.
+	// Relay counts need ownership even when this node must not pull the media.
 	r.rememberOrigin(view, origin.Streamer)
+	if !syndicate {
+		return nil
+	}
 	if r.hasConnection(origin.Streamer) {
 		spmetrics.BroadcastOriginsTotal.WithLabelValues("already_connected").Inc()
 		log.Debug(ctx, "already has connection")
@@ -275,6 +300,9 @@ func (r *WebsocketReplicator) pull(ctx context.Context, streamer string) {
 	backoff := pullBackoffMin
 	attempts := 0
 	for {
+		if r.mm != nil && !r.mm.ShouldSyndicate(streamer) {
+			return
+		}
 		latest, ok := r.latestFor(streamer)
 		if !ok {
 			return
@@ -339,7 +367,7 @@ func (r *WebsocketReplicator) openMoq(ctx context.Context, origin *placestream.B
 		return err
 	}
 	defer client.Close()
-	broadcast, err := requestMoqBroadcast(ctx, client, origin.Streamer)
+	broadcast, err := requestReplicationBroadcast(ctx, client, origin.Streamer)
 	if err != nil {
 		spmetrics.ReplicationConnectErrorsTotal.Inc()
 		return fmt.Errorf("could not request broadcast: %w", err)
@@ -351,19 +379,10 @@ func (r *WebsocketReplicator) openMoq(ctx context.Context, origin *placestream.B
 // feedRenditions folds a rendition addendum the origin minted into this
 // node's live window and playback bus, once its signatures check out.
 func (r *WebsocketReplicator) feedRenditions(ctx context.Context, streamer string, addendum []byte) error {
-	// Rendition tracks the origin minted for this stream: checked (every
-	// track is a signed transcoded asset) and folded into our live window
-	// as HLS variants. Not a segment, so not validated or archived as one.
-	if _, err := muxl.RunMuxlVerify(context.Background(), bytes.NewReader(addendum)); err != nil {
-		return fmt.Errorf("rendition addendum failed verification: %w", err)
-	}
-	// Only public streams are syndicated, so the ordering check that
-	// wants the start time does not apply here.
-	r.mm.FeedLiveRenditions(context.WithoutCancel(ctx), streamer, addendum, time.Time{}, true)
-	// And onto this node's bus for WebRTC viewers who pick a rendition here.
-	r.mm.PublishRenditionsForPlayback(context.WithoutCancel(ctx), streamer, addendum, true)
-	return nil
+	return r.mm.ReceiveRenditions(ctx, streamer, addendum)
 }
+
+const sourceAddendaLimit = 8
 
 // openWebsocket dials the origin and feeds its segments through validation
 // until the connection ends; it always returns an error saying why.
@@ -372,7 +391,7 @@ func (r *WebsocketReplicator) openWebsocket(ctx context.Context, origin *placest
 		return fmt.Errorf("origin has no websocket URL")
 	}
 	dialCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	conn, _, err := websocket.DefaultDialer.DialContext(dialCtx, *origin.WebsocketURL, nil)
+	conn, _, err := websocket.DefaultDialer.DialContext(dialCtx, *origin.WebsocketURL, http.Header{"Streamplace-Source": {"full"}})
 	cancel()
 	if err != nil {
 		spmetrics.ReplicationConnectErrorsTotal.Inc()
@@ -392,6 +411,8 @@ func (r *WebsocketReplicator) openWebsocket(ctx context.Context, origin *placest
 	log.Log(ctx, "syndication: connected to origin", "origin", *origin.WebsocketURL)
 	spmetrics.ReplicationOutboundOpen.WithLabelValues(origin.Streamer).Inc()
 	defer spmetrics.ReplicationOutboundOpen.WithLabelValues(origin.Streamer).Dec()
+	var pending [][]byte
+	pendingBytes := 0
 	for {
 		typ, msg, err := conn.ReadMessage()
 		if err != nil {
@@ -405,14 +426,36 @@ func (r *WebsocketReplicator) openWebsocket(ctx context.Context, origin *placest
 		log.Debug(ctx, "received message", "type", typ, "length", len(msg))
 		if addendum, ok := media.UnframeRenditions(msg); ok {
 			if err := r.feedRenditions(ctx, origin.Streamer, addendum); err != nil {
-				log.Warn(ctx, "syndication: rendition addendum dropped", "error", err)
+				if errors.Is(err, media.ErrAudioSourceMissing) {
+					if len(pending) >= sourceAddendaLimit || pendingBytes+len(addendum) > moqMaxGroupBytes {
+						return fmt.Errorf("too many audio addenda ahead of their source")
+					}
+					pending = append(pending, addendum)
+					pendingBytes += len(addendum)
+				} else {
+					log.Warn(ctx, "syndication: rendition addendum dropped", "error", err)
+				}
 			}
 			continue
 		}
-		err = r.mm.ValidateMP4(context.Background(), bytes.NewReader(msg), false)
+		err = r.mm.ValidateReplicatedMP4(context.Background(), bytes.NewReader(msg), origin.Streamer)
 		if err != nil {
 			return fmt.Errorf("could not validate segment: %w", err)
 		}
+		remaining := pending[:0]
+		pendingBytes = 0
+		for _, addendum := range pending {
+			if err := r.feedRenditions(ctx, origin.Streamer, addendum); err != nil {
+				if errors.Is(err, media.ErrAudioSourceMissing) {
+					remaining = append(remaining, addendum)
+					pendingBytes += len(addendum)
+				} else {
+					log.Warn(ctx, "syndication: audio addendum dropped", "error", err)
+				}
+			}
+		}
+		clear(pending[len(remaining):])
+		pending = remaining
 	}
 }
 
@@ -462,6 +505,9 @@ func (r *WebsocketReplicator) BuildOriginRecord(origin *placestream.BroadcastOri
 // --moq-url override or this host on --moq-addr's port, carrying the
 // self-signed certificate's hash for the peer to pin; "" with no listener.
 func (r *WebsocketReplicator) getMyMoqURL() string {
+	if r.cli.MoqRelayURL != "" {
+		return r.cli.MoqRelayURL
+	}
 	if r.cli.MoqAddr == "" {
 		return ""
 	}

@@ -22,6 +22,7 @@ import { Route as DashboardUploadRouteImport } from './routes/dashboard/upload'
 import { Route as DashboardVideosRouteImport } from './routes/dashboard/videos'
 import { Route as SettingsIndexRouteImport } from './routes/settings/index'
 import { Route as SettingsAboutRouteImport } from './routes/settings/about'
+import { Route as SettingsAccessRouteImport } from './routes/settings/access'
 import { Route as SettingsAccountRouteImport } from './routes/settings/account'
 import { Route as SettingsAdvancedRouteImport } from './routes/settings/advanced'
 import { Route as SettingsBackupRouteImport } from './routes/settings/backup'
@@ -36,6 +37,7 @@ import { Route as SettingsPrivacyRouteImport } from './routes/settings/privacy'
 import { Route as UserVideoTidRouteImport } from './routes/$user/video/$tid'
 import { Route as DashboardKeysIndexRouteImport } from './routes/dashboard/keys/index'
 import { Route as DashboardMultistreamIndexRouteImport } from './routes/dashboard/multistream/index'
+import { Route as DashboardProfileIndexRouteImport } from './routes/dashboard/profile/index'
 import { Route as DashboardRecommendationsIndexRouteImport } from './routes/dashboard/recommendations/index'
 import { Route as DashboardStreamIndexRouteImport } from './routes/dashboard/stream/index'
 import { Route as DashboardWebhooksIndexRouteImport } from './routes/dashboard/webhooks/index'
@@ -109,6 +111,11 @@ const SettingsAboutRoute = SettingsAboutRouteImport.update({
   path: '/about',
   getParentRoute: () => SettingsRoute,
 } as any)
+const SettingsAccessRoute = SettingsAccessRouteImport.update({
+  id: '/access',
+  path: '/access',
+  getParentRoute: () => SettingsRoute,
+} as any)
 const SettingsAccountRoute = SettingsAccountRouteImport.update({
   id: '/account',
   path: '/account',
@@ -180,6 +187,11 @@ const DashboardMultistreamIndexRoute =
     path: '/multistream/',
     getParentRoute: () => DashboardRouteRoute,
   } as any)
+const DashboardProfileIndexRoute = DashboardProfileIndexRouteImport.update({
+  id: '/profile/',
+  path: '/profile/',
+  getParentRoute: () => DashboardRouteRoute,
+} as any)
 const DashboardRecommendationsIndexRoute =
   DashboardRecommendationsIndexRouteImport.update({
     id: '/recommendations/',
@@ -228,6 +240,7 @@ export interface FileRoutesByFullPath {
   '/dashboard/upload': typeof DashboardUploadRoute
   '/dashboard/videos': typeof DashboardVideosRoute
   '/settings/about': typeof SettingsAboutRoute
+  '/settings/access': typeof SettingsAccessRoute
   '/settings/account': typeof SettingsAccountRoute
   '/settings/advanced': typeof SettingsAdvancedRoute
   '/settings/backup': typeof SettingsBackupRoute
@@ -247,6 +260,7 @@ export interface FileRoutesByFullPath {
   '/embed/info-widget/$user': typeof EmbedInfoWidgetUserRoute
   '/dashboard/keys/': typeof DashboardKeysIndexRoute
   '/dashboard/multistream/': typeof DashboardMultistreamIndexRoute
+  '/dashboard/profile/': typeof DashboardProfileIndexRoute
   '/dashboard/recommendations/': typeof DashboardRecommendationsIndexRoute
   '/dashboard/stream/': typeof DashboardStreamIndexRoute
   '/dashboard/webhooks/': typeof DashboardWebhooksIndexRoute
@@ -262,6 +276,7 @@ export interface FileRoutesByTo {
   '/dashboard/upload': typeof DashboardUploadRoute
   '/dashboard/videos': typeof DashboardVideosRoute
   '/settings/about': typeof SettingsAboutRoute
+  '/settings/access': typeof SettingsAccessRoute
   '/settings/account': typeof SettingsAccountRoute
   '/settings/advanced': typeof SettingsAdvancedRoute
   '/settings/backup': typeof SettingsBackupRoute
@@ -281,6 +296,7 @@ export interface FileRoutesByTo {
   '/embed/info-widget/$user': typeof EmbedInfoWidgetUserRoute
   '/dashboard/keys': typeof DashboardKeysIndexRoute
   '/dashboard/multistream': typeof DashboardMultistreamIndexRoute
+  '/dashboard/profile': typeof DashboardProfileIndexRoute
   '/dashboard/recommendations': typeof DashboardRecommendationsIndexRoute
   '/dashboard/stream': typeof DashboardStreamIndexRoute
   '/dashboard/webhooks': typeof DashboardWebhooksIndexRoute
@@ -299,6 +315,7 @@ export interface FileRoutesById {
   '/dashboard/upload': typeof DashboardUploadRoute
   '/dashboard/videos': typeof DashboardVideosRoute
   '/settings/about': typeof SettingsAboutRoute
+  '/settings/access': typeof SettingsAccessRoute
   '/settings/account': typeof SettingsAccountRoute
   '/settings/advanced': typeof SettingsAdvancedRoute
   '/settings/backup': typeof SettingsBackupRoute
@@ -318,6 +335,7 @@ export interface FileRoutesById {
   '/embed/info-widget/$user': typeof EmbedInfoWidgetUserRoute
   '/dashboard/keys/': typeof DashboardKeysIndexRoute
   '/dashboard/multistream/': typeof DashboardMultistreamIndexRoute
+  '/dashboard/profile/': typeof DashboardProfileIndexRoute
   '/dashboard/recommendations/': typeof DashboardRecommendationsIndexRoute
   '/dashboard/stream/': typeof DashboardStreamIndexRoute
   '/dashboard/webhooks/': typeof DashboardWebhooksIndexRoute
@@ -337,6 +355,7 @@ export interface FileRouteTypes {
     | '/dashboard/upload'
     | '/dashboard/videos'
     | '/settings/about'
+    | '/settings/access'
     | '/settings/account'
     | '/settings/advanced'
     | '/settings/backup'
@@ -356,6 +375,7 @@ export interface FileRouteTypes {
     | '/embed/info-widget/$user'
     | '/dashboard/keys/'
     | '/dashboard/multistream/'
+    | '/dashboard/profile/'
     | '/dashboard/recommendations/'
     | '/dashboard/stream/'
     | '/dashboard/webhooks/'
@@ -371,6 +391,7 @@ export interface FileRouteTypes {
     | '/dashboard/upload'
     | '/dashboard/videos'
     | '/settings/about'
+    | '/settings/access'
     | '/settings/account'
     | '/settings/advanced'
     | '/settings/backup'
@@ -390,6 +411,7 @@ export interface FileRouteTypes {
     | '/embed/info-widget/$user'
     | '/dashboard/keys'
     | '/dashboard/multistream'
+    | '/dashboard/profile'
     | '/dashboard/recommendations'
     | '/dashboard/stream'
     | '/dashboard/webhooks'
@@ -407,6 +429,7 @@ export interface FileRouteTypes {
     | '/dashboard/upload'
     | '/dashboard/videos'
     | '/settings/about'
+    | '/settings/access'
     | '/settings/account'
     | '/settings/advanced'
     | '/settings/backup'
@@ -426,6 +449,7 @@ export interface FileRouteTypes {
     | '/embed/info-widget/$user'
     | '/dashboard/keys/'
     | '/dashboard/multistream/'
+    | '/dashboard/profile/'
     | '/dashboard/recommendations/'
     | '/dashboard/stream/'
     | '/dashboard/webhooks/'
@@ -542,6 +566,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsAboutRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/settings/access': {
+      id: '/settings/access'
+      path: '/access'
+      fullPath: '/settings/access'
+      preLoaderRoute: typeof SettingsAccessRouteImport
+      parentRoute: typeof SettingsRoute
+    }
     '/settings/account': {
       id: '/settings/account'
       path: '/account'
@@ -640,6 +671,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DashboardMultistreamIndexRouteImport
       parentRoute: typeof DashboardRouteRoute
     }
+    '/dashboard/profile/': {
+      id: '/dashboard/profile/'
+      path: '/profile'
+      fullPath: '/dashboard/profile/'
+      preLoaderRoute: typeof DashboardProfileIndexRouteImport
+      parentRoute: typeof DashboardRouteRoute
+    }
     '/dashboard/recommendations/': {
       id: '/dashboard/recommendations/'
       path: '/recommendations'
@@ -698,6 +736,7 @@ interface DashboardRouteRouteChildren {
   DashboardIndexRoute: typeof DashboardIndexRoute
   DashboardKeysIndexRoute: typeof DashboardKeysIndexRoute
   DashboardMultistreamIndexRoute: typeof DashboardMultistreamIndexRoute
+  DashboardProfileIndexRoute: typeof DashboardProfileIndexRoute
   DashboardRecommendationsIndexRoute: typeof DashboardRecommendationsIndexRoute
   DashboardStreamIndexRoute: typeof DashboardStreamIndexRoute
   DashboardWebhooksIndexRoute: typeof DashboardWebhooksIndexRoute
@@ -709,6 +748,7 @@ const DashboardRouteRouteChildren: DashboardRouteRouteChildren = {
   DashboardIndexRoute: DashboardIndexRoute,
   DashboardKeysIndexRoute: DashboardKeysIndexRoute,
   DashboardMultistreamIndexRoute: DashboardMultistreamIndexRoute,
+  DashboardProfileIndexRoute: DashboardProfileIndexRoute,
   DashboardRecommendationsIndexRoute: DashboardRecommendationsIndexRoute,
   DashboardStreamIndexRoute: DashboardStreamIndexRoute,
   DashboardWebhooksIndexRoute: DashboardWebhooksIndexRoute,
@@ -720,6 +760,7 @@ const DashboardRouteRouteWithChildren = DashboardRouteRoute._addFileChildren(
 
 interface SettingsRouteChildren {
   SettingsAboutRoute: typeof SettingsAboutRoute
+  SettingsAccessRoute: typeof SettingsAccessRoute
   SettingsAccountRoute: typeof SettingsAccountRoute
   SettingsAdvancedRoute: typeof SettingsAdvancedRoute
   SettingsBackupRoute: typeof SettingsBackupRoute
@@ -736,6 +777,7 @@ interface SettingsRouteChildren {
 
 const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsAboutRoute: SettingsAboutRoute,
+  SettingsAccessRoute: SettingsAccessRoute,
   SettingsAccountRoute: SettingsAccountRoute,
   SettingsAdvancedRoute: SettingsAdvancedRoute,
   SettingsBackupRoute: SettingsBackupRoute,

@@ -419,8 +419,14 @@ func (s *Server) HandleGamesGamesgamesgamesgamesSearch(c echo.Context) error {
 }
 
 func (s *Server) RegisterHandlersPlacestream(e *echo.Echo) error {
+	e.POST("/xrpc/place.stream.access.createGrant", s.HandlePlaceStreamAccessCreateGrant)
+	e.POST("/xrpc/place.stream.access.deleteGrant", s.HandlePlaceStreamAccessDeleteGrant)
+	e.GET("/xrpc/place.stream.access.getStatus", s.HandlePlaceStreamAccessGetStatus)
+	e.GET("/xrpc/place.stream.access.listGrants", s.HandlePlaceStreamAccessListGrants)
+	e.POST("/xrpc/place.stream.access.setMode", s.HandlePlaceStreamAccessSetMode)
 	e.GET("/xrpc/place.stream.badge.getIssuedBadges", s.HandlePlaceStreamBadgeGetIssuedBadges)
 	e.GET("/xrpc/place.stream.badge.getValidBadges", s.HandlePlaceStreamBadgeGetValidBadges)
+	e.GET("/xrpc/place.stream.bio.getPage", s.HandlePlaceStreamBioGetPage)
 	e.POST("/xrpc/place.stream.branding.deleteBlob", s.HandlePlaceStreamBrandingDeleteBlob)
 	e.GET("/xrpc/place.stream.branding.exportBundle", s.HandlePlaceStreamBrandingExportBundle)
 	e.GET("/xrpc/place.stream.branding.getBlob", s.HandlePlaceStreamBrandingGetBlob)
@@ -491,6 +497,84 @@ func (s *Server) RegisterHandlersPlacestream(e *echo.Echo) error {
 	return nil
 }
 
+func (s *Server) HandlePlaceStreamAccessCreateGrant(c echo.Context) error {
+	ctx, span := otel.Tracer("server").Start(c.Request().Context(), "HandlePlaceStreamAccessCreateGrant")
+	defer span.End()
+	var body placestream.AccessCreateGrant_Input
+	if err := c.Bind(&body); err != nil {
+		return err
+	}
+	var out *placestream.AccessDefs_Grant
+	var handleErr error
+	// func (s *Server) handlePlaceStreamAccessCreateGrant(ctx context.Context,body *placestream.AccessCreateGrant_Input) (*placestream.AccessDefs_Grant, error)
+	out, handleErr = s.handlePlaceStreamAccessCreateGrant(ctx, &body)
+	if handleErr != nil {
+		return handleErr
+	}
+	return c.JSON(200, out)
+}
+
+func (s *Server) HandlePlaceStreamAccessDeleteGrant(c echo.Context) error {
+	ctx, span := otel.Tracer("server").Start(c.Request().Context(), "HandlePlaceStreamAccessDeleteGrant")
+	defer span.End()
+	var body placestream.AccessDeleteGrant_Input
+	if err := c.Bind(&body); err != nil {
+		return err
+	}
+	var out *placestream.AccessDeleteGrant_Output
+	var handleErr error
+	// func (s *Server) handlePlaceStreamAccessDeleteGrant(ctx context.Context,body *placestream.AccessDeleteGrant_Input) (*placestream.AccessDeleteGrant_Output, error)
+	out, handleErr = s.handlePlaceStreamAccessDeleteGrant(ctx, &body)
+	if handleErr != nil {
+		return handleErr
+	}
+	return c.JSON(200, out)
+}
+
+func (s *Server) HandlePlaceStreamAccessGetStatus(c echo.Context) error {
+	ctx, span := otel.Tracer("server").Start(c.Request().Context(), "HandlePlaceStreamAccessGetStatus")
+	defer span.End()
+	subject := c.QueryParam("subject")
+	var out *placestream.AccessGetStatus_Output
+	var handleErr error
+	// func (s *Server) handlePlaceStreamAccessGetStatus(ctx context.Context,subject string) (*placestream.AccessGetStatus_Output, error)
+	out, handleErr = s.handlePlaceStreamAccessGetStatus(ctx, subject)
+	if handleErr != nil {
+		return handleErr
+	}
+	return c.JSON(200, out)
+}
+
+func (s *Server) HandlePlaceStreamAccessListGrants(c echo.Context) error {
+	ctx, span := otel.Tracer("server").Start(c.Request().Context(), "HandlePlaceStreamAccessListGrants")
+	defer span.End()
+	var out *placestream.AccessListGrants_Output
+	var handleErr error
+	// func (s *Server) handlePlaceStreamAccessListGrants(ctx context.Context) (*placestream.AccessListGrants_Output, error)
+	out, handleErr = s.handlePlaceStreamAccessListGrants(ctx)
+	if handleErr != nil {
+		return handleErr
+	}
+	return c.JSON(200, out)
+}
+
+func (s *Server) HandlePlaceStreamAccessSetMode(c echo.Context) error {
+	ctx, span := otel.Tracer("server").Start(c.Request().Context(), "HandlePlaceStreamAccessSetMode")
+	defer span.End()
+	var body placestream.AccessSetMode_Input
+	if err := c.Bind(&body); err != nil {
+		return err
+	}
+	var out *placestream.AccessSetMode_Output
+	var handleErr error
+	// func (s *Server) handlePlaceStreamAccessSetMode(ctx context.Context,body *placestream.AccessSetMode_Input) (*placestream.AccessSetMode_Output, error)
+	out, handleErr = s.handlePlaceStreamAccessSetMode(ctx, &body)
+	if handleErr != nil {
+		return handleErr
+	}
+	return c.JSON(200, out)
+}
+
 func (s *Server) HandlePlaceStreamBadgeGetIssuedBadges(c echo.Context) error {
 	ctx, span := otel.Tracer("server").Start(c.Request().Context(), "HandlePlaceStreamBadgeGetIssuedBadges")
 	defer span.End()
@@ -513,6 +597,20 @@ func (s *Server) HandlePlaceStreamBadgeGetValidBadges(c echo.Context) error {
 	var handleErr error
 	// func (s *Server) handlePlaceStreamBadgeGetValidBadges(ctx context.Context,streamer string) (*placestream.BadgeGetValidBadges_Output, error)
 	out, handleErr = s.handlePlaceStreamBadgeGetValidBadges(ctx, streamer)
+	if handleErr != nil {
+		return handleErr
+	}
+	return c.JSON(200, out)
+}
+
+func (s *Server) HandlePlaceStreamBioGetPage(c echo.Context) error {
+	ctx, span := otel.Tracer("server").Start(c.Request().Context(), "HandlePlaceStreamBioGetPage")
+	defer span.End()
+	repo := c.QueryParam("repo")
+	var out *placestream.BioPage
+	var handleErr error
+	// func (s *Server) handlePlaceStreamBioGetPage(ctx context.Context,repo string) (*placestream.BioPage, error)
+	out, handleErr = s.handlePlaceStreamBioGetPage(ctx, repo)
 	if handleErr != nil {
 		return handleErr
 	}

@@ -3,10 +3,12 @@ package director
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -44,6 +46,9 @@ type StreamSession struct {
 	// Publication order for the source segments (WebRTC, peers) and for
 	// the transcoded renditions: see lane.
 	sourceLane, renditions *lane
+	// Written in the source publication turn and cleared after goroutines drain.
+	// Keep the last supplied-rung frames so teardown cannot erase a newer producer.
+	suppliedPlayback       map[string]*bus.Seg
 	mm                     *media.MediaManager
 	mod                    model.Model
 	cli                    *config.CLI
@@ -133,7 +138,7 @@ func (ss *StreamSession) Start(ctx context.Context, notif *media.NewSegmentNotif
 	// alone: a node that merely syndicates this stream must not also write
 	// it to S3, or every node records the same stream and they fight over
 	// the finalize. Taken up on the first local segment; see startLocalRole.
-	if notif.Local {
+	if notif.Local && ss.mm.CheckPublisherGeneration(notif.Segment.RepoDID, notif.PublisherGeneration) == nil {
 		ss.startLocalRole(ctx, notif.Segment.RepoDID)
 	}
 
@@ -163,17 +168,21 @@ func (ss *StreamSession) Start(ctx context.Context, notif *media.NewSegmentNotif
 			// send can race the uploader's channel close. s3Close then flushes
 			// the final object on the uploader's own (still-live) context.
 			err := ss.g.Wait()
-			ss.s3Close(ctx)
-			return err
-		case <-timer.C:
-			log.Log(ctx, "stream session timeout, shutting down", "timeout", ss.cli.StreamSessionTimeout)
-			spmetrics.StreamSessions.WithLabelValues(notif.Segment.RepoDID).Dec()
+			// Pending playback work can publish after cancellation. Expire
+			// its caches only after it can no longer refill them.
 			for _, r := range allRenditions {
 				ss.bus.EndSession(ctx, spseg.Creator, r.Name)
 			}
 			ss.bus.EndSession(ctx, spseg.Creator, media.PlaybackSourceRendition)
 			ss.bus.EndSession(ctx, spseg.Creator, media.WebRTCSourceRendition)
 			ss.bus.EndSession(ctx, spseg.Creator, media.RTMPSourceRendition)
+			ss.expireSuppliedPlayback(ctx, spseg.Creator, nil)
+			ss.suppliedPlayback = nil
+			ss.s3Close(ctx)
+			return err
+		case <-timer.C:
+			log.Log(ctx, "stream session timeout, shutting down", "timeout", ss.cli.StreamSessionTimeout)
+			spmetrics.StreamSessions.WithLabelValues(notif.Segment.RepoDID).Dec()
 			// Signal background workers to stop
 			if notif.Local {
 				ss.Go(ctx, func() error {
@@ -216,6 +225,66 @@ func (ss *StreamSession) Go(ctx context.Context, f func() error) {
 
 func (ss *StreamSession) NewSegment(ctx context.Context, notif *media.NewSegmentNotification) error {
 	<-ss.started
+	if notif.Local {
+		var err error
+		ctx, err = ss.mm.PublisherContext(ctx, notif.Segment.RepoDID, notif.PublisherGeneration)
+		if err != nil {
+			return err
+		}
+	}
+	if notif.AudioOnly {
+		// The source row is created only after bitrate admission, in arrival
+		// order. Enqueue recording here so a later source cannot overtake its
+		// audio while playback is still waiting for an earlier packetizer.
+		if ss.localDB == nil || notif.Segment.ID == "" {
+			return fmt.Errorf("audio continuation source was not admitted")
+		}
+		admittedSource, err := ss.localDB.GetSegment(notif.Segment.ID)
+		if err != nil {
+			return fmt.Errorf("read audio continuation source admission: %w", err)
+		}
+		if admittedSource == nil || admittedSource.RepoDID != notif.Segment.RepoDID {
+			return fmt.Errorf("audio continuation source was not admitted")
+		}
+		published := notif.Metadata.Published && admittedSource.Published
+		if notif.Local && published {
+			ss.s3Upload(ctx, notif)
+		}
+		tn := ss.sourceLane.turn()
+		var videoTurn *turn
+		if notif.Local && ss.cli.TranscoderURL != "" {
+			videoTurn = ss.renditions.turn()
+		}
+		ss.Go(ctx, func() error {
+			defer tn.release()
+			if videoTurn != nil {
+				defer videoTurn.release()
+			}
+			if !tn.wait(ctx) {
+				return fmt.Errorf("audio continuation lost its publication turn")
+			}
+			if videoTurn != nil && !videoTurn.wait(ctx) {
+				return fmt.Errorf("audio continuation lost its video rendition turn")
+			}
+			if err := ss.mm.CheckPublisherContext(ctx); err != nil {
+				return err
+			}
+			// Validation precedes the director's bitrate admission. Only the
+			// exact source that reached its publication turn can release audio.
+			source := ss.bus.SubscribeSegmentBuf(ctx, notif.Segment.RepoDID, "source", 1)
+			defer ss.bus.UnsubscribeSegment(ctx, notif.Segment.RepoDID, "source", source)
+			var admitted *bus.Seg
+			select {
+			case admitted = <-source.C:
+			default:
+			}
+			if admitted == nil || notif.Segment.ID == "" || admitted.Filepath != notif.Segment.ID {
+				return fmt.Errorf("audio continuation source was not admitted")
+			}
+			return ss.mm.PublishAudioAddendum(ctx, notif.Segment.RepoDID, notif.Muxl, notif.Segment.ID, notif.Segment.StartTime, published && admitted.Published)
+		})
+		return nil
+	}
 	go func() {
 		select {
 		case <-ss.ctx.Done():
@@ -573,11 +642,7 @@ func (ss *StreamSession) doUpdateStatus(ctx context.Context, repoDID string) err
 		"rkey":       "self",
 	}, nil, &getOutput)
 	if err != nil {
-		xErr, ok := err.(*xrpc.Error)
-		if !ok {
-			return fmt.Errorf("could not get record: %w", err)
-		}
-		if xErr.StatusCode != 400 { // yes, they return "400" for "not found"
+		if !recordNotFound(err) {
 			return fmt.Errorf("could not get record: %w", err)
 		}
 		log.Debug(ctx, "record not found, creating", "repoDID", repoDID)
@@ -595,12 +660,11 @@ func (ss *StreamSession) doUpdateStatus(ctx context.Context, repoDID string) err
 	}
 	out := comatproto.RepoPutRecord_Output{}
 
-	ss.lastStatusCID = &out.Cid
-
-	err = client.Do(ctx, xrpc.Procedure, "application/json", "com.atproto.repo.putRecord", map[string]any{}, inp, &out)
+	err = client.Do(ctx, xrpc.Procedure, "application/json", "com.atproto.repo.putRecord", map[string]any{}, conditionalRecord(inp), &out)
 	if err != nil {
 		return fmt.Errorf("could not create record: %w", err)
 	}
+	ss.lastStatusCID = &out.Cid
 	log.Debug(ctx, "created status record", "out", out)
 
 	ss.lastStatus = time.Now()
@@ -652,15 +716,6 @@ func (ss *StreamSession) doUpdateLivestream(ctx context.Context, repoDID string)
 		log.Debug(ctx, "no livestream found, skipping livestream update")
 		return nil
 	}
-	lsv, err := lastLivestream.ToLivestreamView()
-	if err != nil {
-		return fmt.Errorf("could not convert livestream to streamplace livestream: %w", err)
-	}
-	lsvr, ok := lsv.Record.Val.(*placestream.Livestream)
-	if !ok {
-		return fmt.Errorf("livestream is not a streamplace livestream")
-	}
-
 	aturi, err := syntax.ParseATURI(lastLivestream.URI)
 	if err != nil {
 		return fmt.Errorf("could not parse livestream URI: %w", err)
@@ -671,8 +726,12 @@ func (ss *StreamSession) doUpdateLivestream(ctx context.Context, repoDID string)
 		return fmt.Errorf("could not get xrpc client for repoDID: %w", err)
 	}
 
-	var swapRecord *string
-	getOutput := comatproto.RepoGetRecord_Output{}
+	// Read the current body with its CID. The local index can lag an editor,
+	// and decoding into the known schema would drop extension fields.
+	var getOutput struct {
+		comatproto.RepoGetRecord_Output
+		Value map[string]json.RawMessage `json:"value"`
+	}
 	err = client.Do(ctx, xrpc.Query, "application/json", "com.atproto.repo.getRecord", map[string]any{
 		"repo":       repoDID,
 		"collection": "place.stream.livestream",
@@ -682,17 +741,30 @@ func (ss *StreamSession) doUpdateLivestream(ctx context.Context, repoDID string)
 		return fmt.Errorf("could not get record: %w", err)
 	}
 	log.Debug(ctx, "got record", "record", getOutput)
-	swapRecord = getOutput.Cid
+	if getOutput.Cid == nil || *getOutput.Cid == "" {
+		return fmt.Errorf("livestream record has no CID")
+	}
+	var recordType string
+	if err := json.Unmarshal(getOutput.Value["$type"], &recordType); err != nil {
+		return fmt.Errorf("could not read livestream record type: %w", err)
+	}
+	if recordType != "place.stream.livestream" {
+		return fmt.Errorf("unexpected livestream record type %q", recordType)
+	}
 
 	now := time.Now().UTC().Format(util.ISO8601)
-	lsvr.LastSeenAt = &now
+	getOutput.Value["lastSeenAt"] = json.RawMessage(strconv.Quote(now))
+	record, err := glex.Unknown(getOutput.Value)
+	if err != nil {
+		return fmt.Errorf("could not encode livestream heartbeat: %w", err)
+	}
 
 	inp := comatproto.RepoPutRecord_Input{
 		Collection: "place.stream.livestream",
-		Record:     &glex.LexiconTypeDecoder{Val: lsvr},
+		Record:     record,
 		Rkey:       aturi.RecordKey().String(),
 		Repo:       ss.repoDID,
-		SwapRecord: swapRecord,
+		SwapRecord: getOutput.Cid,
 	}
 	out := comatproto.RepoPutRecord_Output{}
 
@@ -798,11 +870,7 @@ func (ss *StreamSession) doUpdateBroadcastOrigin(ctx context.Context) error {
 		"rkey":       rkey,
 	}, nil, &getOutput)
 	if err != nil {
-		xErr, ok := err.(*xrpc.Error)
-		if !ok {
-			return fmt.Errorf("could not get record: %w", err)
-		}
-		if xErr.StatusCode != 400 { // yes, they return "400" for "not found"
+		if !recordNotFound(err) {
 			return fmt.Errorf("could not get record: %w", err)
 		}
 		log.Debug(ctx, "record not found, creating", "repoDID", ss.repoDID)
@@ -820,7 +888,7 @@ func (ss *StreamSession) doUpdateBroadcastOrigin(ctx context.Context) error {
 	}
 	out := comatproto.RepoPutRecord_Output{}
 
-	err = client.Do(ctx, xrpc.Procedure, "application/json", "com.atproto.repo.putRecord", map[string]any{}, inp, &out)
+	err = client.Do(ctx, xrpc.Procedure, "application/json", "com.atproto.repo.putRecord", map[string]any{}, conditionalRecord(inp), &out)
 	if err != nil {
 		return fmt.Errorf("could not create record: %w", err)
 	}
@@ -909,7 +977,7 @@ func (ss *StreamSession) Transcode(ctx context.Context, spseg *placestream.Segme
 		// Hand the transcoder the Opus presentation: it copies that audio
 		// back into every rendition, and the WebRTC packetizer the
 		// renditions feed needs Opus (an RTMP source's first audio is AAC).
-		if opus, err := media.PresentationWithOpus(ctx, notif.Muxl); err == nil {
+		if opus, err := media.PresentationWithOpus(ctx, notif.Muxl, 0); err == nil {
 			data = opus
 		} else {
 			log.Warn(ctx, "transcode: could not select opus audio, using the presentation as is", "error", err)
@@ -993,12 +1061,17 @@ func (ss *StreamSession) Transcode(ctx context.Context, spseg *placestream.Segme
 		log.Warn(ctx, "rendition abandoned by later segments, not published", "rendition", "all")
 		return nil
 	}
+	if err := ss.mm.CheckPublisherContext(ctx); err != nil {
+		return err
+	}
 	if addendum != nil {
 		// Into the live window (HLS variants), and to the peers pulling
 		// this stream (see subscribeSegments). Only the websocket
 		// replicator carries rendition addenda; a peer syndicating over
 		// Iroh receives the source track alone and no renditions.
-		ss.mm.FeedLiveRenditions(context.WithoutCancel(ctx), spseg.Creator, addendum, notif.Metadata.StartTime.Time(), notif.Metadata.Published)
+		if err := ss.mm.FeedLiveRenditions(context.WithoutCancel(ctx), spseg.Creator, addendum, notif.Metadata.StartTime.Time(), notif.Metadata.Published); err != nil {
+			return err
+		}
 		ss.bus.PublishSegment(ctx, spseg.Creator, media.RenditionsChannel, &bus.Seg{
 			Muxl:      addendum,
 			Published: notif.Metadata.Published,
@@ -1041,6 +1114,9 @@ func (ss *StreamSession) AddPlaybackSegment(ctx context.Context, spseg *placestr
 
 func (ss *StreamSession) AddToWebRTC(ctx context.Context, spseg *placestream.Segment, rendition string, seg *bus.Seg, tn *turn) error {
 	defer tn.release()
+	if err := ss.mm.CheckPublisherContext(ctx); err != nil {
+		return err
+	}
 	compatible := len(spseg.Video) == 0
 	for _, video := range spseg.Video {
 		compatible = compatible || video.Codec == "" || video.Codec == "h264" || strings.HasPrefix(video.Codec, "avc1")
@@ -1058,12 +1134,62 @@ func (ss *StreamSession) AddToWebRTC(ctx context.Context, spseg *placestream.Seg
 		}
 	}
 
+	var supplied map[string]*bus.Seg
+	if rendition == "source" && len(spseg.Video) > 1 && len(seg.Muxl) > 0 {
+		primary := -1
+		for i, video := range spseg.Video {
+			if video.Codec != "h264" && !strings.HasPrefix(video.Codec, "avc1") {
+				continue
+			}
+			if primary < 0 || video.Width*video.Height > spseg.Video[primary].Width*spseg.Video[primary].Height {
+				primary = i
+			}
+		}
+		for i, video := range spseg.Video {
+			if primary < 0 || i == primary || video.TrackId == nil || video.Codec != "h264" && !strings.HasPrefix(video.Codec, "avc1") {
+				continue
+			}
+			name := media.RenditionName(uint32(video.Width), uint32(video.Height))
+			if name == media.RenditionName(uint32(spseg.Video[primary].Width), uint32(spseg.Video[primary].Height)) || supplied[name] != nil {
+				continue
+			}
+			id, err := strconv.ParseUint(*video.TrackId, 10, 32)
+			if err != nil || id == 0 {
+				log.Warn(ctx, "invalid supplied video track ID", "track", *video.TrackId)
+				continue
+			}
+			data, err := media.PresentationWithOpus(ctx, seg.Muxl, uint32(id))
+			if err != nil {
+				log.Warn(ctx, "could not present supplied rendition", "rendition", name, "error", err)
+				continue
+			}
+			frame := &bus.Seg{Filepath: seg.Filepath, Data: data, Published: seg.Published}
+			frame.PacketizedData, err = media.Packetize(ctx, ss.cli, frame, 0)
+			if err != nil {
+				log.Warn(ctx, "could not packetize supplied rendition", "rendition", name, "error", err)
+				continue
+			}
+			if supplied == nil {
+				supplied = map[string]*bus.Seg{}
+			}
+			supplied[name] = frame
+		}
+	}
+
 	if !tn.wait(ctx) {
 		log.Warn(ctx, "segment abandoned by later segments, not published", "rendition", rendition)
 		return nil
 	}
+	if err := ss.mm.CheckPublisherContext(ctx); err != nil {
+		return err
+	}
 	ss.bus.PublishSegment(ctx, spseg.Creator, rendition, seg)
 	if rendition == "source" {
+		ss.expireSuppliedPlayback(ctx, spseg.Creator, supplied)
+		for name, frame := range supplied {
+			ss.bus.PublishSegment(ctx, spseg.Creator, name, frame)
+		}
+		ss.suppliedPlayback = supplied
 		if !seg.PlaybackPublished {
 			ss.bus.PublishSegment(ctx, spseg.Creator, media.PlaybackSourceRendition, seg)
 		}
@@ -1076,6 +1202,43 @@ func (ss *StreamSession) AddToWebRTC(ctx context.Context, spseg *placestream.Seg
 	}
 
 	return nil
+}
+
+// Expire only this producer's last source or its matching audio continuation.
+// The bus comparison protects a newer producer publishing after the snapshot.
+func (ss *StreamSession) expireSuppliedPlayback(ctx context.Context, did string, keep map[string]*bus.Seg) {
+	for name, owned := range ss.suppliedPlayback {
+		if keep[name] != nil {
+			continue
+		}
+		sub := ss.bus.SubscribeSegmentBuf(ctx, did, name, 1)
+		var last *bus.Seg
+		select {
+		case last = <-sub.C:
+		default:
+		}
+		ss.bus.UnsubscribeSegment(ctx, did, name, sub)
+		if last == owned || last != nil && last.AudioOnly && last.Filepath != "" && last.Filepath == owned.Filepath {
+			ss.bus.EndSessionIfCurrent(ctx, did, name, last)
+		}
+	}
+}
+
+// PDS implementations report a missing record with either HTTP 400 or 404.
+func recordNotFound(err error) bool {
+	var response *xrpc.Error
+	var problem *xrpc.XRPCError
+	return errors.As(err, &response) && (response.StatusCode == 400 || response.StatusCode == 404) &&
+		errors.As(err, &problem) && problem.ErrStr == "RecordNotFound"
+}
+
+// The generated input omits nil swapRecord. The PDS needs explicit null to
+// enforce "still absent" for a first write, rather than an unconditional put.
+func conditionalRecord(record comatproto.RepoPutRecord_Input) any {
+	return struct {
+		comatproto.RepoPutRecord_Input
+		SwapRecord *string `json:"swapRecord"`
+	}{record, record.SwapRecord}
 }
 
 type XRPCClient interface {

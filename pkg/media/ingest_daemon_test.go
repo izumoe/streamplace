@@ -3,8 +3,8 @@
 package media
 
 import (
-	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -12,8 +12,9 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"stream.place/streamplace/pkg/bus"
+	"stream.place/streamplace/pkg/config"
 	"stream.place/streamplace/pkg/crypto/signers"
-	"stream.place/streamplace/pkg/muxl"
 )
 
 func TestDiscoverWorkerSockets(t *testing.T) {
@@ -40,20 +41,27 @@ func TestDiscoverWorkerSockets(t *testing.T) {
 func TestDetachedWorkerZeroDowntime(t *testing.T) {
 	ctx := context.Background()
 	ms := newBareSegmentSigner(t)
+	streamer := ms.DID()
+	var metadata map[string]any
+	require.NoError(t, json.Unmarshal(ms.PrebuiltManifest, &metadata))
+	metadata["assertions"].([]any)[1].(map[string]any)["data"].(map[string]any)["dc:creator"] = streamer
+	manifest, err := json.Marshal(metadata)
+	require.NoError(t, err)
 	keyPEM, err := signers.MarshalES256KPrivateKeyPEM(ms.Signer)
 	require.NoError(t, err)
-	manifest, err := ms.buildManifest(ctx, time.Now().UnixMilli())
+	node := newBareSegmentSigner(t)
+	nodeKeyPEM, err := signers.MarshalES256KPrivateKeyPEM(node.Signer)
 	require.NoError(t, err)
 
 	dir := t.TempDir()
 	sock := filepath.Join(dir, "stream.sock")
 	cfg := IngestWorkerConfig{
-		StreamerDID:     ms.Streamer(),
+		StreamerDID:     streamer,
 		KeyPEM:          keyPEM,
 		CertPEM:         ms.Cert,
 		Manifest:        manifest,
-		NodeCertPEM:     ms.Cert,
-		NodeKeyPEM:      keyPEM,
+		NodeCertPEM:     node.Cert,
+		NodeKeyPEM:      nodeKeyPEM,
 		BroadcasterHost: "test.example.com",
 		SocketPath:      sock,
 		InputFD:         4,
@@ -86,17 +94,22 @@ func TestDetachedWorkerZeroDowntime(t *testing.T) {
 	require.NotEqual(t, syscall.Getpgrp(), wpgid, "worker group differs from the test's")
 
 	// Consume through the reconnecting consumer; verify dual-codec signed output.
-	var segs int
-	onSegment := func(s []byte) error {
-		out, verr := muxl.RunMuxlVerify(ctx, bytes.NewReader(s))
-		require.NoError(t, verr)
-		require.NotContains(t, out, `"validation_state":"Invalid"`)
-		segs++
-		return nil
+	mm := &MediaManager{
+		cli:         &config.CLI{BroadcasterHost: cfg.BroadcasterHost, AllowedStreams: []string{streamer}},
+		bus:         bus.NewBus(),
+		liveWindows: map[string]*liveWindowState{},
 	}
-	require.NoError(t, (&MediaManager{}).ConsumeWorkerSocket(ctx, socks[0], ms.Streamer(), onSegment, nil))
-	require.GreaterOrEqual(t, segs, 1, "detached worker served signed segments")
+	require.NoError(t, mm.ConsumeWorkerSocket(ctx, socks[0], streamer, mm.validateSegment(ctx), nil))
+	segs := mm.BufferedSegments(streamer)
+	require.NotEmpty(t, segs, "detached worker served signed segments")
+	for _, seg := range segs {
+		validated, err := ValidateMP4Media(ctx, seg.Data)
+		require.NoError(t, err)
+		require.Len(t, validated.MediaData.Video, 1)
+		require.Len(t, validated.MediaData.Audio, 2, "completed media carries both AAC and Opus")
+		require.ElementsMatch(t, []string{"aac", "opus"}, []string{validated.MediaData.Audio[0].Codec, validated.MediaData.Audio[1].Codec})
+	}
 
 	_, _ = proc.Wait() // reap the detached worker
-	t.Logf("detached worker (pgid=%d) served %d dual-codec segments via discovery+reconnect", wpgid, segs)
+	t.Logf("detached worker (pgid=%d) served %d dual-codec segments via discovery+reconnect", wpgid, len(segs))
 }

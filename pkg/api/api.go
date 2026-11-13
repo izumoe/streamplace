@@ -32,6 +32,7 @@ import (
 	"github.com/streamplace/oatproxy/pkg/oatproxy"
 	"stream.place/streamplace/js/app"
 	web "stream.place/streamplace/js/web"
+	"stream.place/streamplace/pkg/accessctl"
 	"stream.place/streamplace/pkg/acme"
 	"stream.place/streamplace/pkg/atproto"
 	"stream.place/streamplace/pkg/blob"
@@ -62,6 +63,7 @@ import (
 )
 
 type StreamplaceAPI struct {
+	Access        *accessctl.Controller
 	CLI           *config.CLI
 	Model         model.Model
 	StatefulDB    *statedb.StatefulDB
@@ -84,6 +86,9 @@ type StreamplaceAPI struct {
 	Bus      *bus.Bus
 	ATSync   *atproto.ATProtoSynchronizer
 	Director *director.Director
+
+	chatRefreshMu sync.Mutex
+	chatRefreshes map[string]*chatRefreshWorker
 
 	connTracker *WebsocketTracker
 
@@ -177,6 +182,7 @@ func (a *StreamplaceAPI) Handler(ctx context.Context) (http.Handler, error) {
 		return nil, err
 	}
 	a.XRPCServer = xrpc.(*spxrpc.Server)
+	a.XRPCServer.SetAccessController(a.Access)
 	router := httprouter.New()
 
 	// Create our middleware factory with the default settings.
@@ -239,6 +245,7 @@ func (a *StreamplaceAPI) Handler(ctx context.Context) (http.Handler, error) {
 	apiRouter.NotFound = a.HandleAPI404(ctx)
 	apiRouterHandler := a.RateLimitMiddleware(ctx)(apiRouter)
 	xrpcHandler := a.RateLimitMiddleware(ctx)(xrpc)
+	apiRouter.Handler("POST", "/api/moq/session", xrpc)
 	router.Handler("GET", "/api/*resource", apiRouterHandler)
 	router.Handler("HEAD", "/api/*resource", apiRouterHandler)
 	router.Handler("POST", "/api/*resource", apiRouterHandler)
@@ -447,6 +454,8 @@ func (a *StreamplaceAPI) notFoundLinkingHandler(ctx context.Context, linker *lin
 		}
 	})
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		// Enable shared-memory audio without severing OAuth popup relationships.
+		w.Header().Set("Document-Isolation-Policy", "isolate-and-credentialless")
 		proto := "http"
 		if req.TLS != nil {
 			proto = "https"
@@ -860,7 +869,13 @@ func (a *StreamplaceAPI) HandleChat(ctx context.Context) httprouter.Handle {
 			apierrors.WriteHTTPInternalServerError(w, "could not get replies", err)
 			return
 		}
-		bs, err := json.Marshal(replies)
+		visible := replies[:0]
+		for _, reply := range replies {
+			if a.ATSync.NodeChatAllowed(reply.Author.Did) {
+				visible = append(visible, reply)
+			}
+		}
+		bs, err := json.Marshal(visible)
 		if err != nil {
 			apierrors.WriteHTTPInternalServerError(w, "could not marshal replies", err)
 			return

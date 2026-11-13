@@ -301,10 +301,16 @@ func (atsync *ATProtoSynchronizer) walkBackfill(ctx context.Context, ident *iden
 	}
 
 	records := 0
+	bioPath := constants.PLACE_STREAM_BIO_PAGE + "/self"
+	sawBio := false
 	walk := func(ctx context.Context, head *reposync.Head) error {
 		records = 0
+		sawBio = false
 		walker := &reposync.Walker{Fetcher: fetcher}
 		err := walker.WalkRanges(ctx, head.Root, ranges, func(path string, rcid cid.Cid, rec []byte) error {
+			if path == bioPath {
+				sawBio = true
+			}
 			nsid, rkey, err := syntax.ParseRepoPath(path)
 			if err != nil {
 				log.Warn(ctx, "failed to parse repo path", "k", path, "err", err)
@@ -315,6 +321,9 @@ func (atsync *ATProtoSynchronizer) walkBackfill(ctx context.Context, ident *iden
 			bs := rec
 			err = atsync.handleCreateUpdate(ctx, did, rkey, &bs, rcid.String(), nsid, false, true, head.Rev)
 			if err != nil {
+				if path == bioPath {
+					return err
+				}
 				log.Warn(ctx, "failed to handle create update", "err", err)
 				// invalid CBOR and stuff should get ignored, so we don't return
 			}
@@ -330,6 +339,18 @@ func (atsync *ATProtoSynchronizer) walkBackfill(ctx context.Context, ident *iden
 	head, err := walkWithHeadRetry(ctx, maxWalkAttempts, walkRetryDelay, fetchHead, walk)
 	if err != nil {
 		return "", "", err
+	}
+	if !sawBio {
+		// Only a successful walk covering the singleton can prove its absence.
+		key := []byte(bioPath)
+		for _, r := range ranges {
+			if bytes.Compare(key, r.Lo) >= 0 && (r.Hi == nil || bytes.Compare(key, r.Hi) < 0) {
+				if err := atsync.Model.DeleteBioPage(ctx, did, head.Rev); err != nil {
+					return "", "", fmt.Errorf("failed to reconcile missing bio: %w", err)
+				}
+				break
+			}
+		}
 	}
 
 	// Debug: this fires once per walk, and a deepening repo walks one window
@@ -451,7 +472,11 @@ func (atsync *ATProtoSynchronizer) legacyBackfill(ctx context.Context, ident *id
 		return "", fmt.Errorf("signer DID %s does not match identity %s", signerDID, ident.DID.String())
 	}
 
+	sawBio := false
 	err = r.ForEach(ctx, "", func(k string, v cid.Cid) error {
+		if k == constants.PLACE_STREAM_BIO_PAGE+"/self" {
+			sawBio = true
+		}
 		nsid, rkey, err := syntax.ParseRepoPath(k)
 		if err != nil {
 			log.Warn(ctx, "failed to parse repo path", "k", k, "err", err)
@@ -466,6 +491,9 @@ func (atsync *ATProtoSynchronizer) legacyBackfill(ctx context.Context, ident *id
 
 		err = atsync.handleCreateUpdate(ctx, signerDID.String(), rkey, bs, v.String(), nsid, false, true, sc.Rev)
 		if err != nil {
+			if k == constants.PLACE_STREAM_BIO_PAGE+"/self" {
+				return err
+			}
 			log.Warn(ctx, "failed to handle create update", "err", err)
 			// invalid CBOR and stuff should get ignored, so
 			// return fmt.Errorf("failed to process record update for %s (type: %s): %w", k, nsid.String(), err)
@@ -474,6 +502,11 @@ func (atsync *ATProtoSynchronizer) legacyBackfill(ctx context.Context, ident *id
 	})
 	if err != nil {
 		return "", fmt.Errorf("failed to iterate over repo: %w", err)
+	}
+	if !sawBio {
+		if err := atsync.Model.DeleteBioPage(ctx, signerDID.String(), sc.Rev); err != nil {
+			return "", fmt.Errorf("failed to reconcile missing bio: %w", err)
+		}
 	}
 
 	return sc.Rev, nil
