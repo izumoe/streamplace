@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   inboundAudioGroup,
   WebRTCAudio,
@@ -144,4 +144,44 @@ describe("per-stream WebRTC progress", () => {
       progress.stalled([{ id: "v", kind: "video", framesReceived: 2 }], 4010),
     ).toBe(false);
   });
+});
+
+it("keeps native full-mix audio and available controls without creating a mixing graph", () => {
+  const createContext = vi.fn(function () {
+    throw new Error("default playback must not create an AudioContext");
+  });
+  vi.stubGlobal("AudioContext", createContext);
+  const tracks: MediaStreamTrack[] = [];
+  const output = {
+    getAudioTracks: () => tracks,
+    addTrack: (track: MediaStreamTrack) => tracks.push(track),
+    removeTrack: (track: MediaStreamTrack) =>
+      tracks.splice(tracks.indexOf(track), 1),
+  } as unknown as MediaStream;
+  const reports: unknown[] = [];
+  const video = document.createElement("video");
+  const audio = new WebRTCAudio(video, output, (stems) => reports.push(stems));
+  const stems = [
+    { alternateGroup: 2, label: "Voice" },
+    { alternateGroup: 3, label: "Music" },
+  ];
+  const received = () =>
+    Object.assign(new EventTarget(), {
+      kind: "audio",
+      readyState: "live",
+    }) as unknown as MediaStreamTrack;
+  const main = received();
+  try {
+    audio.setMix(stems, null);
+    audio.add(main, null);
+    audio.add(received(), 2);
+    audio.add(received(), 3);
+    audio.setMix(stems, null);
+    expect(createContext).not.toHaveBeenCalled();
+    expect(reports.at(-1)).toEqual(stems);
+    expect(tracks).toEqual([main]);
+  } finally {
+    audio.close();
+    vi.unstubAllGlobals();
+  }
 });

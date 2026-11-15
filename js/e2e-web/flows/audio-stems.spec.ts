@@ -120,6 +120,65 @@ for (const transport of ["webrtc", "moq"] as const) {
       .getByRole("button", { name: "Unmute", exact: true })
       .first();
     if (await unmute.isVisible()) await unmute.click();
+    await player.hover();
+    await player.getByRole("button", { name: "Settings", exact: true }).click();
+    const music = page.getByRole("slider", { name: "Music", exact: true });
+    await expect(music).toBeVisible();
+    await expect(
+      page.getByRole("slider", { name: "Voice", exact: true }),
+    ).toBeVisible();
+    if (transport === "webrtc") {
+      await expect
+        .poll(() =>
+          page.evaluate(() => {
+            const state = window as unknown as {
+              __stemMeters: unknown[];
+              __stemPlayouts: HTMLAudioElement[];
+            };
+            const video = document.querySelector("video")!;
+            return {
+              contexts: state.__stemMeters.length,
+              playouts: state.__stemPlayouts.length,
+              nativeAudio: (video.srcObject as MediaStream).getAudioTracks()
+                .length,
+              muted: video.muted,
+              paused: video.paused,
+            };
+          }),
+        )
+        .toEqual({
+          contexts: 0,
+          playouts: 0,
+          nativeAudio: 1,
+          muted: false,
+          paused: false,
+        });
+      await expect
+        .poll(() =>
+          page.evaluate(async () => {
+            const peers = (
+              window as unknown as { __stemPeers: RTCPeerConnection[] }
+            ).__stemPeers;
+            const track = (
+              document.querySelector("video")!.srcObject as MediaStream
+            ).getAudioTracks()[0];
+            const receiver = peers[0]
+              .getReceivers()
+              .find((item) => item.track === track);
+            const stats = await receiver?.getStats();
+            let energy = 0;
+            stats?.forEach((row) => {
+              if (row.type === "inbound-rtp")
+                energy += row.totalAudioEnergy ?? 0;
+            });
+            return energy;
+          }),
+        )
+        .toBeGreaterThan(0);
+      // Request both stems before metering the custom graph.
+      await music.press("ArrowLeft");
+      await music.press("ArrowRight");
+    }
     const readAudio = () =>
       page.evaluate(() => {
         const meters = (
@@ -232,13 +291,6 @@ for (const transport of ["webrtc", "moq"] as const) {
     const beforePicture = await readPicture();
 
     expect(full.contexts).toBe(1);
-    await player.hover();
-    await player.getByRole("button", { name: "Settings", exact: true }).click();
-    const music = page.getByRole("slider", { name: "Music", exact: true });
-    await expect(music).toBeVisible();
-    await expect(
-      page.getByRole("slider", { name: "Voice", exact: true }),
-    ).toBeVisible();
     for (
       let step = 0;
       step < 8 &&

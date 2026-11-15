@@ -172,3 +172,21 @@ all three AVC WebRTC rungs retain three progressing audio streams. SDK worklet
 tests cover shared-memory and postMessage rings, incompatible layouts, buffering
 and synchronized switching. These checks do not replace listening on physical
 devices or measure full-pipeline performance.
+
+Input-local MoQ discontinuities preserve the shared cursor. Child and inactive
+main decoders cannot move the video's reference; audible main audio retains
+clock ownership. Content resets replace the renderer and rings together while
+keeping the context warm. WebRTC full-mix playback stays native until the viewer
+requests custom mixing.
+
+WebRTC timing comes from the original signed sample timestamps. Independent
+senders preserve offsets, missing intervals and spans that cross source batch
+boundaries. At most four senders each queue four sample-slice references, without
+copying payloads. Queued main media remains in catch-up accounting. A sender that
+cannot accept work before its required deadline cancels playback explicitly
+instead of dropping audio or retaining an unbounded queue.
+
+Timing regressions cover positive and negative signed offsets across consecutive
+batches, missing stems, audio-only tails, source idle, queued backlog and queue
+cancellation. MoQ tests cover child and inactive-main clock isolation, both PCM
+buffer transports, future heads and active-main/content resets.

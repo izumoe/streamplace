@@ -150,7 +150,7 @@ export class WebRTCAudio {
       available.length > 0 &&
       available.length === this.#stems.length &&
       this.#inputs.get(null)?.track.readyState === "live";
-    if (!this.#context && !this.#failed && complete) {
+    if (!this.#context && !this.#failed && complete && this.#mix !== null) {
       try {
         this.#context = new AudioContext({ latencyHint: "interactive" });
         this.#master = this.#context.createGain();
