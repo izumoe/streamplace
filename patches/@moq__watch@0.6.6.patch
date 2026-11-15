@@ -20,10 +20,10 @@ index 86e3be5a3b2cd1b559fd9b49541b014083c082a4..c752146c9e5b5b94ca2d55713bd2d731
 +{"version":3,"file":"buffer.d.ts","sourceRoot":"","sources":["../../src/audio/buffer.ts"],"names":[],"mappings":"AAAA,OAAO,EAAE,IAAI,EAAE,MAAM,UAAU,CAAC;AAChC,OAAO,EAAU,KAAK,MAAM,EAAU,MAAM,cAAc,CAAC;AAyH3D;;;;;;;;GAQG;AACH,MAAM,WAAW,WAAW;IAC3B,QAAQ,CAAC,IAAI,EAAE,MAAM,CAAC;IACtB,QAAQ,CAAC,QAAQ,EAAE,MAAM,CAAC;IAE1B,gFAAgF;IAChF,MAAM,CAAC,SAAS,EAAE,IAAI,CAAC,KAAK,EAAE,IAAI,EAAE,YAAY,EAAE,GAAG,IAAI,CAAC;IAE1D,4CAA4C;IAC5C,UAAU,CAAC,OAAO,EAAE,MAAM,GAAG,IAAI,CAAC;IAElC,+FAA+F;IAC/F,KAAK,IAAI,IAAI,CAAC;IAEd;;;;;;OAMG;IACH,QAAQ,CAAC,SAAS,EAAE,IAAI,CAAC,KAAK,GAAG,IAAI,CAAC;IAEtC;;;;;;OAMG;IACH,IAAI,CAAC,SAAS,EAAE,IAAI,CAAC,KAAK,EAAE,MAAM,EAAE,WAAW,GAAG,OAAO,CAAC,IAAI,CAAC,CAAC;IAEhE,iEAAiE;IACjE,QAAQ,CAAC,SAAS,EAAE,MAAM,CAAC,IAAI,CAAC,KAAK,CAAC,CAAC;IAEvC,uDAAuD;IACvD,QAAQ,CAAC,OAAO,EAAE,MAAM,CAAC,OAAO,CAAC,CAAC;IAElC,gEAAgE;IAChE,KAAK,IAAI,IAAI,CAAC;CACd;AAED,0FAA0F;AAC1F,wBAAgB,yBAAyB,IAAI,OAAO,CAMnD;AAED;;;GAGG;AACH,wBAAgB,iBAAiB,CAChC,OAAO,EAAE,IAAI,CAAC,gBAAgB,EAAE,MAAM,CAAC,EACvC,QAAQ,EAAE,MAAM,EAChB,IAAI,EAAE,MAAM,EACZ,cAAc,EAAE,MAAM,EACtB,QAAQ,UAAQ,GACd,WAAW,CAUb"}
 \ No newline at end of file
 diff --git a/audio/decoder.d.ts b/audio/decoder.d.ts
-index 9d4f63f40571c3ac3eb135212b08aa1ceaf2efb5..6164ebce2cc8657eb9277448aee368a15c78c7fe 100644
+index 9d4f63f40571c3ac3eb135212b08aa1ceaf2efb5..9da603183cd75520f01c6ed153fbe120fa480c1b 100644
 --- a/audio/decoder.d.ts
 +++ b/audio/decoder.d.ts
-@@ -3,16 +3,30 @@ import * as Container from "@moq/hang/container";
+@@ -3,16 +3,32 @@ import * as Container from "@moq/hang/container";
  import { Time } from "@moq/net";
  import { type Getter, type Inputs, type Readonlys, Signal } from "@moq/signals";
  import type { Sync } from "../sync";
@@ -37,6 +37,8 @@ index 9d4f63f40571c3ac3eb135212b08aa1ceaf2efb5..6164ebce2cc8657eb9277448aee368a1
 +export interface RenderTarget {
 +    readonly context: Getter<AudioContext | undefined>;
 +    readonly root: Getter<AudioWorkletNode | undefined>;
++    discontinuity(): void;
++    received(timestamp: Time.Milli): void;
 +    attach(options: {
 +        channels: number;
 +        rate: number;
@@ -54,7 +56,7 @@ index 9d4f63f40571c3ac3eb135212b08aa1ceaf2efb5..6164ebce2cc8657eb9277448aee368a1
  };
  type DecoderOutput = {
      context: Signal<AudioContext | undefined>;
-@@ -38,6 +52,7 @@ export declare class Decoder {
+@@ -38,6 +54,7 @@ export declare class Decoder {
      readonly in: Readonlys<DecoderInput>;
      readonly source: Source;
      readonly sync: Sync;
@@ -63,13 +65,13 @@ index 9d4f63f40571c3ac3eb135212b08aa1ceaf2efb5..6164ebce2cc8657eb9277448aee368a1
      constructor(props: DecoderProps);
      reset(): void;
 diff --git a/audio/decoder.d.ts.map b/audio/decoder.d.ts.map
-index 3bd41f0e4085d043043f6ea4fabcc67ce756d13f..d522264226302aa9952c14fcafb6445f161eb662 100644
+index 3bd41f0e4085d043043f6ea4fabcc67ce756d13f..22c27b2045ed72242ad0b17cff01a660480ff5a3 100644
 --- a/audio/decoder.d.ts.map
 +++ b/audio/decoder.d.ts.map
 @@ -1 +1 @@
 -{"version":3,"file":"decoder.d.ts","sourceRoot":"","sources":["../../src/audio/decoder.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,OAAO,MAAM,mBAAmB,CAAC;AAC7C,OAAO,KAAK,SAAS,MAAM,qBAAqB,CAAC;AAGjD,OAAO,EAAE,IAAI,EAAE,MAAM,UAAU,CAAC;AAChC,OAAO,EAGN,KAAK,MAAM,EAEX,KAAK,MAAM,EACX,KAAK,SAAS,EAEd,MAAM,EACN,MAAM,cAAc,CAAC;AAItB,OAAO,KAAK,EAAE,IAAI,EAAE,MAAM,SAAS,CAAC;AAQpC,OAAO,KAAK,EAAE,MAAM,EAAE,MAAM,UAAU,CAAC;AASvC,MAAM,MAAM,YAAY,GAAG;IAE1B,OAAO,EAAE,MAAM,CAAC,OAAO,CAAC,CAAC;CACzB,CAAC;AAEF,kDAAkD;AAClD,MAAM,MAAM,YAAY,GAAG,MAAM,CAAC,YAAY,CAAC,GAAG;IACjD,kDAAkD;IAClD,MAAM,EAAE,MAAM,CAAC;IACf,6BAA6B;IAC7B,IAAI,EAAE,IAAI,CAAC;CACX,CAAC;AAEF,KAAK,aAAa,GAAG;IACpB,OAAO,EAAE,MAAM,CAAC,YAAY,GAAG,SAAS,CAAC,CAAC;IAI1C,IAAI,EAAE,MAAM,CAAC,SAAS,GAAG,SAAS,CAAC,CAAC;IAEpC,UAAU,EAAE,MAAM,CAAC,MAAM,GAAG,SAAS,CAAC,CAAC;IACvC,KAAK,EAAE,MAAM,CAAC,KAAK,GAAG,SAAS,CAAC,CAAC;IAGjC,SAAS,EAAE,MAAM,CAAC,IAAI,CAAC,KAAK,GAAG,SAAS,CAAC,CAAC;IAG1C,OAAO,EAAE,MAAM,CAAC,OAAO,CAAC,CAAC;IAGzB,QAAQ,EAAE,MAAM,CAAC,SAAS,CAAC,cAAc,CAAC,CAAC;CAC3C,CAAC;AAEF,6DAA6D;AAC7D,MAAM,WAAW,KAAK;IACrB,wCAAwC;IACxC,aAAa,EAAE,MAAM,CAAC;CACtB;AAED;;;;GAIG;AACH,qBAAa,OAAO;;IACnB,QAAQ,CAAC,EAAE,EAAE,SAAS,CAAC,YAAY,CAAC,CAAC;IACrC,QAAQ,CAAC,MAAM,EAAE,MAAM,CAAC;IACxB,QAAQ,CAAC,IAAI,EAAE,IAAI,CAAC;IAWpB,QAAQ,CAAC,GAAG,2BAAwB;IA6BpC,YAAY,KAAK,EAAE,YAAY,EAqB9B;IAgeD,KAAK,IAAI,IAAI,CAEZ;IAgBD,KAAK,SAEJ;IAGD,MAAM,CAAC,SAAS,mBAAa;CAC7B;AAED,iBAAe,SAAS,CAAC,MAAM,EAAE,OAAO,CAAC,WAAW,GAAG,OAAO,CAAC,OAAO,CAAC,CAsCtE"}
 \ No newline at end of file
-+{"version":3,"file":"decoder.d.ts","sourceRoot":"","sources":["../../src/audio/decoder.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,OAAO,MAAM,mBAAmB,CAAC;AAC7C,OAAO,KAAK,SAAS,MAAM,qBAAqB,CAAC;AAGjD,OAAO,EAAE,IAAI,EAAE,MAAM,UAAU,CAAC;AAChC,OAAO,EAGN,KAAK,MAAM,EAEX,KAAK,MAAM,EACX,KAAK,SAAS,EAEd,MAAM,EACN,MAAM,cAAc,CAAC;AAItB,OAAO,KAAK,EAAE,IAAI,EAAE,MAAM,SAAS,CAAC;AACpC,OAAO,EAAE,KAAK,WAAW,EAAqB,MAAM,UAAU,CAAC;AAO/D,OAAO,KAAK,EAAE,MAAM,EAAE,MAAM,UAAU,CAAC;AASvC,MAAM,MAAM,YAAY,GAAG;IAE1B,OAAO,EAAE,MAAM,CAAC,OAAO,CAAC,CAAC;CACzB,CAAC;AAEF,kDAAkD;AAClD,4DAA4D;AAC5D,MAAM,WAAW,YAAY;IAC5B,QAAQ,CAAC,OAAO,EAAE,MAAM,CAAC,YAAY,GAAG,SAAS,CAAC,CAAC;IACnD,QAAQ,CAAC,IAAI,EAAE,MAAM,CAAC,gBAAgB,GAAG,SAAS,CAAC,CAAC;IACpD,MAAM,CAAC,OAAO,EAAE;QAAE,QAAQ,EAAE,MAAM,CAAC;QAAC,IAAI,EAAE,MAAM,CAAC;QAAC,cAAc,EAAE,MAAM,CAAC;QAAC,QAAQ,EAAE,OAAO,CAAA;KAAE,GAAG,WAAW,CAAC;CAC5G;AAED,MAAM,MAAM,YAAY,GAAG,MAAM,CAAC,YAAY,CAAC,GAAG;IACjD,kDAAkD;IAClD,MAAM,EAAE,MAAM,CAAC;IACf,6BAA6B;IAC7B,IAAI,EAAE,IAAI,CAAC;IACX,uEAAuE;IACvE,QAAQ,CAAC,EAAE,YAAY,CAAC;CACxB,CAAC;AAEF,KAAK,aAAa,GAAG;IACpB,OAAO,EAAE,MAAM,CAAC,YAAY,GAAG,SAAS,CAAC,CAAC;IAI1C,IAAI,EAAE,MAAM,CAAC,SAAS,GAAG,SAAS,CAAC,CAAC;IAEpC,UAAU,EAAE,MAAM,CAAC,MAAM,GAAG,SAAS,CAAC,CAAC;IACvC,KAAK,EAAE,MAAM,CAAC,KAAK,GAAG,SAAS,CAAC,CAAC;IAGjC,SAAS,EAAE,MAAM,CAAC,IAAI,CAAC,KAAK,GAAG,SAAS,CAAC,CAAC;IAG1C,OAAO,EAAE,MAAM,CAAC,OAAO,CAAC,CAAC;IAGzB,QAAQ,EAAE,MAAM,CAAC,SAAS,CAAC,cAAc,CAAC,CAAC;CAC3C,CAAC;AAEF,6DAA6D;AAC7D,MAAM,WAAW,KAAK;IACrB,wCAAwC;IACxC,aAAa,EAAE,MAAM,CAAC;CACtB;AAED;;;;GAIG;AACH,qBAAa,OAAO;;IACnB,QAAQ,CAAC,EAAE,EAAE,SAAS,CAAC,YAAY,CAAC,CAAC;IACrC,QAAQ,CAAC,MAAM,EAAE,MAAM,CAAC;IACxB,QAAQ,CAAC,IAAI,EAAE,IAAI,CAAC;IACpB,QAAQ,CAAC,QAAQ,EAAE,YAAY,GAAG,SAAS,CAAC;IAW5C,QAAQ,CAAC,GAAG,2BAAwB;IA6BpC,YAAY,KAAK,EAAE,YAAY,EAsB9B;IAueD,KAAK,IAAI,IAAI,CAEZ;IAgBD,KAAK,SAEJ;IAGD,MAAM,CAAC,SAAS,mBAAa;CAC7B;AAED,iBAAe,SAAS,CAAC,MAAM,EAAE,OAAO,CAAC,WAAW,GAAG,OAAO,CAAC,OAAO,CAAC,CAsCtE"}
++{"version":3,"file":"decoder.d.ts","sourceRoot":"","sources":["../../src/audio/decoder.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,OAAO,MAAM,mBAAmB,CAAC;AAC7C,OAAO,KAAK,SAAS,MAAM,qBAAqB,CAAC;AAGjD,OAAO,EAAE,IAAI,EAAE,MAAM,UAAU,CAAC;AAChC,OAAO,EAGN,KAAK,MAAM,EAEX,KAAK,MAAM,EACX,KAAK,SAAS,EAEd,MAAM,EACN,MAAM,cAAc,CAAC;AAItB,OAAO,KAAK,EAAE,IAAI,EAAE,MAAM,SAAS,CAAC;AACpC,OAAO,EAAE,KAAK,WAAW,EAAqB,MAAM,UAAU,CAAC;AAO/D,OAAO,KAAK,EAAE,MAAM,EAAE,MAAM,UAAU,CAAC;AASvC,MAAM,MAAM,YAAY,GAAG;IAE1B,OAAO,EAAE,MAAM,CAAC,OAAO,CAAC,CAAC;CACzB,CAAC;AAEF,kDAAkD;AAClD,4DAA4D;AAC5D,MAAM,WAAW,YAAY;IAC5B,QAAQ,CAAC,OAAO,EAAE,MAAM,CAAC,YAAY,GAAG,SAAS,CAAC,CAAC;IACnD,QAAQ,CAAC,IAAI,EAAE,MAAM,CAAC,gBAAgB,GAAG,SAAS,CAAC,CAAC;IACpD,aAAa,IAAI,IAAI,CAAC;IACtB,QAAQ,CAAC,SAAS,EAAE,IAAI,CAAC,KAAK,GAAG,IAAI,CAAC;IACtC,MAAM,CAAC,OAAO,EAAE;QAAE,QAAQ,EAAE,MAAM,CAAC;QAAC,IAAI,EAAE,MAAM,CAAC;QAAC,cAAc,EAAE,MAAM,CAAC;QAAC,QAAQ,EAAE,OAAO,CAAA;KAAE,GAAG,WAAW,CAAC;CAC5G;AAED,MAAM,MAAM,YAAY,GAAG,MAAM,CAAC,YAAY,CAAC,GAAG;IACjD,kDAAkD;IAClD,MAAM,EAAE,MAAM,CAAC;IACf,6BAA6B;IAC7B,IAAI,EAAE,IAAI,CAAC;IACX,uEAAuE;IACvE,QAAQ,CAAC,EAAE,YAAY,CAAC;CACxB,CAAC;AAEF,KAAK,aAAa,GAAG;IACpB,OAAO,EAAE,MAAM,CAAC,YAAY,GAAG,SAAS,CAAC,CAAC;IAI1C,IAAI,EAAE,MAAM,CAAC,SAAS,GAAG,SAAS,CAAC,CAAC;IAEpC,UAAU,EAAE,MAAM,CAAC,MAAM,GAAG,SAAS,CAAC,CAAC;IACvC,KAAK,EAAE,MAAM,CAAC,KAAK,GAAG,SAAS,CAAC,CAAC;IAGjC,SAAS,EAAE,MAAM,CAAC,IAAI,CAAC,KAAK,GAAG,SAAS,CAAC,CAAC;IAG1C,OAAO,EAAE,MAAM,CAAC,OAAO,CAAC,CAAC;IAGzB,QAAQ,EAAE,MAAM,CAAC,SAAS,CAAC,cAAc,CAAC,CAAC;CAC3C,CAAC;AAEF,6DAA6D;AAC7D,MAAM,WAAW,KAAK;IACrB,wCAAwC;IACxC,aAAa,EAAE,MAAM,CAAC;CACtB;AAED;;;;GAIG;AACH,qBAAa,OAAO;;IACnB,QAAQ,CAAC,EAAE,EAAE,SAAS,CAAC,YAAY,CAAC,CAAC;IACrC,QAAQ,CAAC,MAAM,EAAE,MAAM,CAAC;IACxB,QAAQ,CAAC,IAAI,EAAE,IAAI,CAAC;IACpB,QAAQ,CAAC,QAAQ,EAAE,YAAY,GAAG,SAAS,CAAC;IAW5C,QAAQ,CAAC,GAAG,2BAAwB;IA6BpC,YAAY,KAAK,EAAE,YAAY,EAsB9B;IA4eD,KAAK,IAAI,IAAI,CAEZ;IAiBD,KAAK,SAEJ;IAGD,MAAM,CAAC,SAAS,mBAAa;CAC7B;AAED,iBAAe,SAAS,CAAC,MAAM,EAAE,OAAO,CAAC,WAAW,GAAG,OAAO,CAAC,OAAO,CAAC,CAsCtE"}
 \ No newline at end of file
 diff --git a/audio/index.d.ts b/audio/index.d.ts
 index d4cbd6380d435c028e655162c51745ed14a8d15a..e64a8d7ecdd144a5ddf400392f3d112839305062 100644
@@ -93,10 +95,10 @@ index ac174b65d98f4d769a96975c866db5d90b7cf91d..852fe2fb8f7addacd6b320188b467818
 \ No newline at end of file
 diff --git a/audio/mix-buffer.d.ts b/audio/mix-buffer.d.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..d8c31b20f94eee16fa40cabffbb243197b054f95
+index 0000000000000000000000000000000000000000..5fea349d9f2dc4995eb63827c91526c7c8edf0e2
 --- /dev/null
 +++ b/audio/mix-buffer.d.ts
-@@ -0,0 +1,25 @@
+@@ -0,0 +1,24 @@
 +import { Time } from "@moq/net";
 +/** A timestamp-indexed PCM reader owned by the audio worklet. */
 +export interface MixInput {
@@ -119,17 +121,16 @@ index 0000000000000000000000000000000000000000..d8c31b20f94eee16fa40cabffbb24319
 +    read(output: Float32Array[]): number;
 +    get effectiveLevels(): Record<string, number> | undefined;
 +    remove(name: string): void;
-+    reset(): void;
 +}
 +//# sourceMappingURL=mix-buffer.d.ts.map
 \ No newline at end of file
 diff --git a/audio/mix-buffer.d.ts.map b/audio/mix-buffer.d.ts.map
 new file mode 100644
-index 0000000000000000000000000000000000000000..1f790adcf3e387611269a9be2a2619d2efd3e27c
+index 0000000000000000000000000000000000000000..8ad8feadc76715ccdf67b97bbd9d7695302f617b
 --- /dev/null
 +++ b/audio/mix-buffer.d.ts.map
 @@ -0,0 +1 @@
-+{"version":3,"file":"mix-buffer.d.ts","sourceRoot":"","sources":["../../src/audio/mix-buffer.ts"],"names":[],"mappings":"AAAA,OAAO,EAAE,IAAI,EAAE,MAAM,UAAU,CAAC;AAEhC,iEAAiE;AACjE,MAAM,WAAW,QAAQ;IACxB,QAAQ,CAAC,IAAI,EAAE,MAAM,CAAC;IACtB,QAAQ,CAAC,QAAQ,EAAE,MAAM,CAAC;IAC1B,QAAQ,CAAC,cAAc,EAAE,IAAI,CAAC,KAAK,CAAC;IACpC,WAAW,CAAC,SAAS,EAAE,IAAI,CAAC,KAAK,GAAG,MAAM,CAAC;IAC3C,MAAM,CAAC,MAAM,EAAE,YAAY,EAAE,EAAE,SAAS,EAAE,IAAI,CAAC,KAAK,GAAG,MAAM,CAAC;IAC9D,IAAI,CAAC,MAAM,EAAE,YAAY,EAAE,GAAG,MAAM,CAAC;CACrC;AAED,gGAAgG;AAChG,qBAAa,SAAS;;IACrB,QAAQ,CAAC,MAAM,wBAA+B;IAI9C,qEAAqE;IACrE,IAAI,MAAM,CAAC,KAAK,EAAE,MAAM,CAAC,MAAM,EAAE,MAAM,CAAC,GAAG,SAAS,EAGnD;IACD,IAAI,MAAM,IAAI,MAAM,CAAC,MAAM,EAAE,MAAM,CAAC,GAAG,SAAS,CAE/C;IACD,IAAI,EAAE,MAAM,GAAG,SAAS,GAAG,OAAO,CAAU;IAC5C,SAAS,aAAmB;IAK5B,IAAI,CAAC,MAAM,EAAE,YAAY,EAAE,GAAG,MAAM,CAsDnC;IAED,IAAI,eAAe,IAAI,MAAM,CAAC,MAAM,EAAE,MAAM,CAAC,GAAG,SAAS,CAExD;IAED,MAAM,CAAC,IAAI,EAAE,MAAM,GAAG,IAAI,CAGzB;IAED,KAAK,IAAI,IAAI,CAMZ;CAUD"}
++{"version":3,"file":"mix-buffer.d.ts","sourceRoot":"","sources":["../../src/audio/mix-buffer.ts"],"names":[],"mappings":"AAAA,OAAO,EAAE,IAAI,EAAE,MAAM,UAAU,CAAC;AAEhC,iEAAiE;AACjE,MAAM,WAAW,QAAQ;IACxB,QAAQ,CAAC,IAAI,EAAE,MAAM,CAAC;IACtB,QAAQ,CAAC,QAAQ,EAAE,MAAM,CAAC;IAC1B,QAAQ,CAAC,cAAc,EAAE,IAAI,CAAC,KAAK,CAAC;IACpC,WAAW,CAAC,SAAS,EAAE,IAAI,CAAC,KAAK,GAAG,MAAM,CAAC;IAC3C,MAAM,CAAC,MAAM,EAAE,YAAY,EAAE,EAAE,SAAS,EAAE,IAAI,CAAC,KAAK,GAAG,MAAM,CAAC;IAC9D,IAAI,CAAC,MAAM,EAAE,YAAY,EAAE,GAAG,MAAM,CAAC;CACrC;AAED,gGAAgG;AAChG,qBAAa,SAAS;;IACrB,QAAQ,CAAC,MAAM,wBAA+B;IAI9C,qEAAqE;IACrE,IAAI,MAAM,CAAC,KAAK,EAAE,MAAM,CAAC,MAAM,EAAE,MAAM,CAAC,GAAG,SAAS,EAGnD;IACD,IAAI,MAAM,IAAI,MAAM,CAAC,MAAM,EAAE,MAAM,CAAC,GAAG,SAAS,CAE/C;IACD,IAAI,EAAE,MAAM,GAAG,SAAS,GAAG,OAAO,CAAU;IAC5C,SAAS,aAAmB;IAK5B,IAAI,CAAC,MAAM,EAAE,YAAY,EAAE,GAAG,MAAM,CAsDnC;IAED,IAAI,eAAe,IAAI,MAAM,CAAC,MAAM,EAAE,MAAM,CAAC,GAAG,SAAS,CAExD;IAED,MAAM,CAAC,IAAI,EAAE,MAAM,GAAG,IAAI,CAGzB;CAUD"}
 \ No newline at end of file
 diff --git a/audio/mixer-worklet.d.ts b/audio/mixer-worklet.d.ts
 new file mode 100644
@@ -147,15 +148,15 @@ index 0000000000000000000000000000000000000000..69f7181b3874657d8313f2472348b1c3
 \ No newline at end of file
 diff --git a/audio/mixer-worklet.d.ts.map b/audio/mixer-worklet.d.ts.map
 new file mode 100644
-index 0000000000000000000000000000000000000000..5b62eeb790aad3b016bf03ebc0ec66d95d3f708c
+index 0000000000000000000000000000000000000000..53bead4e2335f183b283df039c135c6f42a850d6
 --- /dev/null
 +++ b/audio/mixer-worklet.d.ts.map
 @@ -0,0 +1 @@
-+{"version":3,"file":"mixer-worklet.d.ts","sourceRoot":"","sources":["../../src/audio/mixer-worklet.ts"],"names":[],"mappings":"AAKA,gFAAgF;AAChF,qBAAa,WAAY,SAAQ,qBAAqB;;IASrD,cAmCC;IAED,OAAO,CAAC,OAAO,EAAE,YAAY,EAAE,EAAE,EAAE,OAAO,EAAE,YAAY,EAAE,EAAE,GAAG,OAAO,CAsCrE;CACD"}
++{"version":3,"file":"mixer-worklet.d.ts","sourceRoot":"","sources":["../../src/audio/mixer-worklet.ts"],"names":[],"mappings":"AAKA,gFAAgF;AAChF,qBAAa,WAAY,SAAQ,qBAAqB;;IASrD,cAkCC;IAED,OAAO,CAAC,OAAO,EAAE,YAAY,EAAE,EAAE,EAAE,OAAO,EAAE,YAAY,EAAE,EAAE,GAAG,OAAO,CAsCrE;CACD"}
 \ No newline at end of file
 diff --git a/audio/mixer.d.ts b/audio/mixer.d.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..197bf865e2be094025a555b0c816fc74638d173d
+index 0000000000000000000000000000000000000000..b05af7f72f40cded2e215722a31f26275050afc0
 --- /dev/null
 +++ b/audio/mixer.d.ts
 @@ -0,0 +1,54 @@
@@ -207,7 +208,7 @@ index 0000000000000000000000000000000000000000..197bf865e2be094025a555b0c816fc74
 +        levels: Signal<Mix | undefined>;
 +    }>;
 +    constructor(props: MixerProps);
-+    /** Re-anchor every input at a content boundary. */
++    /** Replace all input rings together at a content boundary, keeping the context warm. */
 +    reset(): void;
 +    /** Stop audio subscriptions and release the shared renderer. */
 +    close(): void;
@@ -216,11 +217,11 @@ index 0000000000000000000000000000000000000000..197bf865e2be094025a555b0c816fc74
 \ No newline at end of file
 diff --git a/audio/mixer.d.ts.map b/audio/mixer.d.ts.map
 new file mode 100644
-index 0000000000000000000000000000000000000000..883c4158baaa4debcb9039397cd00aebc09c6e1e
+index 0000000000000000000000000000000000000000..a39ce8139a0ed70a0e9a30402d42824ea2d6b462
 --- /dev/null
 +++ b/audio/mixer.d.ts.map
 @@ -0,0 +1 @@
-+{"version":3,"file":"mixer.d.ts","sourceRoot":"","sources":["../../src/audio/mixer.ts"],"names":[],"mappings":"AACA,OAAO,KAAK,KAAK,GAAG,MAAM,UAAU,CAAC;AACrC,OAAO,EAAE,IAAI,EAAE,MAAM,UAAU,CAAC;AAChC,OAAO,EAAU,KAAK,MAAM,EAAU,KAAK,MAAM,EAAa,MAAM,EAAE,MAAM,cAAc,CAAC;AAC3F,OAAO,EAAE,SAAS,EAAE,MAAM,cAAc,CAAC;AACzC,OAAO,KAAK,EAAE,IAAI,EAAE,MAAM,SAAS,CAAC;AAEpC,OAAO,EAAE,OAAO,EAAqB,MAAM,WAAW,CAAC;AAEvD,OAAO,EAAE,MAAM,EAAE,MAAM,UAAU,CAAC;AAElC,mDAAmD;AACnD,MAAM,MAAM,IAAI,GAAG;IAAE,cAAc,EAAE,MAAM,CAAC;IAAC,IAAI,EAAE,GAAG,CAAC,IAAI,CAAC,KAAK,CAAC;IAAC,KAAK,CAAC,EAAE,MAAM,CAAA;CAAE,CAAC;AACpF,+DAA+D;AAC/D,MAAM,MAAM,GAAG,GAAG,MAAM,CAAC,MAAM,EAAE,MAAM,CAAC,CAAC;AACzC,kDAAkD;AAClD,MAAM,MAAM,UAAU,GAAG;IACxB,OAAO,EAAE,MAAM,CAAC,OAAO,CAAC,CAAC;IACzB,KAAK,EAAE,MAAM,CAAC,IAAI,EAAE,GAAG,SAAS,CAAC,CAAC;IAClC,GAAG,EAAE,MAAM,CAAC,GAAG,GAAG,SAAS,CAAC,CAAC;CAC7B,CAAC;AACF,4DAA4D;AAC5D,MAAM,MAAM,UAAU,GAAG,MAAM,CAAC,UAAU,CAAC,GAAG;IAAE,MAAM,EAAE,MAAM,CAAC;IAAC,SAAS,EAAE,SAAS,CAAC;IAAC,IAAI,EAAE,IAAI,CAAA;CAAE,CAAC;AAEnG,6FAA6F;AAC7F,qBAAa,KAAK;;IACjB,QAAQ,CAAC,EAAE;;;;OAAC;IACZ,QAAQ,CAAC,IAAI,EAAE,OAAO,CAAC;IAUvB,QAAQ,CAAC,GAAG;;;;;;2BAJwB,MAAM;;;;OAIN;IAUpC,YAAY,KAAK,EAAE,UAAU,EA+M5B;IA6BD,mDAAmD;IACnD,KAAK,IAAI,IAAI,CAGZ;IACD,gEAAgE;IAChE,KAAK,IAAI,IAAI,CAEZ;CACD"}
++{"version":3,"file":"mixer.d.ts","sourceRoot":"","sources":["../../src/audio/mixer.ts"],"names":[],"mappings":"AACA,OAAO,KAAK,KAAK,GAAG,MAAM,UAAU,CAAC;AACrC,OAAO,EAAE,IAAI,EAAE,MAAM,UAAU,CAAC;AAChC,OAAO,EAAU,KAAK,MAAM,EAAU,KAAK,MAAM,EAAa,MAAM,EAAE,MAAM,cAAc,CAAC;AAC3F,OAAO,EAAE,SAAS,EAAE,MAAM,cAAc,CAAC;AACzC,OAAO,KAAK,EAAE,IAAI,EAAE,MAAM,SAAS,CAAC;AAEpC,OAAO,EAAE,OAAO,EAAqB,MAAM,WAAW,CAAC;AAEvD,OAAO,EAAE,MAAM,EAAE,MAAM,UAAU,CAAC;AAElC,mDAAmD;AACnD,MAAM,MAAM,IAAI,GAAG;IAAE,cAAc,EAAE,MAAM,CAAC;IAAC,IAAI,EAAE,GAAG,CAAC,IAAI,CAAC,KAAK,CAAC;IAAC,KAAK,CAAC,EAAE,MAAM,CAAA;CAAE,CAAC;AACpF,+DAA+D;AAC/D,MAAM,MAAM,GAAG,GAAG,MAAM,CAAC,MAAM,EAAE,MAAM,CAAC,CAAC;AACzC,kDAAkD;AAClD,MAAM,MAAM,UAAU,GAAG;IACxB,OAAO,EAAE,MAAM,CAAC,OAAO,CAAC,CAAC;IACzB,KAAK,EAAE,MAAM,CAAC,IAAI,EAAE,GAAG,SAAS,CAAC,CAAC;IAClC,GAAG,EAAE,MAAM,CAAC,GAAG,GAAG,SAAS,CAAC,CAAC;CAC7B,CAAC;AACF,4DAA4D;AAC5D,MAAM,MAAM,UAAU,GAAG,MAAM,CAAC,UAAU,CAAC,GAAG;IAAE,MAAM,EAAE,MAAM,CAAC;IAAC,SAAS,EAAE,SAAS,CAAC;IAAC,IAAI,EAAE,IAAI,CAAA;CAAE,CAAC;AAEnG,6FAA6F;AAC7F,qBAAa,KAAK;;IACjB,QAAQ,CAAC,EAAE;;;;OAAC;IACZ,QAAQ,CAAC,IAAI,EAAE,OAAO,CAAC;IAUvB,QAAQ,CAAC,GAAG;;;;;;2BAJwB,MAAM;;;;OAIN;IAWpC,YAAY,KAAK,EAAE,UAAU,EAoN5B;IAgCD,wFAAwF;IACxF,KAAK,IAAI,IAAI,CAEZ;IACD,gEAAgE;IAChE,KAAK,IAAI,IAAI,CAEZ;CACD"}
 \ No newline at end of file
 diff --git a/audio/ring-buffer.d.ts b/audio/ring-buffer.d.ts
 index 7c1c6216b05a3d8b188acbda17b4426d84e04256..5f60a356b4fbd2c2c8fb520c93bad3cd6123c05c 100644
@@ -386,7 +387,7 @@ index 8d75856ec7aa3335eefb464d62e284b883c3c992..9eef3a3648f9af72081a5d563baa3a04
 \ No newline at end of file
 +export { w as Audio, o as Broadcast, a as CATALOG_FORMATS, y as Hang, b as Net, h as Player, x as Signals, f as Sync, T as Text, E as Video };
 diff --git a/player-B6mw85kT.js b/player-B6mw85kT.js
-index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04c73776b0 100644
+index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..a920b9ba3cea5f108002c9c1bfabc972d0dbaeba 100644
 --- a/player-B6mw85kT.js
 +++ b/player-B6mw85kT.js
 @@ -6,29 +6,29 @@ import * as u from "@moq/hang/container";
@@ -878,7 +879,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  		this.#i = void 0;
  	}
 -}, xe = new Blob(["Object.assign((value) => value, {\n	zero: 0,\n	fromMicro: (us) => us * 1e3,\n	fromMilli: (ms) => ms * 1e6,\n	fromSecond: (s) => s * 1e9,\n	toMicro: (ns) => ns / 1e3,\n	toMilli: (ns) => ns / 1e6,\n	toSecond: (ns) => ns / 1e9,\n	now: () => performance.now() * 1e6,\n	add: (a, b) => a + b,\n	sub: (a, b) => a - b,\n	mul: (a, b) => a * b,\n	div: (a, b) => a / b,\n	max: (a, b) => Math.max(a, b),\n	min: (a, b) => Math.min(a, b)\n});\n/** Constructors, conversions, and arithmetic for {@link Micro} values. */\nconst Micro = Object.assign((value) => value, {\n	zero: 0,\n	fromNano: (ns) => ns / 1e3,\n	fromMilli: (ms) => ms * 1e3,\n	fromSecond: (s) => s * 1e6,\n	toNano: (us) => us * 1e3,\n	toMilli: (us) => us / 1e3,\n	toSecond: (us) => us / 1e6,\n	now: () => performance.now() * 1e3,\n	add: (a, b) => a + b,\n	sub: (a, b) => a - b,\n	mul: (a, b) => a * b,\n	div: (a, b) => a / b,\n	max: (a, b) => Math.max(a, b),\n	min: (a, b) => Math.min(a, b)\n});\nObject.assign((value) => value, {\n	zero: 0,\n	fromNano: (ns) => ns / 1e6,\n	fromMicro: (us) => us / 1e3,\n	fromSecond: (s) => s * 1e3,\n	toNano: (ms) => ms * 1e6,\n	toMicro: (ms) => ms * 1e3,\n	toSecond: (ms) => ms / 1e3,\n	now: () => performance.now(),\n	add: (a, b) => a + b,\n	sub: (a, b) => a - b,\n	mul: (a, b) => a * b,\n	div: (a, b) => a / b,\n	max: (a, b) => Math.max(a, b),\n	min: (a, b) => Math.min(a, b)\n});\nObject.assign((unitsPerSecond) => {\n	if (!Number.isSafeInteger(unitsPerSecond) || unitsPerSecond <= 0) throw new RangeError(`invalid timescale: ${unitsPerSecond}`);\n	return unitsPerSecond;\n}, {\n	/** One unit per second. */\n	SECOND: 1,\n	/** 1,000 units per second. */\n	MILLI: 1e3,\n	/** 1,000,000 units per second. */\n	MICRO: 1e6,\n	/** 1,000,000,000 units per second. */\n	NANO: 1e9\n});\n/** Constructors, conversions, and arithmetic for {@link Second} values. */\nconst Second = Object.assign((value) => value, {\n	zero: 0,\n	fromNano: (ns) => ns / 1e9,\n	fromMicro: (us) => us / 1e6,\n	fromMilli: (ms) => ms / 1e3,\n	toNano: (s) => s * 1e9,\n	toMicro: (s) => s * 1e6,\n	toMilli: (s) => s * 1e3,\n	now: () => performance.now() / 1e3,\n	add: (a, b) => a + b,\n	sub: (a, b) => a - b,\n	mul: (a, b) => a * b,\n	div: (a, b) => a / b,\n	max: (a, b) => Math.max(a, b),\n	min: (a, b) => Math.min(a, b)\n});\n//#endregion\n//#region src/audio/ring-buffer.ts\nvar AudioRingBuffer = class {\n	#buffer;\n	#writeIndex = 0;\n	#readIndex = 0;\n	rate;\n	channels;\n	#stalled = true;\n	#buffered;\n	#latencySamples;\n	#anchored = false;\n	constructor(props) {\n		if (props.channels <= 0) throw new Error(\"invalid channels\");\n		if (props.rate <= 0) throw new Error(\"invalid sample rate\");\n		if (props.latency <= 0) throw new Error(\"invalid latency\");\n		this.#latencySamples = Math.ceil(props.rate * Second.fromMilli(props.latency));\n		if (this.#latencySamples === 0) throw new Error(\"empty buffer\");\n		this.rate = props.rate;\n		this.channels = props.channels;\n		this.#buffered = props.buffered ?? false;\n		const capacity = this.#capacityFor(this.#latencySamples);\n		this.#buffer = [];\n		for (let i = 0; i < this.channels; i++) this.#buffer[i] = new Float32Array(capacity);\n	}\n	#capacityFor(latencySamples) {\n		return this.#buffered ? latencySamples * 2 : latencySamples;\n	}\n	get stalled() {\n		return this.#stalled;\n	}\n	get timestamp() {\n		return Micro.fromSecond(this.#readIndex / this.rate);\n	}\n	/** Whether an insert has anchored the indices since creation or the last reset. */\n	get anchored() {\n		return this.#anchored;\n	}\n	get length() {\n		return this.#writeIndex - this.#readIndex;\n	}\n	get capacity() {\n		return this.#buffer[0]?.length;\n	}\n	resize(latency) {\n		const latencySamples = Math.ceil(this.rate * Second.fromMilli(latency));\n		if (latencySamples > this.#latencySamples) this.#stalled = true;\n		this.#latencySamples = latencySamples;\n		const newCapacity = this.#capacityFor(this.#latencySamples);\n		if (newCapacity !== this.capacity) this.#reallocate(newCapacity);\n		if (latencySamples > 0 && this.length >= latencySamples) this.#stalled = false;\n	}\n	#reallocate(newCapacity) {\n		if (newCapacity === 0) throw new Error(\"empty buffer\");\n		const newBuffer = [];\n		for (let i = 0; i < this.channels; i++) newBuffer[i] = new Float32Array(newCapacity);\n		const samplesToKeep = Math.min(this.length, newCapacity);\n		if (samplesToKeep > 0) {\n			const copyStart = this.#writeIndex - samplesToKeep;\n			for (let channel = 0; channel < this.channels; channel++) {\n				const src = this.#buffer[channel];\n				const dst = newBuffer[channel];\n				for (let i = 0; i < samplesToKeep; i++) {\n					const srcPos = (copyStart + i) % src.length;\n					const dstPos = (copyStart + i) % dst.length;\n					dst[dstPos] = src[srcPos];\n				}\n			}\n		}\n		this.#buffer = newBuffer;\n		this.#readIndex = this.#writeIndex - samplesToKeep;\n		if (samplesToKeep === 0) this.#stalled = true;\n	}\n	write(timestamp, data) {\n		if (data.length !== this.channels) throw new Error(\"wrong number of channels\");\n		let start = Math.round(Second.fromMicro(timestamp) * this.rate);\n		let samples = data[0].length;\n		if (!this.#anchored) {\n			this.#readIndex = start;\n			this.#writeIndex = start;\n			this.#anchored = true;\n		}\n		let offset = this.#readIndex - start;\n		if (offset > samples) return;\n		else if (offset > 0) {\n			samples -= offset;\n			start += offset;\n		} else offset = 0;\n		const end = start + samples;\n		const overflow = end - this.#readIndex - this.#buffer[0].length;\n		if (overflow >= 0) {\n			this.#stalled = false;\n			this.#readIndex += overflow;\n		}\n		if (start > this.#writeIndex) {\n			const gapSize = Math.min(start - this.#writeIndex, this.#buffer[0].length);\n			if (gapSize === 1) console.warn(\"floating point inaccuracy detected\");\n			for (let channel = 0; channel < this.channels; channel++) {\n				const dst = this.#buffer[channel];\n				for (let i = 0; i < gapSize; i++) {\n					const writePos = (this.#writeIndex + i) % dst.length;\n					dst[writePos] = 0;\n				}\n			}\n		}\n		for (let channel = 0; channel < this.channels; channel++) {\n			let src = data[channel];\n			src = src.subarray(src.length - samples);\n			const dst = this.#buffer[channel];\n			if (src.length !== samples) throw new Error(\"mismatching number of samples\");\n			for (let i = 0; i < samples; i++) {\n				const writePos = (start + i) % dst.length;\n				dst[writePos] = src[i];\n			}\n		}\n		if (end > this.#writeIndex) this.#writeIndex = end;\n		if (this.#buffered && this.length >= this.#latencySamples) this.#stalled = false;\n	}\n	/**\n	* Drop buffered samples at or after `timestamp`, keeping whatever is already due.\n	*\n	* A successor track overwrites the slots its own samples land on, but anything the previous\n	* track wrote beyond them would otherwise still play once the successor runs out.\n	*/\n	truncate(timestamp) {\n		const target = Math.round(Second.fromMicro(timestamp) * this.rate);\n		if (target >= this.#writeIndex) return;\n		this.#writeIndex = Math.max(target, this.#readIndex);\n	}\n	reset() {\n		this.#readIndex = 0;\n		this.#writeIndex = 0;\n		this.#stalled = true;\n		this.#anchored = false;\n	}\n	read(output) {\n		if (output.length !== this.channels) throw new Error(\"wrong number of channels\");\n		if (this.#stalled) return 0;\n		const samples = Math.min(this.#writeIndex - this.#readIndex, output[0].length);\n		if (samples === 0) return 0;\n		for (let channel = 0; channel < this.channels; channel++) {\n			const dst = output[channel];\n			const src = this.#buffer[channel];\n			if (dst.length !== output[0].length) throw new Error(\"mismatching number of samples\");\n			for (let i = 0; i < samples; i++) {\n				const readPos = (this.#readIndex + i) % src.length;\n				dst[i] = src[readPos];\n			}\n		}\n		this.#readIndex += samples;\n		return samples;\n	}\n};\n//#endregion\n//#region src/audio/shared-ring-buffer.ts\nconst WRITE = 0;\nconst LATENCY = 1;\nconst STALLED = 2;\nconst TIMELINE = 3;\nconst CONTROL_SLOTS = 4;\n/**\n* The playhead and its mutation epoch, packed into one 64-bit word: epoch in the high\n* half, read cursor in the low half.\n*\n* They have to move together. The reader samples the ring, copies, and only then publishes, and\n* the writer can rebase the timeline anywhere in between. Checking an epoch and then writing a\n* cursor leaves a window between the two no ordering closes, which is how a stale cursor ends up\n* on a fresh timeline: the playhead lands past WRITE, `read` returns nothing, and `insert` drops\n* everything as too old until WRITE catches up. Packed, the check *is* the write: the reader\n* compare-exchanges the whole word, so a rebase makes its publish fail rather than land.\n*/\nconst CURSOR_MASK = 4294967295n;\nfunction pack(epoch, read) {\n	return BigInt(epoch >>> 0) << 32n | BigInt(read >>> 0);\n}\n/**\n* The mutation epoch. Even while settled, odd while `truncate` retreats WRITE.\n*\n* WRITE lives in a different word, so a retreat cannot move it and the epoch together. Marking\n* the epoch on either side of the retreat is what covers the gap: a reader that snapshotted\n* before the mark finds the word moved and its exchange fails, one that snapshots between the\n* marks sees the odd epoch and renders silence, and one that snapshots after already reads the\n* retreated WRITE. So the writer steps by two on a re-anchor, keeping odd for the retreat alone.\n*/\nfunction epochOf(state) {\n	return Number(state >> 32n) | 0;\n}\n/** Whether a `truncate` is mid-retreat, so WRITE may still describe samples it is dropping. */\nfunction retreating(state) {\n	return (epochOf(state) & 1) !== 0;\n}\n/** The playhead half, back as an i32 so the modular comparisons elsewhere still hold. */\nfunction readOf(state) {\n	return Number(state & CURSOR_MASK) | 0;\n}\n/** Rounds up to a power of two, which is what makes `slot` wrap-invariant. */\nfunction ceilPow2(n) {\n	return n <= 1 ? 1 : 1 << 32 - Math.clz32(n - 1);\n}\n/**\n* Allocate the shared memory for a ring holding at least `capacity` samples per channel.\n*\n* The capacity is rounded up to a power of two so `slot` can mask instead of taking a\n* remainder; read `init.capacity` back rather than assuming the requested value.\n*/\nfunction allocSharedRingBuffer(channels, capacity, rate, buffered = false) {\n	if (channels <= 0) throw new Error(\"invalid channels\");\n	if (capacity <= 0 || capacity > 2 ** 30) throw new Error(\"invalid capacity\");\n	if (rate <= 0) throw new Error(\"invalid sample rate\");\n	capacity = ceilPow2(capacity);\n	const samples = new SharedArrayBuffer(channels * capacity * Float32Array.BYTES_PER_ELEMENT);\n	const control = new SharedArrayBuffer(CONTROL_SLOTS * Int32Array.BYTES_PER_ELEMENT);\n	const state = new SharedArrayBuffer(BigInt64Array.BYTES_PER_ELEMENT);\n	const ctrl = new Int32Array(control);\n	Atomics.store(ctrl, STALLED, 1);\n	return {\n		channels,\n		capacity,\n		rate,\n		samples,\n		control,\n		state,\n		buffered\n	};\n}\n/** Modular i32 max: returns a if a is ahead of b, else b. */\nfunction i32Max(a, b) {\n	return (a - b | 0) > 0 ? a : b;\n}\n/**\n* Maps a sample index to a [0, capacity) array slot.\n*\n* `capacity` is a power of two, so masking is exact for negative indexes and, unlike a\n* remainder, survives the i32 wrap: consecutive indexes stay consecutive slots across\n* 0x7fffffff -> 0x80000000, which is what keeps unread samples from aliasing there.\n*/\nfunction slot(idx, capacity) {\n	return idx & capacity - 1;\n}\nvar SharedRingBuffer = class SharedRingBuffer {\n	channels;\n	capacity;\n	rate;\n	buffered;\n	init;\n	#control;\n	#state;\n	#samples;\n	#anchored = false;\n	#anchor = 0;\n	#position = 0;\n	#lastRead = 0;\n	/**\n	* Wrap the shared memory described by `init`.\n	*\n	* Pass `previous` in the worklet when this ring replaces one already being read. `resize`\n	* snapshots the playhead on the main thread and hands the replacement over by message, so the\n	* reader keeps draining the old ring in the meantime. Carrying its cursor across means those\n	* samples are not played twice.\n	*/\n	constructor(init, previous) {\n		this.channels = init.channels;\n		this.capacity = init.capacity;\n		this.rate = init.rate;\n		this.buffered = init.buffered;\n		this.init = init;\n		this.#control = new Int32Array(init.control);\n		this.#state = new BigInt64Array(init.state);\n		this.#samples = [];\n		for (let i = 0; i < this.channels; i++) this.#samples.push(new Float32Array(init.samples, i * this.capacity * Float32Array.BYTES_PER_ELEMENT, this.capacity));\n		if (previous !== void 0) this.#handoff(previous);\n	}\n	/**\n	* Carry `source`'s playhead across, if the replacement is still the timeline it belongs to.\n	*\n	* Truncation changes the mutation epoch but preserves timeline identity. Sample state before\n	* identity: a re-anchor publishes identity first, then replaces state. Either the identity\n	* check rejects the old cursor, the exchange fails, or the re-anchor overwrites the carried\n	* cursor. A truncate only forces a retry, preserving audio consumed since the resize.\n	*/\n	#handoff(source) {\n		if (source.channels !== this.channels || source.rate !== this.rate) return;\n		const timeline = Atomics.load(source.#control, TIMELINE);\n		const from = Atomics.load(source.#state, 0);\n		for (;;) {\n			const state = Atomics.load(this.#state, 0);\n			if (Atomics.load(this.#control, TIMELINE) !== timeline) return;\n			if ((readOf(from) - readOf(state) | 0) <= 0) return;\n			const next = pack(epochOf(state), readOf(from));\n			if (Atomics.compareExchange(this.#state, 0, state, next) === state) return;\n		}\n	}\n	/**\n	* Move the playhead forward to `candidate`, staying on whatever timeline is current.\n	*\n	* Retries while the word changes under it, and never steps backwards. Used by the writer's\n	* overflow path; the reader publishes with its own exchange so it can tell a rebase apart\n	* from losing a race.\n	*/\n	#advance(candidate) {\n		for (;;) {\n			const state = Atomics.load(this.#state, 0);\n			if ((candidate - readOf(state) | 0) <= 0) return;\n			const next = pack(epochOf(state), candidate);\n			if (Atomics.compareExchange(this.#state, 0, state, next) === state) return;\n		}\n	}\n	/**\n	* Step the epoch by `by`, leaving the playhead wherever the reader has taken it.\n	*\n	* Retries while the word changes under it: only the epoch half is the writer's to move.\n	*/\n	#step(by) {\n		for (;;) {\n			const state = Atomics.load(this.#state, 0);\n			const next = pack(epochOf(state) + by | 0, readOf(state));\n			if (Atomics.compareExchange(this.#state, 0, state, next) === state) return;\n		}\n	}\n	/**\n	* Insert audio samples at the given timestamp.\n	* Main thread only. Handles out-of-order writes, gap filling, and overflow.\n	*/\n	insert(timestamp, data) {\n		if (data.length !== this.channels) throw new Error(\"wrong number of channels\");\n		let start = Math.round(Second.fromMicro(timestamp) * this.rate);\n		const originalLength = data[0].length;\n		let offset = 0;\n		if (!this.#anchored) {\n			this.#anchor = start;\n			const epoch = epochOf(Atomics.load(this.#state, 0));\n			Atomics.add(this.#control, TIMELINE, 1);\n			Atomics.store(this.#state, 0, pack(epoch + 2 | 0, 0));\n			Atomics.store(this.#control, WRITE, 0);\n			this.#anchored = true;\n			this.#position = 0;\n			this.#lastRead = 0;\n		}\n		start = start - this.#anchor | 0;\n		const end = start + originalLength | 0;\n		const read = readOf(Atomics.load(this.#state, 0));\n		const behind = read - start | 0;\n		if (behind > 0) {\n			if (behind >= originalLength) return;\n			offset = behind;\n			start = start + behind | 0;\n		}\n		const samples = originalLength - offset;\n		if ((end - read | 0) > this.capacity) this.#advance(end - this.capacity | 0);\n		const write = Atomics.load(this.#control, WRITE);\n		const gap = start - write | 0;\n		if (gap > 0) {\n			const gapSize = Math.min(gap, this.capacity);\n			for (let channel = 0; channel < this.channels; channel++) {\n				const dst = this.#samples[channel];\n				for (let i = 0; i < gapSize; i++) dst[slot(write + i | 0, this.capacity)] = 0;\n			}\n		}\n		for (let channel = 0; channel < this.channels; channel++) {\n			const src = data[channel];\n			const dst = this.#samples[channel];\n			for (let i = 0; i < samples; i++) dst[slot(start + i | 0, this.capacity)] = src[offset + i];\n		}\n		Atomics.store(this.#control, WRITE, i32Max(Atomics.load(this.#control, WRITE), end));\n		this.#resume();\n	}\n	#resume() {\n		const read = readOf(Atomics.load(this.#state, 0));\n		const write = Atomics.load(this.#control, WRITE);\n		const latency = Atomics.load(this.#control, LATENCY);\n		if ((write - read | 0) >= latency && latency > 0) Atomics.store(this.#control, STALLED, 0);\n	}\n	/**\n	* Read audio samples into the output buffers.\n	* AudioWorklet only. Returns the number of samples read.\n	*/\n	read(output) {\n		const state = Atomics.load(this.#state, 0);\n		if (Atomics.load(this.#control, STALLED) === 1) return 0;\n		if (retreating(state)) return 0;\n		let read = readOf(state);\n		const write = Atomics.load(this.#control, WRITE);\n		const latency = Atomics.load(this.#control, LATENCY);\n		const buffered = write - read | 0;\n		if (!this.buffered && latency > 0 && buffered > latency) {\n			const skipTo = write - latency | 0;\n			if ((skipTo - read | 0) > 0) read = skipTo;\n		}\n		const available = write - read | 0;\n		const count = Math.min(available, output[0].length);\n		if (count <= 0) {\n			if ((read - readOf(state) | 0) > 0) Atomics.compareExchange(this.#state, 0, state, pack(epochOf(state), read));\n			return 0;\n		}\n		for (let channel = 0; channel < this.channels; channel++) {\n			const src = this.#samples[channel];\n			const dst = output[channel];\n			for (let i = 0; i < count; i++) dst[i] = src[slot(read + i | 0, this.capacity)];\n		}\n		const next = pack(epochOf(state), read + count | 0);\n		if (Atomics.compareExchange(this.#state, 0, state, next) !== state) {\n			for (let channel = 0; channel < this.channels; channel++) output[channel].fill(0, 0, count);\n			return 0;\n		}\n		return count;\n	}\n	/**\n	* Update the target latency in samples. Main thread only.\n	*\n	* A deeper floor parks playback until it refills. Video holds the extra delay on its own, so\n	* audio that kept draining at the old depth would run ahead by the difference. Parking keeps\n	* what is buffered, so a rise costs only its own size in silence, and none if the buffer\n	* already covers the new floor.\n	*/\n	setLatency(samples) {\n		const previous = Atomics.exchange(this.#control, LATENCY, samples);\n		if (previous > 0 && samples > previous) {\n			Atomics.store(this.#control, STALLED, 1);\n			this.#step(2);\n		}\n		this.#resume();\n	}\n	/**\n	* Drop buffered samples at or after `timestamp`, keeping whatever is already due.\n	* Main thread only.\n	*\n	* A successor track overwrites the slots its own samples land on, but anything the previous\n	* track wrote beyond them would otherwise still play once the successor runs out.\n	*/\n	truncate(timestamp) {\n		const target = Math.round(Second.fromMicro(timestamp) * this.rate) - this.#anchor | 0;\n		if ((Atomics.load(this.#control, WRITE) - target | 0) <= 0) return;\n		this.#step(1);\n		for (;;) {\n			const write = Atomics.load(this.#control, WRITE);\n			const clamped = i32Max(target, readOf(Atomics.load(this.#state, 0)));\n			if ((write - clamped | 0) <= 0) break;\n			if (Atomics.compareExchange(this.#control, WRITE, write, clamped) === write) break;\n		}\n		this.#step(1);\n	}\n	/**\n	* Flush buffered samples and re-stall, ready to anchor the next utterance (buffered mode).\n	* Main thread only. The worklet reader sees STALLED and stops until the next insert.\n	*/\n	reset() {\n		this.#anchored = false;\n		Atomics.store(this.#control, STALLED, 1);\n		const write = Atomics.load(this.#control, WRITE);\n		const state = Atomics.load(this.#state, 0);\n		Atomics.store(this.#state, 0, pack(epochOf(state), write));\n	}\n	/**\n	* Allocate a new ring with `newCapacity` samples and copy the unread window\n	* [READ, WRITE) plus control state into it. Used when growing capacity so\n	* we don't drop buffered audio. If `newCapacity` is smaller than the unread\n	* span, the oldest samples are truncated.\n	*\n	* Main thread only. `resize()` reads from the source `SharedRingBuffer` and\n	* writes into a freshly allocated buffer from `allocSharedRingBuffer`, so it\n	* relies on the same invariant as `insert()`: no concurrent main-thread\n	* writers. The AudioWorklet reader is tolerated via the CAS discipline used\n	* by READ/WRITE elsewhere.\n	*/\n	resize(newCapacity) {\n		const init = allocSharedRingBuffer(this.channels, newCapacity, this.rate, this.buffered);\n		const dst = new SharedRingBuffer(init);\n		dst.#anchored = this.#anchored;\n		dst.#anchor = this.#anchor;\n		const state = Atomics.load(this.#state, 0);\n		const read = readOf(state);\n		const write = Atomics.load(this.#control, WRITE);\n		const latency = Atomics.load(this.#control, LATENCY);\n		const stalled = Atomics.load(this.#control, STALLED);\n		const available = write - read | 0;\n		const copyCount = Math.max(0, Math.min(available, dst.capacity));\n		const copyStart = write - copyCount | 0;\n		for (let channel = 0; channel < this.channels; channel++) {\n			const src = this.#samples[channel];\n			const out = dst.#samples[channel];\n			for (let i = 0; i < copyCount; i++) {\n				const idx = copyStart + i | 0;\n				out[slot(idx, dst.capacity)] = src[slot(idx, this.capacity)];\n			}\n		}\n		Atomics.store(dst.#control, TIMELINE, Atomics.load(this.#control, TIMELINE));\n		Atomics.store(dst.#state, 0, pack(epochOf(state), copyStart));\n		Atomics.store(dst.#control, WRITE, write);\n		Atomics.store(dst.#control, LATENCY, latency);\n		Atomics.store(dst.#control, STALLED, stalled);\n		dst.#position = this.#foldRead(read) + (copyStart - read | 0);\n		dst.#lastRead = copyStart;\n		return dst;\n	}\n	/**\n	* Fold an observed READ into `#position`, so the returned offset keeps counting up across\n	* the i32 wrap. Idempotent: folding the same value twice adds a zero delta.\n	*/\n	#foldRead(read) {\n		this.#position += read - this.#lastRead | 0;\n		this.#lastRead = read;\n		return this.#position;\n	}\n	/** `#foldRead` against the current READ. */\n	#unwrapRead() {\n		return this.#foldRead(readOf(Atomics.load(this.#state, 0)));\n	}\n	/**\n	* Current playback timestamp derived from READ position.\n	*\n	* Main thread only, and stateful: it advances the unwrapped read position, so it has to be\n	* polled rather than sampled once. See `#position`.\n	*/\n	get timestamp() {\n		return Micro.fromSecond((this.#anchor + this.#unwrapRead()) / this.rate);\n	}\n	/** Whether an insert has anchored the ring since it was created or reset. Main thread only. */\n	get anchored() {\n		return this.#anchored;\n	}\n	/** Whether the buffer is stalled (waiting to fill). */\n	get stalled() {\n		return Atomics.load(this.#control, STALLED) === 1;\n	}\n	/**\n	* Number of buffered samples (WRITE - READ).\n	*\n	* Non-atomic: WRITE and READ are loaded separately, so a concurrent\n	* writer/reader can make the two loads inconsistent. Intended for\n	* tests and diagnostics, not control-flow decisions.\n	*/\n	get length() {\n		return Atomics.load(this.#control, WRITE) - readOf(Atomics.load(this.#state, 0)) | 0;\n	}\n};\n//#endregion\n//#region src/audio/render-worklet.ts\nvar Render = class extends AudioWorkletProcessor {\n	#backend;\n	#underflow = 0;\n	#stateCounter = 0;\n	#epoch = 0;\n	constructor() {\n		super();\n		this.port.onmessage = (event) => {\n			const msg = event.data;\n			if (msg.type === \"init-shared\") {\n				console.log(\"[audio-worklet] init-shared: using SharedArrayBuffer path\");\n				const previous = this.#backend instanceof SharedRingBuffer ? this.#backend : void 0;\n				this.#backend = new SharedRingBuffer(msg, previous);\n				this.#underflow = 0;\n			} else if (msg.type === \"init-post\") {\n				console.log(\"[audio-worklet] init-post: using postMessage path\");\n				this.#backend = new AudioRingBuffer(msg);\n				this.#underflow = 0;\n			} else if (msg.type === \"data\") {\n				if (this.#backend instanceof AudioRingBuffer) this.#backend.write(msg.timestamp, msg.data);\n			} else if (msg.type === \"latency\") {\n				if (this.#backend instanceof AudioRingBuffer) this.#backend.resize(msg.latency);\n			} else if (msg.type === \"truncate\") {\n				if (this.#backend instanceof AudioRingBuffer) this.#backend.truncate(msg.timestamp);\n			} else if (msg.type === \"reset\") {\n				if (this.#backend instanceof AudioRingBuffer) this.#backend.reset();\n				this.#epoch = msg.epoch;\n			}\n		};\n	}\n	process(_inputs, outputs, _parameters) {\n		const output = outputs[0];\n		const backend = this.#backend;\n		const samplesRead = backend?.read(output) ?? 0;\n		if (samplesRead < output[0].length) this.#underflow += output[0].length - samplesRead;\n		else if (this.#underflow > 0 && backend) {\n			console.debug(`audio underflow: ${Math.round(1e3 * this.#underflow / backend.rate)}ms`);\n			this.#underflow = 0;\n		}\n		if (backend instanceof AudioRingBuffer) {\n			this.#stateCounter++;\n			if (this.#stateCounter >= 5) {\n				this.#stateCounter = 0;\n				const state = {\n					type: \"state\",\n					timestamp: backend.timestamp,\n					stalled: backend.stalled,\n					anchored: backend.anchored,\n					epoch: this.#epoch\n				};\n				this.port.postMessage(state);\n			}\n		}\n		return true;\n	}\n};\nregisterProcessor(\"render\", Render);\n//#endregion\n"], { type: "application/javascript" }), Se = URL.createObjectURL(xe), Ce = class {
-+}, be = new Blob(["Object.assign((value) => value, {\n	zero: 0,\n	fromMicro: (us) => us * 1e3,\n	fromMilli: (ms) => ms * 1e6,\n	fromSecond: (s) => s * 1e9,\n	toMicro: (ns) => ns / 1e3,\n	toMilli: (ns) => ns / 1e6,\n	toSecond: (ns) => ns / 1e9,\n	now: () => performance.now() * 1e6,\n	add: (a, b) => a + b,\n	sub: (a, b) => a - b,\n	mul: (a, b) => a * b,\n	div: (a, b) => a / b,\n	max: (a, b) => Math.max(a, b),\n	min: (a, b) => Math.min(a, b)\n});\n/** Constructors, conversions, and arithmetic for {@link Micro} values. */\nconst Micro = Object.assign((value) => value, {\n	zero: 0,\n	fromNano: (ns) => ns / 1e3,\n	fromMilli: (ms) => ms * 1e3,\n	fromSecond: (s) => s * 1e6,\n	toNano: (us) => us * 1e3,\n	toMilli: (us) => us / 1e3,\n	toSecond: (us) => us / 1e6,\n	now: () => performance.now() * 1e3,\n	add: (a, b) => a + b,\n	sub: (a, b) => a - b,\n	mul: (a, b) => a * b,\n	div: (a, b) => a / b,\n	max: (a, b) => Math.max(a, b),\n	min: (a, b) => Math.min(a, b)\n});\nObject.assign((value) => value, {\n	zero: 0,\n	fromNano: (ns) => ns / 1e6,\n	fromMicro: (us) => us / 1e3,\n	fromSecond: (s) => s * 1e3,\n	toNano: (ms) => ms * 1e6,\n	toMicro: (ms) => ms * 1e3,\n	toSecond: (ms) => ms / 1e3,\n	now: () => performance.now(),\n	add: (a, b) => a + b,\n	sub: (a, b) => a - b,\n	mul: (a, b) => a * b,\n	div: (a, b) => a / b,\n	max: (a, b) => Math.max(a, b),\n	min: (a, b) => Math.min(a, b)\n});\nObject.assign((unitsPerSecond) => {\n	if (!Number.isSafeInteger(unitsPerSecond) || unitsPerSecond <= 0) throw new RangeError(`invalid timescale: ${unitsPerSecond}`);\n	return unitsPerSecond;\n}, {\n	/** One unit per second. */\n	SECOND: 1,\n	/** 1,000 units per second. */\n	MILLI: 1e3,\n	/** 1,000,000 units per second. */\n	MICRO: 1e6,\n	/** 1,000,000,000 units per second. */\n	NANO: 1e9\n});\n/** Constructors, conversions, and arithmetic for {@link Second} values. */\nconst Second = Object.assign((value) => value, {\n	zero: 0,\n	fromNano: (ns) => ns / 1e9,\n	fromMicro: (us) => us / 1e6,\n	fromMilli: (ms) => ms / 1e3,\n	toNano: (s) => s * 1e9,\n	toMicro: (s) => s * 1e6,\n	toMilli: (s) => s * 1e3,\n	now: () => performance.now() / 1e3,\n	add: (a, b) => a + b,\n	sub: (a, b) => a - b,\n	mul: (a, b) => a * b,\n	div: (a, b) => a / b,\n	max: (a, b) => Math.max(a, b),\n	min: (a, b) => Math.min(a, b)\n});\n//#endregion\n//#region src/audio/mix-buffer.ts\n/** Mixes additive inputs at one media cursor, with the full mix as an exclusive alternative. */\nvar MixBuffer = class {\n	inputs = /* @__PURE__ */ new Map();\n	#levels;\n	#desired = [[\"main\", 1]];\n	#activeInputs = [[\"main\", 1]];\n	/** Requested stem gains; undefined selects the complete main mix. */\n	set levels(value) {\n		this.#levels = value;\n		this.#desired = value ? Object.entries(value) : [[\"main\", 1]];\n	}\n	get levels() {\n		return this.#levels;\n	}\n	mode = \"main\";\n	timestamp = Micro.zero;\n	#active;\n	#anchored = false;\n	#scratch = /* @__PURE__ */ new Map();\n	read(output) {\n		if (this.levels === void 0 && this.#active === void 0) {\n			const main = this.inputs.get(\"main\");\n			const count = main?.read(output) ?? 0;\n			if (main && count > 0) {\n				this.timestamp = main.mediaTimestamp;\n				this.#anchored = true;\n			}\n			this.mode = \"main\";\n			return count;\n		}\n		if (!this.#anchored) {\n			const main = this.inputs.get(\"main\");\n			if (!main || main.availableAt(main.mediaTimestamp) < output[0].length) return 0;\n			this.timestamp = main.mediaTimestamp;\n			this.#anchored = true;\n		}\n		const desired = this.#desired;\n		if (this.#window(desired, output[0].length, output.length) !== void 0) {\n			this.#active = this.levels;\n			this.#activeInputs = desired;\n			this.mode = this.levels ? \"stems\" : \"main\";\n		} else this.mode = \"loading\";\n		const active = this.#activeInputs;\n		const target = this.#window(active, output[0].length, output.length);\n		if (target === void 0) return 0;\n		const frames = output[0].length;\n		for (const [name, gain] of active) {\n			const input = this.inputs.get(name);\n			if (!input) {\n				if (gain === 0) continue;\n				return 0;\n			}\n			if (gain === 0 && input.availableAt(target) < frames) continue;\n			let scratch = this.#scratch.get(name);\n			if (!scratch || scratch.length !== input.channels || scratch[0].length !== frames) {\n				scratch = Array.from({ length: input.channels }, () => new Float32Array(frames));\n				this.#scratch.set(name, scratch);\n			}\n			if (input.readAt(scratch, target) !== frames) {\n				for (const channel of output) channel.fill(0);\n				return 0;\n			}\n			for (let c = 0; c < output.length; c++) {\n				const source = scratch[Math.min(c, scratch.length - 1)];\n				for (let i = 0; i < frames; i++) output[c][i] += source[i] * gain;\n			}\n		}\n		const first = this.inputs.get(active[0][0]) ?? this.inputs.get(\"main\");\n		if (first) this.timestamp = Micro.add(target, Micro.fromSecond(frames / first.rate));\n		return frames;\n	}\n	get effectiveLevels() {\n		return this.#active;\n	}\n	remove(name) {\n		this.inputs.delete(name);\n		this.#scratch.delete(name);\n	}\n	reset() {\n		this.timestamp = Micro.zero;\n		this.#anchored = false;\n		this.#active = void 0;\n		this.#activeInputs = [[\"main\", 1]];\n		this.mode = \"main\";\n	}\n	#window(levels, frames, channels) {\n		for (const [name, gain] of levels) {\n			if (gain === 0) continue;\n			const input = this.inputs.get(name);\n			if (!input || input.channels > channels || input.availableAt(this.timestamp) < frames) return void 0;\n		}\n		return this.timestamp;\n	}\n};\n//#endregion\n//#region src/audio/ring-buffer.ts\nvar AudioRingBuffer = class {\n	#buffer;\n	#writeIndex = 0;\n	#readIndex = 0;\n	rate;\n	channels;\n	#stalled = true;\n	#buffered;\n	#latencySamples;\n	#anchored = false;\n	constructor(props) {\n		if (props.channels <= 0) throw new Error(\"invalid channels\");\n		if (props.rate <= 0) throw new Error(\"invalid sample rate\");\n		if (props.latency <= 0) throw new Error(\"invalid latency\");\n		this.#latencySamples = Math.ceil(props.rate * Second.fromMilli(props.latency));\n		if (this.#latencySamples === 0) throw new Error(\"empty buffer\");\n		this.rate = props.rate;\n		this.channels = props.channels;\n		this.#buffered = props.buffered ?? false;\n		const capacity = this.#capacityFor(this.#latencySamples);\n		this.#buffer = [];\n		for (let i = 0; i < this.channels; i++) this.#buffer[i] = new Float32Array(capacity);\n	}\n	#capacityFor(latencySamples) {\n		return this.#buffered ? latencySamples * 2 : latencySamples;\n	}\n	get stalled() {\n		return this.#stalled;\n	}\n	get timestamp() {\n		return Micro.fromSecond(this.#readIndex / this.rate);\n	}\n	/** Whether an insert has anchored the indices since creation or the last reset. */\n	get anchored() {\n		return this.#anchored;\n	}\n	get length() {\n		return this.#writeIndex - this.#readIndex;\n	}\n	get capacity() {\n		return this.#buffer[0]?.length;\n	}\n	resize(latency) {\n		const latencySamples = Math.ceil(this.rate * Second.fromMilli(latency));\n		if (latencySamples > this.#latencySamples) this.#stalled = true;\n		this.#latencySamples = latencySamples;\n		const newCapacity = this.#capacityFor(this.#latencySamples);\n		if (newCapacity !== this.capacity) this.#reallocate(newCapacity);\n		if (latencySamples > 0 && this.length >= latencySamples) this.#stalled = false;\n	}\n	#reallocate(newCapacity) {\n		if (newCapacity === 0) throw new Error(\"empty buffer\");\n		const newBuffer = [];\n		for (let i = 0; i < this.channels; i++) newBuffer[i] = new Float32Array(newCapacity);\n		const samplesToKeep = Math.min(this.length, newCapacity);\n		if (samplesToKeep > 0) {\n			const copyStart = this.#writeIndex - samplesToKeep;\n			for (let channel = 0; channel < this.channels; channel++) {\n				const src = this.#buffer[channel];\n				const dst = newBuffer[channel];\n				for (let i = 0; i < samplesToKeep; i++) {\n					const srcPos = (copyStart + i) % src.length;\n					const dstPos = (copyStart + i) % dst.length;\n					dst[dstPos] = src[srcPos];\n				}\n			}\n		}\n		this.#buffer = newBuffer;\n		this.#readIndex = this.#writeIndex - samplesToKeep;\n		if (samplesToKeep === 0) this.#stalled = true;\n	}\n	write(timestamp, data) {\n		if (data.length !== this.channels) throw new Error(\"wrong number of channels\");\n		let start = Math.round(Second.fromMicro(timestamp) * this.rate);\n		let samples = data[0].length;\n		if (!this.#anchored) {\n			this.#readIndex = start;\n			this.#writeIndex = start;\n			this.#anchored = true;\n		}\n		let offset = this.#readIndex - start;\n		if (offset > samples) return;\n		else if (offset > 0) {\n			samples -= offset;\n			start += offset;\n		} else offset = 0;\n		const end = start + samples;\n		const overflow = end - this.#readIndex - this.#buffer[0].length;\n		if (overflow >= 0) {\n			this.#stalled = false;\n			this.#readIndex += overflow;\n		}\n		if (start > this.#writeIndex) {\n			const gapSize = Math.min(start - this.#writeIndex, this.#buffer[0].length);\n			if (gapSize === 1) console.warn(\"floating point inaccuracy detected\");\n			for (let channel = 0; channel < this.channels; channel++) {\n				const dst = this.#buffer[channel];\n				for (let i = 0; i < gapSize; i++) {\n					const writePos = (this.#writeIndex + i) % dst.length;\n					dst[writePos] = 0;\n				}\n			}\n		}\n		for (let channel = 0; channel < this.channels; channel++) {\n			let src = data[channel];\n			src = src.subarray(src.length - samples);\n			const dst = this.#buffer[channel];\n			if (src.length !== samples) throw new Error(\"mismatching number of samples\");\n			for (let i = 0; i < samples; i++) {\n				const writePos = (start + i) % dst.length;\n				dst[writePos] = src[i];\n			}\n		}\n		if (end > this.#writeIndex) this.#writeIndex = end;\n		if (this.#buffered && this.length >= this.#latencySamples) this.#stalled = false;\n	}\n	/**\n	* Drop buffered samples at or after `timestamp`, keeping whatever is already due.\n	*\n	* A successor track overwrites the slots its own samples land on, but anything the previous\n	* track wrote beyond them would otherwise still play once the successor runs out.\n	*/\n	truncate(timestamp) {\n		const target = Math.round(Second.fromMicro(timestamp) * this.rate);\n		if (target >= this.#writeIndex) return;\n		this.#writeIndex = Math.max(target, this.#readIndex);\n	}\n	reset() {\n		this.#readIndex = 0;\n		this.#writeIndex = 0;\n		this.#stalled = true;\n		this.#anchored = false;\n	}\n	/** Samples available at an absolute media position without rewinding the cursor. */\n	availableAt(timestamp) {\n		const start = Math.round(Second.fromMicro(timestamp) * this.rate);\n		if (this.#stalled || !this.#anchored || start < this.#readIndex) return 0;\n		return Math.max(0, this.#writeIndex - start);\n	}\n	/** Read an exact media window, leaving independent buffer-depth skips to the mixer. */\n	readAt(output, timestamp) {\n		if (this.availableAt(timestamp) < output[0].length) return 0;\n		this.#readIndex = Math.round(Second.fromMicro(timestamp) * this.rate);\n		return this.read(output);\n	}\n	get mediaTimestamp() {\n		return this.timestamp;\n	}\n	read(output) {\n		if (output.length !== this.channels) throw new Error(\"wrong number of channels\");\n		if (this.#stalled) return 0;\n		const samples = Math.min(this.#writeIndex - this.#readIndex, output[0].length);\n		if (samples === 0) return 0;\n		for (let channel = 0; channel < this.channels; channel++) {\n			const dst = output[channel];\n			const src = this.#buffer[channel];\n			if (dst.length !== output[0].length) throw new Error(\"mismatching number of samples\");\n			for (let i = 0; i < samples; i++) {\n				const readPos = (this.#readIndex + i) % src.length;\n				dst[i] = src[readPos];\n			}\n		}\n		this.#readIndex += samples;\n		return samples;\n	}\n};\n//#endregion\n//#region src/audio/shared-ring-buffer.ts\nconst WRITE = 0;\nconst LATENCY = 1;\nconst STALLED = 2;\nconst TIMELINE = 3;\nconst CONTROL_SLOTS = 4;\n/**\n* The playhead and its mutation epoch, packed into one 64-bit word: epoch in the high\n* half, read cursor in the low half.\n*\n* They have to move together. The reader samples the ring, copies, and only then publishes, and\n* the writer can rebase the timeline anywhere in between. Checking an epoch and then writing a\n* cursor leaves a window between the two no ordering closes, which is how a stale cursor ends up\n* on a fresh timeline: the playhead lands past WRITE, `read` returns nothing, and `insert` drops\n* everything as too old until WRITE catches up. Packed, the check *is* the write: the reader\n* compare-exchanges the whole word, so a rebase makes its publish fail rather than land.\n*/\nconst CURSOR_MASK = 4294967295n;\nfunction pack(epoch, read) {\n	return BigInt(epoch >>> 0) << 32n | BigInt(read >>> 0);\n}\n/**\n* The mutation epoch. Even while settled, odd while `truncate` retreats WRITE.\n*\n* WRITE lives in a different word, so a retreat cannot move it and the epoch together. Marking\n* the epoch on either side of the retreat is what covers the gap: a reader that snapshotted\n* before the mark finds the word moved and its exchange fails, one that snapshots between the\n* marks sees the odd epoch and renders silence, and one that snapshots after already reads the\n* retreated WRITE. So the writer steps by two on a re-anchor, keeping odd for the retreat alone.\n*/\nfunction epochOf(state) {\n	return Number(state >> 32n) | 0;\n}\n/** Whether a `truncate` is mid-retreat, so WRITE may still describe samples it is dropping. */\nfunction retreating(state) {\n	return (epochOf(state) & 1) !== 0;\n}\n/** The playhead half, back as an i32 so the modular comparisons elsewhere still hold. */\nfunction readOf(state) {\n	return Number(state & CURSOR_MASK) | 0;\n}\n/** Rounds up to a power of two, which is what makes `slot` wrap-invariant. */\nfunction ceilPow2(n) {\n	return n <= 1 ? 1 : 1 << 32 - Math.clz32(n - 1);\n}\n/**\n* Allocate the shared memory for a ring holding at least `capacity` samples per channel.\n*\n* The capacity is rounded up to a power of two so `slot` can mask instead of taking a\n* remainder; read `init.capacity` back rather than assuming the requested value.\n*/\nfunction allocSharedRingBuffer(channels, capacity, rate, buffered = false) {\n	if (channels <= 0) throw new Error(\"invalid channels\");\n	if (capacity <= 0 || capacity > 2 ** 30) throw new Error(\"invalid capacity\");\n	if (rate <= 0) throw new Error(\"invalid sample rate\");\n	capacity = ceilPow2(capacity);\n	const samples = new SharedArrayBuffer(channels * capacity * Float32Array.BYTES_PER_ELEMENT);\n	const control = new SharedArrayBuffer(CONTROL_SLOTS * Int32Array.BYTES_PER_ELEMENT);\n	const state = new SharedArrayBuffer(BigInt64Array.BYTES_PER_ELEMENT);\n	const ctrl = new Int32Array(control);\n	Atomics.store(ctrl, STALLED, 1);\n	return {\n		channels,\n		capacity,\n		rate,\n		samples,\n		control,\n		state,\n		anchor: new SharedArrayBuffer(8),\n		buffered\n	};\n}\n/** Modular i32 max: returns a if a is ahead of b, else b. */\nfunction i32Max(a, b) {\n	return (a - b | 0) > 0 ? a : b;\n}\n/**\n* Maps a sample index to a [0, capacity) array slot.\n*\n* `capacity` is a power of two, so masking is exact for negative indexes and, unlike a\n* remainder, survives the i32 wrap: consecutive indexes stay consecutive slots across\n* 0x7fffffff -> 0x80000000, which is what keeps unread samples from aliasing there.\n*/\nfunction slot(idx, capacity) {\n	return idx & capacity - 1;\n}\nvar SharedRingBuffer = class SharedRingBuffer {\n	channels;\n	capacity;\n	rate;\n	buffered;\n	init;\n	#control;\n	#state;\n	#sharedAnchor;\n	#samples;\n	#anchored = false;\n	#anchor = 0;\n	#position = 0;\n	#lastRead = 0;\n	#observedTimeline;\n	/**\n	* Wrap the shared memory described by `init`.\n	*\n	* Pass `previous` in the worklet when this ring replaces one already being read. `resize`\n	* snapshots the playhead on the main thread and hands the replacement over by message, so the\n	* reader keeps draining the old ring in the meantime. Carrying its cursor across means those\n	* samples are not played twice.\n	*/\n	constructor(init, previous) {\n		this.channels = init.channels;\n		this.capacity = init.capacity;\n		this.rate = init.rate;\n		this.buffered = init.buffered;\n		this.init = init;\n		this.#control = new Int32Array(init.control);\n		this.#state = new BigInt64Array(init.state);\n		this.#sharedAnchor = new BigInt64Array(init.anchor);\n		this.#samples = [];\n		for (let i = 0; i < this.channels; i++) this.#samples.push(new Float32Array(init.samples, i * this.capacity * Float32Array.BYTES_PER_ELEMENT, this.capacity));\n		if (previous !== void 0) this.#handoff(previous);\n	}\n	/**\n	* Carry `source`'s playhead across, if the replacement is still the timeline it belongs to.\n	*\n	* Truncation changes the mutation epoch but preserves timeline identity. Sample state before\n	* identity: a re-anchor publishes identity first, then replaces state. Either the identity\n	* check rejects the old cursor, the exchange fails, or the re-anchor overwrites the carried\n	* cursor. A truncate only forces a retry, preserving audio consumed since the resize.\n	*/\n	#handoff(source) {\n		if (source.channels !== this.channels || source.rate !== this.rate) return;\n		const timeline = Atomics.load(source.#control, TIMELINE);\n		const from = Atomics.load(source.#state, 0);\n		if (Atomics.load(this.#control, TIMELINE) === timeline) {\n			this.#position = source.#foldRead(readOf(from));\n			this.#lastRead = readOf(from);\n			this.#observedTimeline = timeline;\n		}\n		for (;;) {\n			const state = Atomics.load(this.#state, 0);\n			if (Atomics.load(this.#control, TIMELINE) !== timeline) return;\n			if ((readOf(from) - readOf(state) | 0) <= 0) return;\n			const next = pack(epochOf(state), readOf(from));\n			if (Atomics.compareExchange(this.#state, 0, state, next) === state) return;\n		}\n	}\n	/**\n	* Move the playhead forward to `candidate`, staying on whatever timeline is current.\n	*\n	* Retries while the word changes under it, and never steps backwards. Used by the writer's\n	* overflow path; the reader publishes with its own exchange so it can tell a rebase apart\n	* from losing a race.\n	*/\n	#advance(candidate) {\n		for (;;) {\n			const state = Atomics.load(this.#state, 0);\n			if ((candidate - readOf(state) | 0) <= 0) return;\n			const next = pack(epochOf(state), candidate);\n			if (Atomics.compareExchange(this.#state, 0, state, next) === state) return;\n		}\n	}\n	/**\n	* Step the epoch by `by`, leaving the playhead wherever the reader has taken it.\n	*\n	* Retries while the word changes under it: only the epoch half is the writer's to move.\n	*/\n	#step(by) {\n		for (;;) {\n			const state = Atomics.load(this.#state, 0);\n			const next = pack(epochOf(state) + by | 0, readOf(state));\n			if (Atomics.compareExchange(this.#state, 0, state, next) === state) return;\n		}\n	}\n	/**\n	* Insert audio samples at the given timestamp.\n	* Main thread only. Handles out-of-order writes, gap filling, and overflow.\n	*/\n	insert(timestamp, data) {\n		if (data.length !== this.channels) throw new Error(\"wrong number of channels\");\n		let start = Math.round(Second.fromMicro(timestamp) * this.rate);\n		const originalLength = data[0].length;\n		let offset = 0;\n		if (!this.#anchored) {\n			this.#anchor = start;\n			Atomics.store(this.#sharedAnchor, 0, BigInt(start));\n			const epoch = epochOf(Atomics.load(this.#state, 0));\n			Atomics.add(this.#control, TIMELINE, 1);\n			Atomics.store(this.#state, 0, pack(epoch + 2 | 0, 0));\n			Atomics.store(this.#control, WRITE, 0);\n			this.#anchored = true;\n			this.#position = 0;\n			this.#lastRead = 0;\n		}\n		start = start - this.#anchor | 0;\n		const end = start + originalLength | 0;\n		const read = readOf(Atomics.load(this.#state, 0));\n		const behind = read - start | 0;\n		if (behind > 0) {\n			if (behind >= originalLength) return;\n			offset = behind;\n			start = start + behind | 0;\n		}\n		const samples = originalLength - offset;\n		if ((end - read | 0) > this.capacity) this.#advance(end - this.capacity | 0);\n		const write = Atomics.load(this.#control, WRITE);\n		const gap = start - write | 0;\n		if (gap > 0) {\n			const gapSize = Math.min(gap, this.capacity);\n			for (let channel = 0; channel < this.channels; channel++) {\n				const dst = this.#samples[channel];\n				for (let i = 0; i < gapSize; i++) dst[slot(write + i | 0, this.capacity)] = 0;\n			}\n		}\n		for (let channel = 0; channel < this.channels; channel++) {\n			const src = data[channel];\n			const dst = this.#samples[channel];\n			for (let i = 0; i < samples; i++) dst[slot(start + i | 0, this.capacity)] = src[offset + i];\n		}\n		Atomics.store(this.#control, WRITE, i32Max(Atomics.load(this.#control, WRITE), end));\n		this.#resume();\n	}\n	#resume() {\n		const read = readOf(Atomics.load(this.#state, 0));\n		const write = Atomics.load(this.#control, WRITE);\n		const latency = Atomics.load(this.#control, LATENCY);\n		if ((write - read | 0) >= latency && latency > 0) Atomics.store(this.#control, STALLED, 0);\n	}\n	/**\n	* Read audio samples into the output buffers.\n	* AudioWorklet only. Returns the number of samples read.\n	*/\n	read(output, at) {\n		const state = Atomics.load(this.#state, 0);\n		if (Atomics.load(this.#control, STALLED) === 1) return 0;\n		if (retreating(state)) return 0;\n		let read = readOf(state);\n		const write = Atomics.load(this.#control, WRITE);\n		const latency = Atomics.load(this.#control, LATENCY);\n		const buffered = write - read | 0;\n		if (at !== void 0) {\n			const anchor = Number(Atomics.load(this.#sharedAnchor, 0));\n			const target = Math.round(Second.fromMicro(at) * this.rate) - anchor | 0;\n			if ((target - read | 0) < 0 || (write - target | 0) < output[0].length) return 0;\n			if (Atomics.load(this.#control, STALLED) === 1 || Atomics.load(this.#state, 0) !== state) return 0;\n			read = target;\n		} else if (!this.buffered && latency > 0 && buffered > latency) {\n			const skipTo = write - latency | 0;\n			if ((skipTo - read | 0) > 0) read = skipTo;\n		}\n		const available = write - read | 0;\n		const count = Math.min(available, output[0].length);\n		if (count <= 0) {\n			if ((read - readOf(state) | 0) > 0) Atomics.compareExchange(this.#state, 0, state, pack(epochOf(state), read));\n			return 0;\n		}\n		for (let channel = 0; channel < this.channels; channel++) {\n			const src = this.#samples[channel];\n			const dst = output[channel];\n			for (let i = 0; i < count; i++) dst[i] = src[slot(read + i | 0, this.capacity)];\n		}\n		const next = pack(epochOf(state), read + count | 0);\n		if (Atomics.compareExchange(this.#state, 0, state, next) !== state) {\n			for (let channel = 0; channel < this.channels; channel++) output[channel].fill(0, 0, count);\n			return 0;\n		}\n		return count;\n	}\n	/** Samples available at an absolute media position without rewinding the cursor. */\n	availableAt(timestamp) {\n		const state = Atomics.load(this.#state, 0);\n		if (this.stalled || retreating(state)) return 0;\n		const anchor = Number(Atomics.load(this.#sharedAnchor, 0));\n		const start = Math.round(Second.fromMicro(timestamp) * this.rate) - anchor | 0;\n		if ((start - readOf(state) | 0) < 0) return 0;\n		const available = Atomics.load(this.#control, WRITE) - start | 0;\n		return !this.stalled && Atomics.load(this.#state, 0) === state ? Math.max(0, available) : 0;\n	}\n	/** Read an exact media window, retaining the normal reader's epoch checks. */\n	readAt(output, timestamp) {\n		return this.read(output, timestamp);\n	}\n	/** Absolute media cursor, also available to an independently wrapped worklet reader. */\n	get mediaTimestamp() {\n		const timeline = Atomics.load(this.#control, TIMELINE);\n		if (timeline !== this.#observedTimeline) {\n			const read = readOf(Atomics.load(this.#state, 0));\n			this.#position = read >>> 0;\n			this.#lastRead = read;\n			this.#observedTimeline = timeline;\n		}\n		const anchor = Number(Atomics.load(this.#sharedAnchor, 0));\n		return Micro.fromSecond((anchor + this.#unwrapRead()) / this.rate);\n	}\n	/**\n	* Update the target latency in samples. Main thread only.\n	*\n	* A deeper floor parks playback until it refills. Video holds the extra delay on its own, so\n	* audio that kept draining at the old depth would run ahead by the difference. Parking keeps\n	* what is buffered, so a rise costs only its own size in silence, and none if the buffer\n	* already covers the new floor.\n	*/\n	setLatency(samples) {\n		const previous = Atomics.exchange(this.#control, LATENCY, samples);\n		if (previous > 0 && samples > previous) {\n			Atomics.store(this.#control, STALLED, 1);\n			this.#step(2);\n		}\n		this.#resume();\n	}\n	/**\n	* Drop buffered samples at or after `timestamp`, keeping whatever is already due.\n	* Main thread only.\n	*\n	* A successor track overwrites the slots its own samples land on, but anything the previous\n	* track wrote beyond them would otherwise still play once the successor runs out.\n	*/\n	truncate(timestamp) {\n		const target = Math.round(Second.fromMicro(timestamp) * this.rate) - this.#anchor | 0;\n		if ((Atomics.load(this.#control, WRITE) - target | 0) <= 0) return;\n		this.#step(1);\n		for (;;) {\n			const write = Atomics.load(this.#control, WRITE);\n			const clamped = i32Max(target, readOf(Atomics.load(this.#state, 0)));\n			if ((write - clamped | 0) <= 0) break;\n			if (Atomics.compareExchange(this.#control, WRITE, write, clamped) === write) break;\n		}\n		this.#step(1);\n	}\n	/**\n	* Flush buffered samples and re-stall, ready to anchor the next utterance (buffered mode).\n	* Main thread only. The worklet reader sees STALLED and stops until the next insert.\n	*/\n	reset() {\n		this.#anchored = false;\n		Atomics.store(this.#control, STALLED, 1);\n		const write = Atomics.load(this.#control, WRITE);\n		const state = Atomics.load(this.#state, 0);\n		Atomics.store(this.#state, 0, pack(epochOf(state), write));\n	}\n	/**\n	* Allocate a new ring with `newCapacity` samples and copy the unread window\n	* [READ, WRITE) plus control state into it. Used when growing capacity so\n	* we don't drop buffered audio. If `newCapacity` is smaller than the unread\n	* span, the oldest samples are truncated.\n	*\n	* Main thread only. `resize()` reads from the source `SharedRingBuffer` and\n	* writes into a freshly allocated buffer from `allocSharedRingBuffer`, so it\n	* relies on the same invariant as `insert()`: no concurrent main-thread\n	* writers. The AudioWorklet reader is tolerated via the CAS discipline used\n	* by READ/WRITE elsewhere.\n	*/\n	resize(newCapacity) {\n		const init = allocSharedRingBuffer(this.channels, newCapacity, this.rate, this.buffered);\n		const dst = new SharedRingBuffer(init);\n		dst.#anchored = this.#anchored;\n		dst.#anchor = this.#anchor;\n		Atomics.store(dst.#sharedAnchor, 0, BigInt(this.#anchor));\n		const state = Atomics.load(this.#state, 0);\n		const read = readOf(state);\n		const write = Atomics.load(this.#control, WRITE);\n		const latency = Atomics.load(this.#control, LATENCY);\n		const stalled = Atomics.load(this.#control, STALLED);\n		const available = write - read | 0;\n		const copyCount = Math.max(0, Math.min(available, dst.capacity));\n		const copyStart = write - copyCount | 0;\n		for (let channel = 0; channel < this.channels; channel++) {\n			const src = this.#samples[channel];\n			const out = dst.#samples[channel];\n			for (let i = 0; i < copyCount; i++) {\n				const idx = copyStart + i | 0;\n				out[slot(idx, dst.capacity)] = src[slot(idx, this.capacity)];\n			}\n		}\n		Atomics.store(dst.#control, TIMELINE, Atomics.load(this.#control, TIMELINE));\n		Atomics.store(dst.#state, 0, pack(epochOf(state), copyStart));\n		Atomics.store(dst.#control, WRITE, write);\n		Atomics.store(dst.#control, LATENCY, latency);\n		Atomics.store(dst.#control, STALLED, stalled);\n		dst.#position = this.#foldRead(read) + (copyStart - read | 0);\n		dst.#lastRead = copyStart;\n		return dst;\n	}\n	/**\n	* Fold an observed READ into `#position`, so the returned offset keeps counting up across\n	* the i32 wrap. Idempotent: folding the same value twice adds a zero delta.\n	*/\n	#foldRead(read) {\n		this.#position += read - this.#lastRead | 0;\n		this.#lastRead = read;\n		return this.#position;\n	}\n	/** `#foldRead` against the current READ. */\n	#unwrapRead() {\n		return this.#foldRead(readOf(Atomics.load(this.#state, 0)));\n	}\n	/**\n	* Current playback timestamp derived from READ position.\n	*\n	* Main thread only, and stateful: it advances the unwrapped read position, so it has to be\n	* polled rather than sampled once. See `#position`.\n	*/\n	get timestamp() {\n		return Micro.fromSecond((this.#anchor + this.#unwrapRead()) / this.rate);\n	}\n	/** Whether an insert has anchored the ring since it was created or reset. Main thread only. */\n	get anchored() {\n		return this.#anchored;\n	}\n	/** Whether the buffer is stalled (waiting to fill). */\n	get stalled() {\n		return Atomics.load(this.#control, STALLED) === 1;\n	}\n	/**\n	* Number of buffered samples (WRITE - READ).\n	*\n	* Non-atomic: WRITE and READ are loaded separately, so a concurrent\n	* writer/reader can make the two loads inconsistent. Intended for\n	* tests and diagnostics, not control-flow decisions.\n	*/\n	get length() {\n		return Atomics.load(this.#control, WRITE) - readOf(Atomics.load(this.#state, 0)) | 0;\n	}\n};\n//#endregion\n//#region src/audio/mixer-worklet.ts\n/** The shared audio worklet that owns every selected input's playout cursor. */\nvar MixerRender = class extends AudioWorkletProcessor {\n	#mix = new MixBuffer();\n	#inputs = /* @__PURE__ */ new Map();\n	#ticks = 0;\n	#stateFrames = 0;\n	#lastMode;\n	#lastStalled;\n	#lastLevels;\n	constructor() {\n		super();\n		this.port.onmessage = ({ data }) => {\n			if (data.type === \"mix\") this.#mix.levels = data.levels;\n			if (data.type === \"reset-clock\") this.#mix.reset();\n			if (data.type === \"detach\") {\n				if (this.#inputs.get(data.id)?.generation !== data.generation) return;\n				this.#inputs.get(data.id)?.port.close();\n				this.#inputs.delete(data.id);\n				this.#mix.remove(data.id);\n			}\n			if (data.type !== \"attach\") return;\n			const input = {\n				port: data.port,\n				epoch: 0,\n				generation: data.generation\n			};\n			this.#inputs.get(data.id)?.port.close();\n			this.#inputs.set(data.id, input);\n			input.port.onmessage = ({ data: message }) => {\n				const previous = this.#mix.inputs.get(data.id);\n				if (message.type === \"init-shared\") this.#mix.inputs.set(data.id, new SharedRingBuffer(message, previous instanceof SharedRingBuffer ? previous : void 0));\n				else if (message.type === \"init-post\") this.#mix.inputs.set(data.id, new AudioRingBuffer(message));\n				else if (previous instanceof AudioRingBuffer) {\n					if (message.type === \"data\") previous.write(message.timestamp, message.data);\n					else if (message.type === \"latency\") previous.resize(message.latency);\n					else if (message.type === \"truncate\") previous.truncate(message.timestamp);\n					else if (message.type === \"reset\") {\n						previous.reset();\n						input.epoch = message.epoch;\n					}\n				}\n			};\n		};\n	}\n	process(_inputs, outputs) {\n		const output = outputs[0];\n		const read = this.#mix.read(output);\n		if (++this.#ticks % 5 === 0) for (const [id, input] of this.#inputs) {\n			const ring = this.#mix.inputs.get(id);\n			if (!(ring instanceof AudioRingBuffer)) continue;\n			const state = {\n				type: \"state\",\n				timestamp: ring.timestamp,\n				stalled: ring.stalled,\n				anchored: ring.anchored,\n				epoch: input.epoch\n			};\n			input.port.postMessage(state);\n		}\n		const stalled = read < output[0].length;\n		this.#stateFrames += output[0].length;\n		if (this.#stateFrames >= sampleRate / 20 || this.#mix.mode !== this.#lastMode || stalled !== this.#lastStalled || this.#mix.effectiveLevels !== this.#lastLevels) {\n			this.#stateFrames = 0;\n			this.#lastMode = this.#mix.mode;\n			this.#lastStalled = stalled;\n			this.#lastLevels = this.#mix.effectiveLevels;\n			this.port.postMessage({\n				type: \"mix-state\",\n				mode: this.#mix.mode,\n				levels: this.#mix.effectiveLevels,\n				timestamp: this.#mix.timestamp,\n				stalled\n			});\n		}\n		return true;\n	}\n};\n//#endregion\n//#region src/audio/render-worklet.ts\nvar Render = class extends AudioWorkletProcessor {\n	#backend;\n	#underflow = 0;\n	#stateCounter = 0;\n	#epoch = 0;\n	constructor() {\n		super();\n		this.port.onmessage = (event) => {\n			const msg = event.data;\n			if (msg.type === \"init-shared\") {\n				console.log(\"[audio-worklet] init-shared: using SharedArrayBuffer path\");\n				const previous = this.#backend instanceof SharedRingBuffer ? this.#backend : void 0;\n				this.#backend = new SharedRingBuffer(msg, previous);\n				this.#underflow = 0;\n			} else if (msg.type === \"init-post\") {\n				console.log(\"[audio-worklet] init-post: using postMessage path\");\n				this.#backend = new AudioRingBuffer(msg);\n				this.#underflow = 0;\n			} else if (msg.type === \"data\") {\n				if (this.#backend instanceof AudioRingBuffer) this.#backend.write(msg.timestamp, msg.data);\n			} else if (msg.type === \"latency\") {\n				if (this.#backend instanceof AudioRingBuffer) this.#backend.resize(msg.latency);\n			} else if (msg.type === \"truncate\") {\n				if (this.#backend instanceof AudioRingBuffer) this.#backend.truncate(msg.timestamp);\n			} else if (msg.type === \"reset\") {\n				if (this.#backend instanceof AudioRingBuffer) this.#backend.reset();\n				this.#epoch = msg.epoch;\n			}\n		};\n	}\n	process(_inputs, outputs, _parameters) {\n		const output = outputs[0];\n		const backend = this.#backend;\n		const samplesRead = backend?.read(output) ?? 0;\n		if (samplesRead < output[0].length) this.#underflow += output[0].length - samplesRead;\n		else if (this.#underflow > 0 && backend) {\n			console.debug(`audio underflow: ${Math.round(1e3 * this.#underflow / backend.rate)}ms`);\n			this.#underflow = 0;\n		}\n		if (backend instanceof AudioRingBuffer) {\n			this.#stateCounter++;\n			if (this.#stateCounter >= 5) {\n				this.#stateCounter = 0;\n				const state = {\n					type: \"state\",\n					timestamp: backend.timestamp,\n					stalled: backend.stalled,\n					anchored: backend.anchored,\n					epoch: this.#epoch\n				};\n				this.port.postMessage(state);\n			}\n		}\n		return true;\n	}\n};\nregisterProcessor(\"render\", Render);\nregisterProcessor(\"mixer\", MixerRender);\n//#endregion\n"], { type: "application/javascript" }), F = URL.createObjectURL(be), xe = class {
++}, be = new Blob(["Object.assign((value) => value, {\n	zero: 0,\n	fromMicro: (us) => us * 1e3,\n	fromMilli: (ms) => ms * 1e6,\n	fromSecond: (s) => s * 1e9,\n	toMicro: (ns) => ns / 1e3,\n	toMilli: (ns) => ns / 1e6,\n	toSecond: (ns) => ns / 1e9,\n	now: () => performance.now() * 1e6,\n	add: (a, b) => a + b,\n	sub: (a, b) => a - b,\n	mul: (a, b) => a * b,\n	div: (a, b) => a / b,\n	max: (a, b) => Math.max(a, b),\n	min: (a, b) => Math.min(a, b)\n});\n/** Constructors, conversions, and arithmetic for {@link Micro} values. */\nconst Micro = Object.assign((value) => value, {\n	zero: 0,\n	fromNano: (ns) => ns / 1e3,\n	fromMilli: (ms) => ms * 1e3,\n	fromSecond: (s) => s * 1e6,\n	toNano: (us) => us * 1e3,\n	toMilli: (us) => us / 1e3,\n	toSecond: (us) => us / 1e6,\n	now: () => performance.now() * 1e3,\n	add: (a, b) => a + b,\n	sub: (a, b) => a - b,\n	mul: (a, b) => a * b,\n	div: (a, b) => a / b,\n	max: (a, b) => Math.max(a, b),\n	min: (a, b) => Math.min(a, b)\n});\nObject.assign((value) => value, {\n	zero: 0,\n	fromNano: (ns) => ns / 1e6,\n	fromMicro: (us) => us / 1e3,\n	fromSecond: (s) => s * 1e3,\n	toNano: (ms) => ms * 1e6,\n	toMicro: (ms) => ms * 1e3,\n	toSecond: (ms) => ms / 1e3,\n	now: () => performance.now(),\n	add: (a, b) => a + b,\n	sub: (a, b) => a - b,\n	mul: (a, b) => a * b,\n	div: (a, b) => a / b,\n	max: (a, b) => Math.max(a, b),\n	min: (a, b) => Math.min(a, b)\n});\nObject.assign((unitsPerSecond) => {\n	if (!Number.isSafeInteger(unitsPerSecond) || unitsPerSecond <= 0) throw new RangeError(`invalid timescale: ${unitsPerSecond}`);\n	return unitsPerSecond;\n}, {\n	/** One unit per second. */\n	SECOND: 1,\n	/** 1,000 units per second. */\n	MILLI: 1e3,\n	/** 1,000,000 units per second. */\n	MICRO: 1e6,\n	/** 1,000,000,000 units per second. */\n	NANO: 1e9\n});\n/** Constructors, conversions, and arithmetic for {@link Second} values. */\nconst Second = Object.assign((value) => value, {\n	zero: 0,\n	fromNano: (ns) => ns / 1e9,\n	fromMicro: (us) => us / 1e6,\n	fromMilli: (ms) => ms / 1e3,\n	toNano: (s) => s * 1e9,\n	toMicro: (s) => s * 1e6,\n	toMilli: (s) => s * 1e3,\n	now: () => performance.now() / 1e3,\n	add: (a, b) => a + b,\n	sub: (a, b) => a - b,\n	mul: (a, b) => a * b,\n	div: (a, b) => a / b,\n	max: (a, b) => Math.max(a, b),\n	min: (a, b) => Math.min(a, b)\n});\n//#endregion\n//#region src/audio/mix-buffer.ts\n/** Mixes additive inputs at one media cursor, with the full mix as an exclusive alternative. */\nvar MixBuffer = class {\n	inputs = /* @__PURE__ */ new Map();\n	#levels;\n	#desired = [[\"main\", 1]];\n	#activeInputs = [[\"main\", 1]];\n	/** Requested stem gains; undefined selects the complete main mix. */\n	set levels(value) {\n		this.#levels = value;\n		this.#desired = value ? Object.entries(value) : [[\"main\", 1]];\n	}\n	get levels() {\n		return this.#levels;\n	}\n	mode = \"main\";\n	timestamp = Micro.zero;\n	#active;\n	#anchored = false;\n	#scratch = /* @__PURE__ */ new Map();\n	read(output) {\n		if (this.levels === void 0 && this.#active === void 0) {\n			const main = this.inputs.get(\"main\");\n			const count = main?.read(output) ?? 0;\n			if (main && count > 0) {\n				this.timestamp = main.mediaTimestamp;\n				this.#anchored = true;\n			}\n			this.mode = \"main\";\n			return count;\n		}\n		if (!this.#anchored) {\n			const main = this.inputs.get(\"main\");\n			if (!main || main.availableAt(main.mediaTimestamp) < output[0].length) return 0;\n			this.timestamp = main.mediaTimestamp;\n			this.#anchored = true;\n		}\n		const desired = this.#desired;\n		if (this.#window(desired, output[0].length, output.length) !== void 0) {\n			this.#active = this.levels;\n			this.#activeInputs = desired;\n			this.mode = this.levels ? \"stems\" : \"main\";\n		} else this.mode = \"loading\";\n		const active = this.#activeInputs;\n		const target = this.#window(active, output[0].length, output.length);\n		if (target === void 0) return 0;\n		const frames = output[0].length;\n		for (const [name, gain] of active) {\n			const input = this.inputs.get(name);\n			if (!input) {\n				if (gain === 0) continue;\n				return 0;\n			}\n			if (gain === 0 && input.availableAt(target) < frames) continue;\n			let scratch = this.#scratch.get(name);\n			if (!scratch || scratch.length !== input.channels || scratch[0].length !== frames) {\n				scratch = Array.from({ length: input.channels }, () => new Float32Array(frames));\n				this.#scratch.set(name, scratch);\n			}\n			if (input.readAt(scratch, target) !== frames) {\n				for (const channel of output) channel.fill(0);\n				return 0;\n			}\n			for (let c = 0; c < output.length; c++) {\n				const source = scratch[Math.min(c, scratch.length - 1)];\n				for (let i = 0; i < frames; i++) output[c][i] += source[i] * gain;\n			}\n		}\n		const first = this.inputs.get(active[0][0]) ?? this.inputs.get(\"main\");\n		if (first) this.timestamp = Micro.add(target, Micro.fromSecond(frames / first.rate));\n		return frames;\n	}\n	get effectiveLevels() {\n		return this.#active;\n	}\n	remove(name) {\n		this.inputs.delete(name);\n		this.#scratch.delete(name);\n	}\n	#window(levels, frames, channels) {\n		for (const [name, gain] of levels) {\n			if (gain === 0) continue;\n			const input = this.inputs.get(name);\n			if (!input || input.channels > channels || input.availableAt(this.timestamp) < frames) return void 0;\n		}\n		return this.timestamp;\n	}\n};\n//#endregion\n//#region src/audio/ring-buffer.ts\nvar AudioRingBuffer = class {\n	#buffer;\n	#writeIndex = 0;\n	#readIndex = 0;\n	rate;\n	channels;\n	#stalled = true;\n	#buffered;\n	#latencySamples;\n	#anchored = false;\n	constructor(props) {\n		if (props.channels <= 0) throw new Error(\"invalid channels\");\n		if (props.rate <= 0) throw new Error(\"invalid sample rate\");\n		if (props.latency <= 0) throw new Error(\"invalid latency\");\n		this.#latencySamples = Math.ceil(props.rate * Second.fromMilli(props.latency));\n		if (this.#latencySamples === 0) throw new Error(\"empty buffer\");\n		this.rate = props.rate;\n		this.channels = props.channels;\n		this.#buffered = props.buffered ?? false;\n		const capacity = this.#capacityFor(this.#latencySamples);\n		this.#buffer = [];\n		for (let i = 0; i < this.channels; i++) this.#buffer[i] = new Float32Array(capacity);\n	}\n	#capacityFor(latencySamples) {\n		return this.#buffered ? latencySamples * 2 : latencySamples;\n	}\n	get stalled() {\n		return this.#stalled;\n	}\n	get timestamp() {\n		return Micro.fromSecond(this.#readIndex / this.rate);\n	}\n	/** Whether an insert has anchored the indices since creation or the last reset. */\n	get anchored() {\n		return this.#anchored;\n	}\n	get length() {\n		return this.#writeIndex - this.#readIndex;\n	}\n	get capacity() {\n		return this.#buffer[0]?.length;\n	}\n	resize(latency) {\n		const latencySamples = Math.ceil(this.rate * Second.fromMilli(latency));\n		if (latencySamples > this.#latencySamples) this.#stalled = true;\n		this.#latencySamples = latencySamples;\n		const newCapacity = this.#capacityFor(this.#latencySamples);\n		if (newCapacity !== this.capacity) this.#reallocate(newCapacity);\n		if (latencySamples > 0 && this.length >= latencySamples) this.#stalled = false;\n	}\n	#reallocate(newCapacity) {\n		if (newCapacity === 0) throw new Error(\"empty buffer\");\n		const newBuffer = [];\n		for (let i = 0; i < this.channels; i++) newBuffer[i] = new Float32Array(newCapacity);\n		const samplesToKeep = Math.min(this.length, newCapacity);\n		if (samplesToKeep > 0) {\n			const copyStart = this.#writeIndex - samplesToKeep;\n			for (let channel = 0; channel < this.channels; channel++) {\n				const src = this.#buffer[channel];\n				const dst = newBuffer[channel];\n				for (let i = 0; i < samplesToKeep; i++) {\n					const srcPos = (copyStart + i) % src.length;\n					const dstPos = (copyStart + i) % dst.length;\n					dst[dstPos] = src[srcPos];\n				}\n			}\n		}\n		this.#buffer = newBuffer;\n		this.#readIndex = this.#writeIndex - samplesToKeep;\n		if (samplesToKeep === 0) this.#stalled = true;\n	}\n	write(timestamp, data) {\n		if (data.length !== this.channels) throw new Error(\"wrong number of channels\");\n		let start = Math.round(Second.fromMicro(timestamp) * this.rate);\n		let samples = data[0].length;\n		if (!this.#anchored) {\n			this.#readIndex = start;\n			this.#writeIndex = start;\n			this.#anchored = true;\n		}\n		let offset = this.#readIndex - start;\n		if (offset > samples) return;\n		else if (offset > 0) {\n			samples -= offset;\n			start += offset;\n		} else offset = 0;\n		const end = start + samples;\n		const overflow = end - this.#readIndex - this.#buffer[0].length;\n		if (overflow >= 0) {\n			this.#stalled = false;\n			this.#readIndex += overflow;\n		}\n		if (start > this.#writeIndex) {\n			const gapSize = Math.min(start - this.#writeIndex, this.#buffer[0].length);\n			if (gapSize === 1) console.warn(\"floating point inaccuracy detected\");\n			for (let channel = 0; channel < this.channels; channel++) {\n				const dst = this.#buffer[channel];\n				for (let i = 0; i < gapSize; i++) {\n					const writePos = (this.#writeIndex + i) % dst.length;\n					dst[writePos] = 0;\n				}\n			}\n		}\n		for (let channel = 0; channel < this.channels; channel++) {\n			let src = data[channel];\n			src = src.subarray(src.length - samples);\n			const dst = this.#buffer[channel];\n			if (src.length !== samples) throw new Error(\"mismatching number of samples\");\n			for (let i = 0; i < samples; i++) {\n				const writePos = (start + i) % dst.length;\n				dst[writePos] = src[i];\n			}\n		}\n		if (end > this.#writeIndex) this.#writeIndex = end;\n		if (this.#buffered && this.length >= this.#latencySamples) this.#stalled = false;\n	}\n	/**\n	* Drop buffered samples at or after `timestamp`, keeping whatever is already due.\n	*\n	* A successor track overwrites the slots its own samples land on, but anything the previous\n	* track wrote beyond them would otherwise still play once the successor runs out.\n	*/\n	truncate(timestamp) {\n		const target = Math.round(Second.fromMicro(timestamp) * this.rate);\n		if (target >= this.#writeIndex) return;\n		this.#writeIndex = Math.max(target, this.#readIndex);\n	}\n	reset() {\n		this.#readIndex = 0;\n		this.#writeIndex = 0;\n		this.#stalled = true;\n		this.#anchored = false;\n	}\n	/** Samples available at an absolute media position without rewinding the cursor. */\n	availableAt(timestamp) {\n		const start = Math.round(Second.fromMicro(timestamp) * this.rate);\n		if (this.#stalled || !this.#anchored || start < this.#readIndex) return 0;\n		return Math.max(0, this.#writeIndex - start);\n	}\n	/** Read an exact media window, leaving independent buffer-depth skips to the mixer. */\n	readAt(output, timestamp) {\n		if (this.availableAt(timestamp) < output[0].length) return 0;\n		this.#readIndex = Math.round(Second.fromMicro(timestamp) * this.rate);\n		return this.read(output);\n	}\n	get mediaTimestamp() {\n		return this.timestamp;\n	}\n	read(output) {\n		if (output.length !== this.channels) throw new Error(\"wrong number of channels\");\n		if (this.#stalled) return 0;\n		const samples = Math.min(this.#writeIndex - this.#readIndex, output[0].length);\n		if (samples === 0) return 0;\n		for (let channel = 0; channel < this.channels; channel++) {\n			const dst = output[channel];\n			const src = this.#buffer[channel];\n			if (dst.length !== output[0].length) throw new Error(\"mismatching number of samples\");\n			for (let i = 0; i < samples; i++) {\n				const readPos = (this.#readIndex + i) % src.length;\n				dst[i] = src[readPos];\n			}\n		}\n		this.#readIndex += samples;\n		return samples;\n	}\n};\n//#endregion\n//#region src/audio/shared-ring-buffer.ts\nconst WRITE = 0;\nconst LATENCY = 1;\nconst STALLED = 2;\nconst TIMELINE = 3;\nconst CONTROL_SLOTS = 4;\n/**\n* The playhead and its mutation epoch, packed into one 64-bit word: epoch in the high\n* half, read cursor in the low half.\n*\n* They have to move together. The reader samples the ring, copies, and only then publishes, and\n* the writer can rebase the timeline anywhere in between. Checking an epoch and then writing a\n* cursor leaves a window between the two no ordering closes, which is how a stale cursor ends up\n* on a fresh timeline: the playhead lands past WRITE, `read` returns nothing, and `insert` drops\n* everything as too old until WRITE catches up. Packed, the check *is* the write: the reader\n* compare-exchanges the whole word, so a rebase makes its publish fail rather than land.\n*/\nconst CURSOR_MASK = 4294967295n;\nfunction pack(epoch, read) {\n	return BigInt(epoch >>> 0) << 32n | BigInt(read >>> 0);\n}\n/**\n* The mutation epoch. Even while settled, odd while `truncate` retreats WRITE.\n*\n* WRITE lives in a different word, so a retreat cannot move it and the epoch together. Marking\n* the epoch on either side of the retreat is what covers the gap: a reader that snapshotted\n* before the mark finds the word moved and its exchange fails, one that snapshots between the\n* marks sees the odd epoch and renders silence, and one that snapshots after already reads the\n* retreated WRITE. So the writer steps by two on a re-anchor, keeping odd for the retreat alone.\n*/\nfunction epochOf(state) {\n	return Number(state >> 32n) | 0;\n}\n/** Whether a `truncate` is mid-retreat, so WRITE may still describe samples it is dropping. */\nfunction retreating(state) {\n	return (epochOf(state) & 1) !== 0;\n}\n/** The playhead half, back as an i32 so the modular comparisons elsewhere still hold. */\nfunction readOf(state) {\n	return Number(state & CURSOR_MASK) | 0;\n}\n/** Rounds up to a power of two, which is what makes `slot` wrap-invariant. */\nfunction ceilPow2(n) {\n	return n <= 1 ? 1 : 1 << 32 - Math.clz32(n - 1);\n}\n/**\n* Allocate the shared memory for a ring holding at least `capacity` samples per channel.\n*\n* The capacity is rounded up to a power of two so `slot` can mask instead of taking a\n* remainder; read `init.capacity` back rather than assuming the requested value.\n*/\nfunction allocSharedRingBuffer(channels, capacity, rate, buffered = false) {\n	if (channels <= 0) throw new Error(\"invalid channels\");\n	if (capacity <= 0 || capacity > 2 ** 30) throw new Error(\"invalid capacity\");\n	if (rate <= 0) throw new Error(\"invalid sample rate\");\n	capacity = ceilPow2(capacity);\n	const samples = new SharedArrayBuffer(channels * capacity * Float32Array.BYTES_PER_ELEMENT);\n	const control = new SharedArrayBuffer(CONTROL_SLOTS * Int32Array.BYTES_PER_ELEMENT);\n	const state = new SharedArrayBuffer(BigInt64Array.BYTES_PER_ELEMENT);\n	const ctrl = new Int32Array(control);\n	Atomics.store(ctrl, STALLED, 1);\n	return {\n		channels,\n		capacity,\n		rate,\n		samples,\n		control,\n		state,\n		anchor: new SharedArrayBuffer(8),\n		buffered\n	};\n}\n/** Modular i32 max: returns a if a is ahead of b, else b. */\nfunction i32Max(a, b) {\n	return (a - b | 0) > 0 ? a : b;\n}\n/**\n* Maps a sample index to a [0, capacity) array slot.\n*\n* `capacity` is a power of two, so masking is exact for negative indexes and, unlike a\n* remainder, survives the i32 wrap: consecutive indexes stay consecutive slots across\n* 0x7fffffff -> 0x80000000, which is what keeps unread samples from aliasing there.\n*/\nfunction slot(idx, capacity) {\n	return idx & capacity - 1;\n}\nvar SharedRingBuffer = class SharedRingBuffer {\n	channels;\n	capacity;\n	rate;\n	buffered;\n	init;\n	#control;\n	#state;\n	#sharedAnchor;\n	#samples;\n	#anchored = false;\n	#anchor = 0;\n	#position = 0;\n	#lastRead = 0;\n	#observedTimeline;\n	/**\n	* Wrap the shared memory described by `init`.\n	*\n	* Pass `previous` in the worklet when this ring replaces one already being read. `resize`\n	* snapshots the playhead on the main thread and hands the replacement over by message, so the\n	* reader keeps draining the old ring in the meantime. Carrying its cursor across means those\n	* samples are not played twice.\n	*/\n	constructor(init, previous) {\n		this.channels = init.channels;\n		this.capacity = init.capacity;\n		this.rate = init.rate;\n		this.buffered = init.buffered;\n		this.init = init;\n		this.#control = new Int32Array(init.control);\n		this.#state = new BigInt64Array(init.state);\n		this.#sharedAnchor = new BigInt64Array(init.anchor);\n		this.#samples = [];\n		for (let i = 0; i < this.channels; i++) this.#samples.push(new Float32Array(init.samples, i * this.capacity * Float32Array.BYTES_PER_ELEMENT, this.capacity));\n		if (previous !== void 0) this.#handoff(previous);\n	}\n	/**\n	* Carry `source`'s playhead across, if the replacement is still the timeline it belongs to.\n	*\n	* Truncation changes the mutation epoch but preserves timeline identity. Sample state before\n	* identity: a re-anchor publishes identity first, then replaces state. Either the identity\n	* check rejects the old cursor, the exchange fails, or the re-anchor overwrites the carried\n	* cursor. A truncate only forces a retry, preserving audio consumed since the resize.\n	*/\n	#handoff(source) {\n		if (source.channels !== this.channels || source.rate !== this.rate) return;\n		const timeline = Atomics.load(source.#control, TIMELINE);\n		const from = Atomics.load(source.#state, 0);\n		if (Atomics.load(this.#control, TIMELINE) === timeline) {\n			this.#position = source.#foldRead(readOf(from));\n			this.#lastRead = readOf(from);\n			this.#observedTimeline = timeline;\n		}\n		for (;;) {\n			const state = Atomics.load(this.#state, 0);\n			if (Atomics.load(this.#control, TIMELINE) !== timeline) return;\n			if ((readOf(from) - readOf(state) | 0) <= 0) return;\n			const next = pack(epochOf(state), readOf(from));\n			if (Atomics.compareExchange(this.#state, 0, state, next) === state) return;\n		}\n	}\n	/**\n	* Move the playhead forward to `candidate`, staying on whatever timeline is current.\n	*\n	* Retries while the word changes under it, and never steps backwards. Used by the writer's\n	* overflow path; the reader publishes with its own exchange so it can tell a rebase apart\n	* from losing a race.\n	*/\n	#advance(candidate) {\n		for (;;) {\n			const state = Atomics.load(this.#state, 0);\n			if ((candidate - readOf(state) | 0) <= 0) return;\n			const next = pack(epochOf(state), candidate);\n			if (Atomics.compareExchange(this.#state, 0, state, next) === state) return;\n		}\n	}\n	/**\n	* Step the epoch by `by`, leaving the playhead wherever the reader has taken it.\n	*\n	* Retries while the word changes under it: only the epoch half is the writer's to move.\n	*/\n	#step(by) {\n		for (;;) {\n			const state = Atomics.load(this.#state, 0);\n			const next = pack(epochOf(state) + by | 0, readOf(state));\n			if (Atomics.compareExchange(this.#state, 0, state, next) === state) return;\n		}\n	}\n	/**\n	* Insert audio samples at the given timestamp.\n	* Main thread only. Handles out-of-order writes, gap filling, and overflow.\n	*/\n	insert(timestamp, data) {\n		if (data.length !== this.channels) throw new Error(\"wrong number of channels\");\n		let start = Math.round(Second.fromMicro(timestamp) * this.rate);\n		const originalLength = data[0].length;\n		let offset = 0;\n		if (!this.#anchored) {\n			this.#anchor = start;\n			Atomics.store(this.#sharedAnchor, 0, BigInt(start));\n			const epoch = epochOf(Atomics.load(this.#state, 0));\n			Atomics.add(this.#control, TIMELINE, 1);\n			Atomics.store(this.#state, 0, pack(epoch + 2 | 0, 0));\n			Atomics.store(this.#control, WRITE, 0);\n			this.#anchored = true;\n			this.#position = 0;\n			this.#lastRead = 0;\n		}\n		start = start - this.#anchor | 0;\n		const end = start + originalLength | 0;\n		const read = readOf(Atomics.load(this.#state, 0));\n		const behind = read - start | 0;\n		if (behind > 0) {\n			if (behind >= originalLength) return;\n			offset = behind;\n			start = start + behind | 0;\n		}\n		const samples = originalLength - offset;\n		if ((end - read | 0) > this.capacity) this.#advance(end - this.capacity | 0);\n		const write = Atomics.load(this.#control, WRITE);\n		const gap = start - write | 0;\n		if (gap > 0) {\n			const gapSize = Math.min(gap, this.capacity);\n			for (let channel = 0; channel < this.channels; channel++) {\n				const dst = this.#samples[channel];\n				for (let i = 0; i < gapSize; i++) dst[slot(write + i | 0, this.capacity)] = 0;\n			}\n		}\n		for (let channel = 0; channel < this.channels; channel++) {\n			const src = data[channel];\n			const dst = this.#samples[channel];\n			for (let i = 0; i < samples; i++) dst[slot(start + i | 0, this.capacity)] = src[offset + i];\n		}\n		Atomics.store(this.#control, WRITE, i32Max(Atomics.load(this.#control, WRITE), end));\n		this.#resume();\n	}\n	#resume() {\n		const read = readOf(Atomics.load(this.#state, 0));\n		const write = Atomics.load(this.#control, WRITE);\n		const latency = Atomics.load(this.#control, LATENCY);\n		if ((write - read | 0) >= latency && latency > 0) Atomics.store(this.#control, STALLED, 0);\n	}\n	/**\n	* Read audio samples into the output buffers.\n	* AudioWorklet only. Returns the number of samples read.\n	*/\n	read(output, at) {\n		const state = Atomics.load(this.#state, 0);\n		if (Atomics.load(this.#control, STALLED) === 1) return 0;\n		if (retreating(state)) return 0;\n		let read = readOf(state);\n		const write = Atomics.load(this.#control, WRITE);\n		const latency = Atomics.load(this.#control, LATENCY);\n		const buffered = write - read | 0;\n		if (at !== void 0) {\n			const anchor = Number(Atomics.load(this.#sharedAnchor, 0));\n			const target = Math.round(Second.fromMicro(at) * this.rate) - anchor | 0;\n			if ((target - read | 0) < 0 || (write - target | 0) < output[0].length) return 0;\n			if (Atomics.load(this.#control, STALLED) === 1 || Atomics.load(this.#state, 0) !== state) return 0;\n			read = target;\n		} else if (!this.buffered && latency > 0 && buffered > latency) {\n			const skipTo = write - latency | 0;\n			if ((skipTo - read | 0) > 0) read = skipTo;\n		}\n		const available = write - read | 0;\n		const count = Math.min(available, output[0].length);\n		if (count <= 0) {\n			if ((read - readOf(state) | 0) > 0) Atomics.compareExchange(this.#state, 0, state, pack(epochOf(state), read));\n			return 0;\n		}\n		for (let channel = 0; channel < this.channels; channel++) {\n			const src = this.#samples[channel];\n			const dst = output[channel];\n			for (let i = 0; i < count; i++) dst[i] = src[slot(read + i | 0, this.capacity)];\n		}\n		const next = pack(epochOf(state), read + count | 0);\n		if (Atomics.compareExchange(this.#state, 0, state, next) !== state) {\n			for (let channel = 0; channel < this.channels; channel++) output[channel].fill(0, 0, count);\n			return 0;\n		}\n		return count;\n	}\n	/** Samples available at an absolute media position without rewinding the cursor. */\n	availableAt(timestamp) {\n		const state = Atomics.load(this.#state, 0);\n		if (this.stalled || retreating(state)) return 0;\n		const anchor = Number(Atomics.load(this.#sharedAnchor, 0));\n		const start = Math.round(Second.fromMicro(timestamp) * this.rate) - anchor | 0;\n		if ((start - readOf(state) | 0) < 0) return 0;\n		const available = Atomics.load(this.#control, WRITE) - start | 0;\n		return !this.stalled && Atomics.load(this.#state, 0) === state ? Math.max(0, available) : 0;\n	}\n	/** Read an exact media window, retaining the normal reader's epoch checks. */\n	readAt(output, timestamp) {\n		return this.read(output, timestamp);\n	}\n	/** Absolute media cursor, also available to an independently wrapped worklet reader. */\n	get mediaTimestamp() {\n		const timeline = Atomics.load(this.#control, TIMELINE);\n		if (timeline !== this.#observedTimeline) {\n			const read = readOf(Atomics.load(this.#state, 0));\n			this.#position = read >>> 0;\n			this.#lastRead = read;\n			this.#observedTimeline = timeline;\n		}\n		const anchor = Number(Atomics.load(this.#sharedAnchor, 0));\n		return Micro.fromSecond((anchor + this.#unwrapRead()) / this.rate);\n	}\n	/**\n	* Update the target latency in samples. Main thread only.\n	*\n	* A deeper floor parks playback until it refills. Video holds the extra delay on its own, so\n	* audio that kept draining at the old depth would run ahead by the difference. Parking keeps\n	* what is buffered, so a rise costs only its own size in silence, and none if the buffer\n	* already covers the new floor.\n	*/\n	setLatency(samples) {\n		const previous = Atomics.exchange(this.#control, LATENCY, samples);\n		if (previous > 0 && samples > previous) {\n			Atomics.store(this.#control, STALLED, 1);\n			this.#step(2);\n		}\n		this.#resume();\n	}\n	/**\n	* Drop buffered samples at or after `timestamp`, keeping whatever is already due.\n	* Main thread only.\n	*\n	* A successor track overwrites the slots its own samples land on, but anything the previous\n	* track wrote beyond them would otherwise still play once the successor runs out.\n	*/\n	truncate(timestamp) {\n		const target = Math.round(Second.fromMicro(timestamp) * this.rate) - this.#anchor | 0;\n		if ((Atomics.load(this.#control, WRITE) - target | 0) <= 0) return;\n		this.#step(1);\n		for (;;) {\n			const write = Atomics.load(this.#control, WRITE);\n			const clamped = i32Max(target, readOf(Atomics.load(this.#state, 0)));\n			if ((write - clamped | 0) <= 0) break;\n			if (Atomics.compareExchange(this.#control, WRITE, write, clamped) === write) break;\n		}\n		this.#step(1);\n	}\n	/**\n	* Flush buffered samples and re-stall, ready to anchor the next utterance (buffered mode).\n	* Main thread only. The worklet reader sees STALLED and stops until the next insert.\n	*/\n	reset() {\n		this.#anchored = false;\n		Atomics.store(this.#control, STALLED, 1);\n		const write = Atomics.load(this.#control, WRITE);\n		const state = Atomics.load(this.#state, 0);\n		Atomics.store(this.#state, 0, pack(epochOf(state), write));\n	}\n	/**\n	* Allocate a new ring with `newCapacity` samples and copy the unread window\n	* [READ, WRITE) plus control state into it. Used when growing capacity so\n	* we don't drop buffered audio. If `newCapacity` is smaller than the unread\n	* span, the oldest samples are truncated.\n	*\n	* Main thread only. `resize()` reads from the source `SharedRingBuffer` and\n	* writes into a freshly allocated buffer from `allocSharedRingBuffer`, so it\n	* relies on the same invariant as `insert()`: no concurrent main-thread\n	* writers. The AudioWorklet reader is tolerated via the CAS discipline used\n	* by READ/WRITE elsewhere.\n	*/\n	resize(newCapacity) {\n		const init = allocSharedRingBuffer(this.channels, newCapacity, this.rate, this.buffered);\n		const dst = new SharedRingBuffer(init);\n		dst.#anchored = this.#anchored;\n		dst.#anchor = this.#anchor;\n		Atomics.store(dst.#sharedAnchor, 0, BigInt(this.#anchor));\n		const state = Atomics.load(this.#state, 0);\n		const read = readOf(state);\n		const write = Atomics.load(this.#control, WRITE);\n		const latency = Atomics.load(this.#control, LATENCY);\n		const stalled = Atomics.load(this.#control, STALLED);\n		const available = write - read | 0;\n		const copyCount = Math.max(0, Math.min(available, dst.capacity));\n		const copyStart = write - copyCount | 0;\n		for (let channel = 0; channel < this.channels; channel++) {\n			const src = this.#samples[channel];\n			const out = dst.#samples[channel];\n			for (let i = 0; i < copyCount; i++) {\n				const idx = copyStart + i | 0;\n				out[slot(idx, dst.capacity)] = src[slot(idx, this.capacity)];\n			}\n		}\n		Atomics.store(dst.#control, TIMELINE, Atomics.load(this.#control, TIMELINE));\n		Atomics.store(dst.#state, 0, pack(epochOf(state), copyStart));\n		Atomics.store(dst.#control, WRITE, write);\n		Atomics.store(dst.#control, LATENCY, latency);\n		Atomics.store(dst.#control, STALLED, stalled);\n		dst.#position = this.#foldRead(read) + (copyStart - read | 0);\n		dst.#lastRead = copyStart;\n		return dst;\n	}\n	/**\n	* Fold an observed READ into `#position`, so the returned offset keeps counting up across\n	* the i32 wrap. Idempotent: folding the same value twice adds a zero delta.\n	*/\n	#foldRead(read) {\n		this.#position += read - this.#lastRead | 0;\n		this.#lastRead = read;\n		return this.#position;\n	}\n	/** `#foldRead` against the current READ. */\n	#unwrapRead() {\n		return this.#foldRead(readOf(Atomics.load(this.#state, 0)));\n	}\n	/**\n	* Current playback timestamp derived from READ position.\n	*\n	* Main thread only, and stateful: it advances the unwrapped read position, so it has to be\n	* polled rather than sampled once. See `#position`.\n	*/\n	get timestamp() {\n		return Micro.fromSecond((this.#anchor + this.#unwrapRead()) / this.rate);\n	}\n	/** Whether an insert has anchored the ring since it was created or reset. Main thread only. */\n	get anchored() {\n		return this.#anchored;\n	}\n	/** Whether the buffer is stalled (waiting to fill). */\n	get stalled() {\n		return Atomics.load(this.#control, STALLED) === 1;\n	}\n	/**\n	* Number of buffered samples (WRITE - READ).\n	*\n	* Non-atomic: WRITE and READ are loaded separately, so a concurrent\n	* writer/reader can make the two loads inconsistent. Intended for\n	* tests and diagnostics, not control-flow decisions.\n	*/\n	get length() {\n		return Atomics.load(this.#control, WRITE) - readOf(Atomics.load(this.#state, 0)) | 0;\n	}\n};\n//#endregion\n//#region src/audio/mixer-worklet.ts\n/** The shared audio worklet that owns every selected input's playout cursor. */\nvar MixerRender = class extends AudioWorkletProcessor {\n	#mix = new MixBuffer();\n	#inputs = /* @__PURE__ */ new Map();\n	#ticks = 0;\n	#stateFrames = 0;\n	#lastMode;\n	#lastStalled;\n	#lastLevels;\n	constructor() {\n		super();\n		this.port.onmessage = ({ data }) => {\n			if (data.type === \"mix\") this.#mix.levels = data.levels;\n			if (data.type === \"detach\") {\n				if (this.#inputs.get(data.id)?.generation !== data.generation) return;\n				this.#inputs.get(data.id)?.port.close();\n				this.#inputs.delete(data.id);\n				this.#mix.remove(data.id);\n			}\n			if (data.type !== \"attach\") return;\n			const input = {\n				port: data.port,\n				epoch: 0,\n				generation: data.generation\n			};\n			this.#inputs.get(data.id)?.port.close();\n			this.#inputs.set(data.id, input);\n			input.port.onmessage = ({ data: message }) => {\n				const previous = this.#mix.inputs.get(data.id);\n				if (message.type === \"init-shared\") this.#mix.inputs.set(data.id, new SharedRingBuffer(message, previous instanceof SharedRingBuffer ? previous : void 0));\n				else if (message.type === \"init-post\") this.#mix.inputs.set(data.id, new AudioRingBuffer(message));\n				else if (previous instanceof AudioRingBuffer) {\n					if (message.type === \"data\") previous.write(message.timestamp, message.data);\n					else if (message.type === \"latency\") previous.resize(message.latency);\n					else if (message.type === \"truncate\") previous.truncate(message.timestamp);\n					else if (message.type === \"reset\") {\n						previous.reset();\n						input.epoch = message.epoch;\n					}\n				}\n			};\n		};\n	}\n	process(_inputs, outputs) {\n		const output = outputs[0];\n		const read = this.#mix.read(output);\n		if (++this.#ticks % 5 === 0) for (const [id, input] of this.#inputs) {\n			const ring = this.#mix.inputs.get(id);\n			if (!(ring instanceof AudioRingBuffer)) continue;\n			const state = {\n				type: \"state\",\n				timestamp: ring.timestamp,\n				stalled: ring.stalled,\n				anchored: ring.anchored,\n				epoch: input.epoch\n			};\n			input.port.postMessage(state);\n		}\n		const stalled = read < output[0].length;\n		this.#stateFrames += output[0].length;\n		if (this.#stateFrames >= sampleRate / 20 || this.#mix.mode !== this.#lastMode || stalled !== this.#lastStalled || this.#mix.effectiveLevels !== this.#lastLevels) {\n			this.#stateFrames = 0;\n			this.#lastMode = this.#mix.mode;\n			this.#lastStalled = stalled;\n			this.#lastLevels = this.#mix.effectiveLevels;\n			this.port.postMessage({\n				type: \"mix-state\",\n				mode: this.#mix.mode,\n				levels: this.#mix.effectiveLevels,\n				timestamp: this.#mix.timestamp,\n				stalled\n			});\n		}\n		return true;\n	}\n};\n//#endregion\n//#region src/audio/render-worklet.ts\nvar Render = class extends AudioWorkletProcessor {\n	#backend;\n	#underflow = 0;\n	#stateCounter = 0;\n	#epoch = 0;\n	constructor() {\n		super();\n		this.port.onmessage = (event) => {\n			const msg = event.data;\n			if (msg.type === \"init-shared\") {\n				console.log(\"[audio-worklet] init-shared: using SharedArrayBuffer path\");\n				const previous = this.#backend instanceof SharedRingBuffer ? this.#backend : void 0;\n				this.#backend = new SharedRingBuffer(msg, previous);\n				this.#underflow = 0;\n			} else if (msg.type === \"init-post\") {\n				console.log(\"[audio-worklet] init-post: using postMessage path\");\n				this.#backend = new AudioRingBuffer(msg);\n				this.#underflow = 0;\n			} else if (msg.type === \"data\") {\n				if (this.#backend instanceof AudioRingBuffer) this.#backend.write(msg.timestamp, msg.data);\n			} else if (msg.type === \"latency\") {\n				if (this.#backend instanceof AudioRingBuffer) this.#backend.resize(msg.latency);\n			} else if (msg.type === \"truncate\") {\n				if (this.#backend instanceof AudioRingBuffer) this.#backend.truncate(msg.timestamp);\n			} else if (msg.type === \"reset\") {\n				if (this.#backend instanceof AudioRingBuffer) this.#backend.reset();\n				this.#epoch = msg.epoch;\n			}\n		};\n	}\n	process(_inputs, outputs, _parameters) {\n		const output = outputs[0];\n		const backend = this.#backend;\n		const samplesRead = backend?.read(output) ?? 0;\n		if (samplesRead < output[0].length) this.#underflow += output[0].length - samplesRead;\n		else if (this.#underflow > 0 && backend) {\n			console.debug(`audio underflow: ${Math.round(1e3 * this.#underflow / backend.rate)}ms`);\n			this.#underflow = 0;\n		}\n		if (backend instanceof AudioRingBuffer) {\n			this.#stateCounter++;\n			if (this.#stateCounter >= 5) {\n				this.#stateCounter = 0;\n				const state = {\n					type: \"state\",\n					timestamp: backend.timestamp,\n					stalled: backend.stalled,\n					anchored: backend.anchored,\n					epoch: this.#epoch\n				};\n				this.port.postMessage(state);\n			}\n		}\n		return true;\n	}\n};\nregisterProcessor(\"render\", Render);\nregisterProcessor(\"mixer\", MixerRender);\n//#endregion\n"], { type: "application/javascript" }), F = URL.createObjectURL(be), xe = class {
  	#e = 0;
  	#t;
  	#n;
@@ -974,7 +975,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  		}), this.#o.run(this.#l.bind(this)), this.#o.run(this.#u.bind(this)), this.#o.run(this.#d.bind(this)), this.#o.run(this.#f.bind(this));
  	}
  	#l(e) {
-@@ -566,19 +600,30 @@ var N = class {
+@@ -566,28 +600,39 @@ var N = class {
  		if (!t) return;
  		let n = e.get(this.#r) ?? t.sampleRate, i = t.numberOfChannels;
  		e.set(this.#e.sampleRate, n);
@@ -1015,7 +1016,9 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  			this.#n = l, e.cleanup(() => {
  				l.close(), this.#n = void 0;
  			}), e.run((e) => {
-@@ -587,7 +632,7 @@ var N = class {
+ 				let t = r.Milli.fromMicro(e.get(l.timestamp));
+-				this.#e.timestamp.set(t), this.#b(t);
++				this.#e.timestamp.set(t), this.#x(t);
  			}), e.run((e) => {
  				this.#e.stalled.set(e.get(l.stalled));
  			}), e.set(this.#e.root, t);
@@ -1042,7 +1045,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  			broadcast: a,
  			track: n,
  			priority: c.PRIORITY.audio,
-@@ -636,7 +681,7 @@ var N = class {
+@@ -636,14 +681,14 @@ var N = class {
  			this.#e.buffered.update(() => u.mergeBufferedRanges(t, n));
  		}), e.spawn(async () => {
  			if (!await d.Libav.polyfill()) return;
@@ -1051,15 +1054,34 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  				output: (e) => {
  					let n = this.#i.span(e);
  					if (t.drop()) {
-@@ -659,7 +704,7 @@ var N = class {
+ 						e.close();
+ 						return;
+ 					}
+-					this.#_(e, n);
++					this.#v(e, n);
+ 				},
+ 				error: (e) => console.error("audio decoder error", e)
+ 			});
+@@ -659,15 +704,15 @@ var N = class {
  			i.configure(s);
  			let c = this.#h(), l;
  			for (;;) {
 -				let t = await v(o);
+-				if ((t === void 0 || t.end !== void 0 || t.discontinuity !== (l ?? t.discontinuity)) && !await this.#g(e, i, s, c, c.flush())) return;
 +				let t = await y(o);
- 				if ((t === void 0 || t.end !== void 0 || t.discontinuity !== (l ?? t.discontinuity)) && !await this.#g(e, i, s, c, c.flush())) return;
++				if ((t === void 0 || t.end !== void 0 || t.discontinuity !== (l ?? t.discontinuity)) && !await this.#_(e, i, s, c, c.flush())) return;
  				if (!t) break;
  				if (l = t.discontinuity, t.frame === void 0 || t.end !== void 0) {
+-					this.#x(t) && (i.reset(), i.configure(s), c.reset());
++					this.#S(t) && (i.reset(), i.configure(s), c.reset());
+ 					continue;
+ 				}
+ 				let { frame: n } = t, a = r.Milli.fromMicro(n.timestamp);
+-				if (this.sync.received(a, "audio"), this.#e.stats.update((e) => ({ bytesReceived: (e?.bytesReceived ?? 0) + n.payload.byteLength })), !await this.#g(e, i, s, c, c.push({
++				if (this.#g(a), this.#e.stats.update((e) => ({ bytesReceived: (e?.bytesReceived ?? 0) + n.payload.byteLength })), !await this.#_(e, i, s, c, c.push({
+ 					...t,
+ 					frame: n
+ 				}))) return;
 @@ -676,7 +721,7 @@ var N = class {
  	}
  	#m(e, t, n) {
@@ -1069,16 +1091,36 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  		this.#i.clear(s);
  		let c = n.codec === "opus" ? void 0 : n.description ? d.Hex.toBytes(n.description) : a.description, l = new u.Consumer(t, {
  			format: new u.Cmaf.Format(a),
-@@ -703,7 +748,7 @@ var N = class {
+@@ -688,7 +733,7 @@ var N = class {
+ 		}), e.spawn(async () => {
+ 			if (!await d.Libav.polyfill()) return;
+ 			let t = new AudioDecoder({
+-				output: (e) => this.#_(e),
++				output: (e) => this.#v(e),
+ 				error: (e) => console.error("audio decoder error", e)
+ 			});
+ 			e.cleanup(() => {
+@@ -703,15 +748,15 @@ var N = class {
  			t.configure(i);
  			let a = this.#h(), o;
  			for (;;) {
 -				let n = await v(l);
+-				if ((n === void 0 || n.end !== void 0 || n.discontinuity !== (o ?? n.discontinuity)) && !await this.#g(e, t, i, a, a.flush())) return;
 +				let n = await y(l);
- 				if ((n === void 0 || n.end !== void 0 || n.discontinuity !== (o ?? n.discontinuity)) && !await this.#g(e, t, i, a, a.flush())) return;
++				if ((n === void 0 || n.end !== void 0 || n.discontinuity !== (o ?? n.discontinuity)) && !await this.#_(e, t, i, a, a.flush())) return;
  				if (!n) break;
  				if (o = n.discontinuity, n.frame === void 0) {
-@@ -719,10 +764,10 @@ var N = class {
+-					this.#x(n) && (t.reset(), t.configure(i), a.reset());
++					this.#S(n) && (t.reset(), t.configure(i), a.reset());
+ 					continue;
+ 				}
+ 				let { frame: s } = n, c = r.Milli.fromMicro(s.timestamp);
+-				if (this.sync.received(c, "audio"), this.#e.stats.update((e) => ({ bytesReceived: (e?.bytesReceived ?? 0) + s.payload.byteLength })), !await this.#g(e, t, i, a, a.push({
++				if (this.#g(c), this.#e.stats.update((e) => ({ bytesReceived: (e?.bytesReceived ?? 0) + s.payload.byteLength })), !await this.#_(e, t, i, a, a.push({
+ 					...n,
+ 					frame: s
+ 				}))) return;
+@@ -719,14 +764,17 @@ var N = class {
  		});
  	}
  	#h() {
@@ -1088,10 +1130,71 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  			maxDelay: r.Micro.fromMilli(this.sync.out.maxAge.peek())
 -		})) : new N(void 0);
 +		})) : new P(void 0);
++	}
++	#g(e) {
++		this.renderer ? this.renderer.received(e) : this.sync.received(e, "audio");
  	}
- 	async #g(e, t, n, r, i) {
+-	async #g(e, t, n, r, i) {
++	async #_(e, t, n, r, i) {
  		for (let a of i) {
-@@ -805,9 +850,9 @@ var N = class {
+-			if (this.#x(a) && (t.reset(), t.configure(n), r.reset()), !r.admit(a)) continue;
++			if (this.#S(a) && (t.reset(), t.configure(n), r.reset()), !r.admit(a)) continue;
+ 			let { frame: i } = a;
+ 			if (await this.#n?.wait(i.timestamp, e.abort), t.state === "closed") return !1;
+ 			t.decode(new EncodedAudioChunk({
+@@ -737,7 +785,7 @@ var N = class {
+ 		}
+ 		return !0;
+ 	}
+-	#_(e, t = this.#i.span(e)) {
++	#v(e, t = this.#i.span(e)) {
+ 		let { timestamp: n, frameOffset: i, frames: a } = t, o = r.Milli.fromMicro(n);
+ 		if (a === 0) {
+ 			e.close();
+@@ -753,7 +801,7 @@ var N = class {
+ 			return;
+ 		}
+ 		let c = a / e.sampleRate * 1e6, l = r.Milli.fromMicro(c), u = r.Milli.add(o, l);
+-		this.#a.takeover() && (s.truncate(n), this.#y(o)), this.#v(o, u);
++		this.#a.takeover() && (s.truncate(n), this.#b(o)), this.#y(o, u);
+ 		let d = Math.min(e.numberOfChannels, s.channels), f = [];
+ 		for (let t = 0; t < d; t++) {
+ 			let n = new Float32Array(a);
+@@ -766,7 +814,7 @@ var N = class {
+ 		}
+ 		s.insert(n, f), e.close();
+ 	}
+-	#v(e, t) {
++	#y(e, t) {
+ 		e > t || this.#t.mutate((n) => {
+ 			for (let i of n) if (e <= i.end + 1 && t >= i.start) {
+ 				i.start = r.Milli.min(i.start, e), i.end = r.Milli.max(i.end, t);
+@@ -778,14 +826,14 @@ var N = class {
+ 			}), n.sort((e, t) => e.start - t.start);
+ 		});
+ 	}
+-	#y(e) {
++	#b(e) {
+ 		this.#t.mutate((t) => {
+ 			for (; t.length > 0 && t[t.length - 1].start >= e;) t.pop();
+ 			let n = t[t.length - 1];
+ 			n && n.end > e && (n.end = e);
+ 		});
+ 	}
+-	#b(e) {
++	#x(e) {
+ 		this.#t.mutate((t) => {
+ 			for (; t.length > 0;) {
+ 				if (t[0].end >= e) {
+@@ -799,15 +847,15 @@ var N = class {
+ 	reset() {
+ 		this.#n?.reset();
+ 	}
+-	#x(e) {
+-		return this.#i.update(e) ? (this.#n?.reset(), this.sync.reset(), !0) : !1;
++	#S(e) {
++		return this.#i.update(e) ? (this.#n?.reset(), this.renderer ? this.renderer.discontinuity() : this.sync.reset(), !0) : !1;
+ 	}
  	close() {
  		this.#o.close();
  	}
@@ -1103,7 +1206,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  	if (!c.containerSupported(e.container)) {
  		let t = e.container.kind === "unknown" ? e.container.raw.kind : e.container.kind;
  		return console.warn(`audio: ignoring rendition with unknown container: ${t}`), !1;
-@@ -817,7 +862,7 @@ async function Ee(e) {
+@@ -817,7 +865,7 @@ async function Ee(e) {
  	if (e.codec !== "opus") {
  		if (e.description) t = d.Hex.toBytes(e.description);
  		else if (e.container.kind === "cmaf") try {
@@ -1112,7 +1215,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  		} catch (t) {
  			return console.warn(`audio: malformed CMAF init segment for codec ${e.codec}`, t), !1;
  		}
-@@ -829,7 +874,7 @@ async function Ee(e) {
+@@ -829,7 +877,7 @@ async function Ee(e) {
  }
  //#endregion
  //#region src/audio/emitter.ts
@@ -1121,7 +1224,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  	source;
  	in;
  	#e = { enabled: new a(!1) };
-@@ -856,16 +901,17 @@ var F = .001, I = .2, L = class {
+@@ -856,16 +904,17 @@ var F = .001, I = .2, L = class {
  			if (!t) return;
  			e.cleanup(() => t.gain.cancelScheduledValues(t.context.currentTime));
  			let n = e.get(this.in.volume);
@@ -1141,7 +1244,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  		available: new a({}),
  		track: new a(void 0),
  		config: new a(void 0),
-@@ -887,6 +933,7 @@ var F = .001, I = .2, L = class {
+@@ -887,6 +936,7 @@ var F = .001, I = .2, L = class {
  		n && e.set(this.#e.catalog, n);
  	}
  	#r(e) {
@@ -1149,7 +1252,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  		let t = e.get(this.#e.catalog)?.renditions ?? {}, n = e.get(this.in.supported);
  		n && e.spawn(async () => {
  			let r = {};
-@@ -895,7 +942,7 @@ var F = .001, I = .2, L = class {
+@@ -895,7 +945,7 @@ var F = .001, I = .2, L = class {
  				if (e.abort.aborted) return;
  				t && (r[i] = a);
  			}
@@ -1158,7 +1261,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  		});
  	}
  	#i(e) {
-@@ -907,7 +954,7 @@ var F = .001, I = .2, L = class {
+@@ -907,7 +957,7 @@ var F = .001, I = .2, L = class {
  			config: t[n.name]
  		};
  		else if (r = this.#a(t), !r) return;
@@ -1167,7 +1270,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  	}
  	#a(e) {
  		let t = Object.entries(e);
-@@ -929,20 +976,20 @@ var F = .001, I = .2, L = class {
+@@ -929,20 +979,20 @@ var F = .001, I = .2, L = class {
  	close() {
  		this.#t.close();
  	}
@@ -1193,7 +1296,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  	switch (e.packaging) {
  		case "cmaf": return !e.initData || !t ? void 0 : {
  			container: {
-@@ -962,12 +1009,12 @@ function B(e) {
+@@ -962,12 +1012,12 @@ function B(e) {
  		default: return;
  	}
  }
@@ -1209,7 +1312,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  	if (!t) return;
  	let { container: n, description: r } = t;
  	return {
-@@ -980,36 +1027,36 @@ function ke(e) {
+@@ -980,36 +1030,36 @@ function ke(e) {
  		bitrate: e.bitrate == null ? void 0 : l(e.bitrate),
  		stalled: e.stalled,
  		jitter: e.jitter == null ? void 0 : l(e.jitter),
@@ -1256,7 +1359,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  		e && (n[r.name] = e);
  	}
  	let r = {};
-@@ -1017,39 +1064,39 @@ function je(e) {
+@@ -1017,39 +1067,39 @@ function je(e) {
  }
  //#endregion
  //#region src/broadcast.ts
@@ -1305,7 +1408,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  	in;
  	#e = {
  		status: new a("offline"),
-@@ -1089,7 +1136,7 @@ var Ne = [
+@@ -1089,7 +1139,7 @@ var Ne = [
  	}
  	#o(e) {
  		let t = e.get(this.#r);
@@ -1314,7 +1417,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  	}
  	#s(e, t) {
  		this.#n.set(!0);
-@@ -1147,7 +1194,7 @@ var Ne = [
+@@ -1147,7 +1197,7 @@ var Ne = [
  			let e = s.ordered();
  			l = async () => {
  				let t = await p.fetch(e);
@@ -1323,7 +1426,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  			};
  		}
  		e.spawn(async () => {
-@@ -1189,12 +1236,176 @@ var Ne = [
+@@ -1189,12 +1239,177 @@ var Ne = [
  	close() {
  		this.#i.close();
  	}
@@ -1343,12 +1446,13 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
 +	out = s(this.#e);
 +	#t = new a(void 0);
 +	#n = new a(void 0);
-+	#r = new a(!1);
-+	#i = new a(void 0);
-+	#a = new a([]);
-+	#o = new i();
-+	#s = 0;
-+	#c = new a(0);
++	#r = new a(0);
++	#i = new a(!1);
++	#a = new a(void 0);
++	#o = new a([]);
++	#s = new i();
++	#c = 0;
++	#l = new a(0);
 +	constructor(e) {
 +		this.in = s({
 +			enabled: o(e.enabled ?? !0),
@@ -1357,10 +1461,10 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
 +		}), this.main = new I({
 +			source: e.source,
 +			sync: e.sync,
-+			enabled: this.#r,
-+			renderer: this.#l("main")
-+		}), this.#o.cleanup(() => this.main.close());
-+		let t = this.#o.computed((t) => {
++			enabled: this.#i,
++			renderer: this.#u("main")
++		}), this.#s.cleanup(() => this.main.close());
++		let t = this.#s.computed((t) => {
 +			let n = t.get(e.source.out.config);
 +			if (n) return {
 +				sampleRate: t.get(this.main.out.sampleRate) ?? n.sampleRate,
@@ -1369,43 +1473,45 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
 +				origin: t.get(e.broadcast.in.origin)
 +			};
 +		});
-+		this.#o.run((e) => {
++		this.#s.run((e) => {
 +			let n = e.get(t);
 +			if (!n) return;
-+			e.set(this.#e.mode, "main", "main"), e.set(this.#e.stalled, !0, !0), e.set(this.#e.levels, void 0), e.set(this.#e.timestamp, void 0);
-+			let i = n.sampleRate, a = new AudioContext({
++			let r = new AudioContext({
 +				latencyHint: "interactive",
-+				sampleRate: i
++				sampleRate: n.sampleRate
 +			});
-+			e.set(this.#t, a), e.cleanup(() => a.close()), e.spawn(async () => {
-+				if (!await e.race(a.audioWorklet.addModule(F).then(() => !0))) return;
-+				let t = new AudioWorkletNode(a, "mixer", { outputChannelCount: [n.channels] });
++			e.set(this.#t, r), e.cleanup(() => r.close());
++		}), this.#s.run((e) => {
++			let n = e.get(this.#t), i = e.get(t);
++			e.get(this.#r), !(!n || !i) && (e.set(this.#e.mode, "main", "main"), e.set(this.#e.stalled, !0, !0), e.set(this.#e.levels, void 0), e.set(this.#e.timestamp, void 0), e.spawn(async () => {
++				if (!await e.race(n.audioWorklet.addModule(F).then(() => !0))) return;
++				let t = new AudioWorkletNode(n, "mixer", { outputChannelCount: [i.channels] });
 +				e.set(this.#n, t), e.cleanup(() => {
 +					t.disconnect(), t.port.close();
 +				}), e.event(t.port, "message", (e) => {
 +					let t = e.data;
 +					t.type === "mix-state" && (this.#e.mode.set(t.mode), this.#e.stalled.set(t.stalled), this.#e.timestamp.set(r.Milli.fromMicro(t.timestamp)), this.#e.levels.set(t.levels ? Object.fromEntries(Object.entries(t.levels).map(([e, t]) => [Number(e.slice(1)), t])) : void 0));
 +				}), t.port.start();
-+			});
++			}));
 +		});
 +		let n, i, a;
-+		this.#o.run((t) => {
++		this.#s.run((t) => {
 +			let r = t.get(e.broadcast.in.name), o = t.get(e.broadcast.in.origin), s = t.get(this.in.mix);
-+			n !== void 0 && (r !== n || o !== i) && (a = s), n = r, i = o, this.#i.set(s === a ? void 0 : s);
++			n !== void 0 && (r !== n || o !== i) && (a = s), n = r, i = o, this.#a.set(s === a ? void 0 : s);
 +		});
-+		let c = this.#o.computed((t) => {
-+			let n = t.get(this.#i);
++		let c = this.#s.computed((t) => {
++			let n = t.get(this.#a);
 +			if (!n) return;
 +			let r = t.get(this.in.stems) ?? [];
 +			return r.length < 1 || r.length > 2 || Object.keys(n).length !== r.length || r.some((e) => !Number.isInteger(e.alternateGroup) || e.alternateGroup < 1 || e.alternateGroup > 65535 || !Number.isFinite(n[e.alternateGroup]) || n[e.alternateGroup] < 0 || n[e.alternateGroup] > 1) || new Set(r.map((e) => e.alternateGroup)).size !== r.length ? { reason: "unavailable" } : t.get(e.source.out.config)?.sampleRate !== 48e3 || (t.get(this.main.out.sampleRate) ?? 48e3) !== 48e3 ? { reason: "unsupported" } : { stems: r.map(({ alternateGroup: e, name: t }) => ({
 +				alternateGroup: e,
 +				name: t
 +			})) };
-+		}), l, u = this.#o.computed((e) => {
++		}), l, u = this.#s.computed((e) => {
 +			let t = e.get(c)?.stems, n = e.get(this.#e.mode);
 +			if (t && (!l || n === "main" || JSON.stringify(t) === JSON.stringify(l)) && (l = t), t || n !== "main") return l;
 +		});
-+		this.#o.run((n) => {
++		this.#s.run((n) => {
 +			let r = n.get(u);
 +			if (!r) return;
 +			let i = [];
@@ -1425,58 +1531,57 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
 +					source: o,
 +					sync: e.sync,
 +					enabled: this.in.enabled,
-+					renderer: this.#l(`g${a.alternateGroup}`)
++					renderer: this.#u(`g${a.alternateGroup}`)
 +				});
 +				i.push({
 +					group: a.alternateGroup,
 +					decoder: s
 +				}), n.cleanup(() => {
-+					this.#c.update((e) => e + (s.out.stats.peek()?.bytesReceived ?? 0)), s.close(), o.close(), r.close();
++					this.#l.update((e) => e + (s.out.stats.peek()?.bytesReceived ?? 0)), s.close(), o.close(), r.close();
 +				});
 +			}
-+			n.set(this.#a, i, []);
-+		}), this.#o.run((e) => {
-+			let t = e.get(this.in.enabled), n = e.get(c), r = n?.stems, i = e.get(this.#a), a = e.get(u), o = !!r && JSON.stringify(r) !== JSON.stringify(a), s = i.some(({ group: t, decoder: n }) => {
-+				if (!(this.#i.peek()?.[t] ?? 0)) return !1;
++			n.set(this.#o, i, []);
++		}), this.#s.run((e) => {
++			let t = e.get(this.in.enabled), n = e.get(c), r = n?.stems, i = e.get(this.#o), a = e.get(u), o = !!r && JSON.stringify(r) !== JSON.stringify(a), s = i.some(({ group: t, decoder: n }) => {
++				if (!(this.#a.peek()?.[t] ?? 0)) return !1;
 +				let r = e.get(n.out.sampleRate);
 +				return r !== void 0 && r !== 48e3 || e.get(n.source.out.catalog) !== void 0 && e.get(n.source.out.probed) && Object.keys(e.get(n.source.out.available)).length === 0;
-+			}), l = e.get(this.#i), d = e.get(this.#n), f = e.get(this.#e.mode), p = e.get(this.#e.stalled);
-+			if (this.#r.set(t && (f !== "stems" || !r || p || s || o)), !d) return;
++			}), l = e.get(this.#a), d = e.get(this.#n), f = e.get(this.#e.mode), p = e.get(this.#e.stalled);
++			if (this.#i.set(t && (f !== "stems" || !r || p || s || o)), !d) return;
 +			let m = r && l && !s && !o && !p ? Object.fromEntries(r.map((e) => [`g${e.alternateGroup}`, l[e.alternateGroup]])) : void 0;
 +			d.port.postMessage({
 +				type: "mix",
 +				levels: m
 +			}), this.#e.reason.set(l ? n?.reason ?? (s ? "unsupported" : f === "stems" && !p ? void 0 : "buffering") : f === "loading" ? "buffering" : void 0);
-+		}), this.#o.run((e) => {
-+			let t = e.get(this.in.enabled), n = [this.main, ...e.get(this.#a).map((e) => e.decoder)], r = 0, i = e.get(this.#c);
++		}), this.#s.run((e) => {
++			let t = e.get(this.in.enabled), n = [this.main, ...e.get(this.#o).map((e) => e.decoder)], r = 0, i = e.get(this.#l);
 +			for (let a of n) i += e.get(a.out.stats)?.bytesReceived ?? 0, t && e.get(a.in.enabled) && (r += e.get(a.source.out.config)?.bitrate ?? 0);
 +			this.#e.bitrate.set(r), this.#e.stats.set({ bytesReceived: i });
 +		});
 +	}
-+	#l(e) {
++	#u(e) {
 +		return {
 +			context: this.#t,
 +			root: this.#n,
++			received: (t) => {
++				e === "main" && this.#e.levels.peek() === void 0 && this.main.sync.received(t, "audio");
++			},
++			discontinuity: () => {
++				e === "main" && this.#e.levels.peek() === void 0 && (this.main.sync.reset(), this.reset());
++			},
 +			attach: ({ channels: t, rate: n, latencySamples: r, buffered: i }) => {
 +				let a = this.#n.peek();
 +				if (!a) throw Error("mixer renderer is not ready");
-+				let o = new MessageChannel(), s = ++this.#s;
++				let o = new MessageChannel(), s = ++this.#c;
 +				a.port.postMessage({
 +					type: "attach",
 +					id: e,
 +					port: o.port2,
 +					generation: s
 +				}, [o.port2]);
-+				let c = oe({ port: o.port1 }, t, n, r, i), l = c.reset.bind(c);
-+				c.reset = () => {
-+					l(), a.port.postMessage({
-+						type: "reset-clock",
-+						id: e
-+					});
-+				};
-+				let u = c.close.bind(c);
++				let c = oe({ port: o.port1 }, t, n, r, i), l = c.close.bind(c);
 +				return c.close = () => {
-+					u(), o.port1.close(), a.port.postMessage({
++					l(), o.port1.close(), a.port.postMessage({
 +						type: "detach",
 +						id: e,
 +						generation: s
@@ -1486,11 +1591,10 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
 +		};
 +	}
 +	reset() {
-+		this.main.reset();
-+		for (let e of this.#a.peek()) e.decoder.reset();
++		this.#r.update((e) => e + 1);
 +	}
 +	close() {
-+		this.#o.close();
++		this.#s.close();
 +	}
 +}, Me = r.Milli(20), q = r.Milli(100), J = class e {
  	in;
@@ -1502,7 +1606,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  		timestamp: new a(void 0),
  		buffered: new a(!1),
  		maxAge: new a(r.Milli.zero)
-@@ -1232,11 +1443,11 @@ var Ne = [
+@@ -1232,11 +1447,11 @@ var Ne = [
  		let n = e.get(this.in.probe)?.rtt;
  		if (n !== void 0) {
  			this.#n = this.#n === void 0 ? n : Math.min(this.#n, n);
@@ -1516,7 +1620,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  	}
  	#s(e) {
  		let t = e.get(this.in.delay);
-@@ -1316,16 +1527,16 @@ var Ne = [
+@@ -1316,16 +1531,16 @@ var Ne = [
  	close() {
  		this.#i.close();
  	}
@@ -1537,7 +1641,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  	let { cues: n, clears: r } = e, i = 0;
  	for (let e of r) e >= t && (r[i++] = e);
  	r.length = i;
-@@ -1333,7 +1544,7 @@ function J(e, t) {
+@@ -1333,7 +1548,7 @@ function J(e, t) {
  	for (let e of n) e.endTime >= t && (n[a++] = e);
  	return a !== n.length && (n.length = a, !0);
  }
@@ -1546,7 +1650,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  	let { cues: n, clears: r } = e, i = n.indexOf(t), a = i > 0 ? n[i - 1] : void 0;
  	a && a.endTime > t.startTime && (a.endTime = t.startTime);
  	let o = n[i + 1];
-@@ -1341,7 +1552,7 @@ function Y(e, t) {
+@@ -1341,7 +1556,7 @@ function Y(e, t) {
  	let s = r.find((e) => e > t.startTime);
  	s !== void 0 && t.endTime > s && (t.endTime = s);
  }
@@ -1555,7 +1659,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  	let { cues: n, clears: r } = e, i = r.length;
  	for (; i > 0 && r[i - 1] > t;) i--;
  	r[i] !== t && r.splice(i, 0, t);
-@@ -1353,7 +1564,7 @@ function X(e, t) {
+@@ -1353,7 +1568,7 @@ function X(e, t) {
  		}
  	}
  }
@@ -1564,7 +1668,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  	source;
  	sync;
  	in;
-@@ -1385,32 +1596,32 @@ var ze = class {
+@@ -1385,32 +1600,32 @@ var ze = class {
  			return;
  		}
  		let f = document.createElement("style");
@@ -1610,7 +1714,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  					if (!(e instanceof t.Stream)) throw e;
  					console.debug("captions subscription ended", e);
  				});
-@@ -1420,14 +1631,14 @@ var ze = class {
+@@ -1420,14 +1635,14 @@ var ze = class {
  						for (;;) {
  							let e = await n.readFrame();
  							if (!e) break;
@@ -1627,7 +1731,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  				});
  			}
  		});
-@@ -1436,34 +1647,34 @@ var ze = class {
+@@ -1436,34 +1651,34 @@ var ze = class {
  		let r = new TextDecoder().decode(t.payload), i = t.timestamp / 1e6;
  		if (e === "utf8") {
  			if (r.length === 0) {
@@ -1672,7 +1776,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  	in;
  	#e = {
  		catalog: new a(void 0),
-@@ -1489,13 +1700,13 @@ var He = class {
+@@ -1489,13 +1704,13 @@ var He = class {
  			e.set(this.#e.track, void 0), e.set(this.#e.config, void 0);
  			return;
  		}
@@ -1689,7 +1793,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  	return {
  		broadcast: e.broadcast,
  		decoder: {
-@@ -1508,8 +1719,8 @@ function We(e) {
+@@ -1508,8 +1723,8 @@ function We(e) {
  		}
  	};
  }
@@ -1700,7 +1804,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  }
  //#endregion
  //#region src/video/playhead.ts
-@@ -1540,18 +1751,18 @@ function Ze(e, t = 0) {
+@@ -1540,18 +1755,18 @@ function Ze(e, t = 0) {
  		height: e.height
  	};
  }
@@ -1726,7 +1830,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  	];
  }
  function $e(e, t) {
-@@ -1603,7 +1814,7 @@ function $e(e, t) {
+@@ -1603,7 +1818,7 @@ function $e(e, t) {
  }
  //#endregion
  //#region src/video/decoder.ts
@@ -1735,7 +1839,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  	in;
  	source;
  	sync;
-@@ -1628,8 +1839,11 @@ var et = r.Milli(500), Q = class {
+@@ -1628,8 +1843,11 @@ var et = r.Milli(500), Q = class {
  	}
  	constructor(e) {
  		this.in = { enabled: o(e?.enabled ?? !0) }, this.source = e.source, this.sync = e.sync, this.#i.cleanup(this.sync.register(this.out.jitter)), this.#r = this.#i.computed((e) => {
@@ -1749,7 +1853,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  		}), this.#i.run(this.#o.bind(this)), this.#i.run(this.#s.bind(this)), this.#i.run(this.#c.bind(this)), this.#i.run(this.#l.bind(this)), this.#i.run(this.#u.bind(this));
  	}
  	#o(e) {
-@@ -1647,40 +1861,44 @@ var et = r.Milli(500), Q = class {
+@@ -1647,40 +1865,44 @@ var et = r.Milli(500), Q = class {
  		let t = e.getAll([
  			this.in.enabled,
  			this.source.in.broadcast,
@@ -1804,7 +1908,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  		});
  	}
  	#c(e) {
-@@ -1727,6 +1945,7 @@ var et = r.Milli(500), Q = class {
+@@ -1727,6 +1949,7 @@ var et = r.Milli(500), Q = class {
  	}
  	static supported = nt;
  }, tt = class {
@@ -1812,7 +1916,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  	sync;
  	broadcast;
  	track;
-@@ -1743,10 +1962,10 @@ var et = r.Milli(500), Q = class {
+@@ -1743,10 +1966,10 @@ var et = r.Milli(500), Q = class {
  		this.sync = e.sync, this.broadcast = e.broadcast, this.track = e.track, this.config = e.config, this.catalog = e.catalog, this.stats = e.stats, this.#n.run(this.#r.bind(this));
  	}
  	#r(e) {
@@ -1825,7 +1929,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  			maxAge: this.sync.out.maxAge
  		});
  		if (!t) return;
-@@ -1755,7 +1974,7 @@ var et = r.Milli(500), Q = class {
+@@ -1755,7 +1978,7 @@ var et = r.Milli(500), Q = class {
  				try {
  					let n = this.#t, i = r.Milli.fromMicro(t.timestamp);
  					if (i < (this.timestamp.peek() ?? 0) || this.sync.out.reference.peek() === void 0 || (this.frame.peek() === void 0 && this.frame.set(t.clone()), !await e.race(this.sync.wait(i).then(() => !0))) || n !== this.#t || i < (this.timestamp.peek() ?? 0)) return;
@@ -1834,7 +1938,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  				} finally {
  					t.close();
  				}
-@@ -1766,9 +1985,20 @@ var et = r.Milli(500), Q = class {
+@@ -1766,9 +1989,20 @@ var et = r.Milli(500), Q = class {
  		});
  		e.cleanup(() => {
  			n.state !== "closed" && n.close();
@@ -1857,7 +1961,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  		let i = this.config.container.kind === "loc" ? new u.Loc.Format("video") : new u.Legacy.Format(this.config), a = new u.Consumer(t, {
  			format: i,
  			maxAge: this.sync.out.maxAge
-@@ -1786,32 +2016,32 @@ var et = r.Milli(500), Q = class {
+@@ -1786,32 +2020,32 @@ var et = r.Milli(500), Q = class {
  		});
  		let o, s;
  		e.spawn(async () => {
@@ -1909,7 +2013,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  			format: new u.Cmaf.Format(o),
  			maxAge: this.sync.out.maxAge
  		});
-@@ -1828,31 +2058,30 @@ var et = r.Milli(500), Q = class {
+@@ -1828,31 +2062,30 @@ var et = r.Milli(500), Q = class {
  		});
  		let l, f;
  		e.spawn(async () => {
@@ -1958,7 +2062,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  		e > t || this.#e.mutate((n) => {
  			for (let i of n) if (i.start <= t && i.end >= e) {
  				i.start = r.Milli.min(i.start, e), i.end = r.Milli.max(i.end, t);
-@@ -1864,7 +2093,7 @@ var et = r.Milli(500), Q = class {
+@@ -1864,7 +2097,7 @@ var et = r.Milli(500), Q = class {
  			}), n.sort((e, t) => e.start - t.start);
  		});
  	}
@@ -1967,7 +2071,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  		this.#e.mutate((t) => {
  			for (; t.length > 0;) {
  				if (t[0].end >= e) {
-@@ -1889,7 +2118,7 @@ async function nt(e) {
+@@ -1889,7 +2122,7 @@ async function nt(e) {
  	let t;
  	if (e.description) t = d.Hex.toBytes(e.description);
  	else if (e.container.kind === "cmaf") try {
@@ -1976,7 +2080,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  	} catch (t) {
  		return console.warn(`video: malformed CMAF init segment for codec ${e.codec}`, t), !1;
  	}
-@@ -1913,7 +2142,7 @@ async function nt(e) {
+@@ -1913,7 +2146,7 @@ async function nt(e) {
  	}
  	return !1;
  }
@@ -1985,7 +2089,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  //#endregion
  //#region src/video/renderer.ts
  var rt = .01, it = class {
-@@ -2009,15 +2238,12 @@ function at(e) {
+@@ -2009,15 +2242,12 @@ function at(e) {
  		let n = [], r = [];
  		for (let [i, a] of t) if (a.codedWidth && a.codedHeight) {
  			let t = a.codedWidth * a.codedHeight;
@@ -2003,18 +2107,18 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  	};
  }
  function ot(e, t) {
-@@ -2025,29 +2251,23 @@ function ot(e, t) {
+@@ -2025,29 +2255,23 @@ function ot(e, t) {
  		let r = [], i = [];
  		for (let [a, o] of n) {
  			if (!o.codedWidth || !o.codedHeight) continue;
 -			let n = o.codedWidth * o.codedHeight, s = e == null || o.codedWidth <= e, c = t == null || o.codedHeight <= t;
 -			s && c ? r.push({
+-				name: a,
+-				size: n
+-			}) : i.push({
 +			let n = e == null || o.codedWidth <= e, s = t == null || o.codedHeight <= t;
 +			n && s ? r.push(a) : i.push({
  				name: a,
--				size: n
--			}) : i.push({
--				name: a,
 -				size: n
 +				size: o.codedWidth * o.codedHeight
  			});
@@ -2039,7 +2143,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  	};
  }
  function ct(e) {
-@@ -2070,7 +2290,7 @@ function lt(e) {
+@@ -2070,7 +2294,7 @@ function lt(e) {
  	let r = st(0)(n), i = r.length === 1 ? r[0] : ot(0, 0)(n)[0];
  	return { [i]: e[i] };
  }
@@ -2048,7 +2152,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  	in;
  	#e = {
  		catalog: new a(void 0),
-@@ -2111,7 +2331,7 @@ var $ = class {
+@@ -2111,7 +2335,7 @@ var $ = class {
  		e.spawn(async () => {
  			let i = {};
  			for (let [a, o] of Object.entries(n)) {
@@ -2057,7 +2161,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  				if (c?.key === s) l = c.supported;
  				else {
  					let i = !1;
-@@ -2142,7 +2362,7 @@ var $ = class {
+@@ -2142,7 +2366,7 @@ var $ = class {
  		let r = lt(t);
  		if (Object.keys(r).length === 0) return;
  		let i = n;
@@ -2066,7 +2170,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  			let t = e.get(this.in.probe)?.estimatedRecvRate;
  			if (t != null) {
  				let e = Math.round(t * .8);
-@@ -2162,21 +2382,22 @@ var $ = class {
+@@ -2162,21 +2386,22 @@ var $ = class {
  		if (n.length === 0) return;
  		if (n.length === 1) return n[0][0];
  		let r = [];
@@ -2093,7 +2197,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  	renderer;
  	emitter;
  	textRenderer;
-@@ -2202,37 +2423,56 @@ var $ = class {
+@@ -2202,37 +2427,56 @@ var $ = class {
  			delay: o(e.delay ?? "auto"),
  			buffer: o(e.buffer ?? r.Milli.zero),
  			target: o(e.target),
@@ -2168,7 +2272,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  			source: this.audio,
  			volume: this.in.volume,
  			muted: this.in.muted,
-@@ -2243,7 +2483,7 @@ var $ = class {
+@@ -2243,7 +2487,7 @@ var $ = class {
  			visible: this.in.visible
  		}), this.#r.cleanup(() => {
  			this.emitter.close(), this.renderer.close();
@@ -2177,7 +2281,7 @@ index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..4330b2730c8b3b7f721f6d98d76c2e04
  			source: this.text,
  			sync: this.sync,
  			container: this.in.container,
-@@ -2258,13 +2498,11 @@ var $ = class {
+@@ -2258,13 +2502,11 @@ var $ = class {
  		});
  	}
  	reset() {

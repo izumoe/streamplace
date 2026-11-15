@@ -60,10 +60,10 @@ index 0eb40bfed..7f3282ce8 100644
  		this.channels = channels;
  		this.rate = rate;
 diff --git a/js/watch/src/audio/decoder.ts b/js/watch/src/audio/decoder.ts
-index 706044c38..4be8d7c29 100644
+index 706044c38..2a17fa0d0 100644
 --- a/js/watch/src/audio/decoder.ts
 +++ b/js/watch/src/audio/decoder.ts
-@@ -39,11 +39,20 @@ export type DecoderInput = {
+@@ -39,11 +39,22 @@ export type DecoderInput = {
  };
  
  /** Constructor properties for {@link Decoder}. */
@@ -71,6 +71,8 @@ index 706044c38..4be8d7c29 100644
 +export interface RenderTarget {
 +	readonly context: Getter<AudioContext | undefined>;
 +	readonly root: Getter<AudioWorkletNode | undefined>;
++	discontinuity(): void;
++	received(timestamp: Time.Milli): void;
 +	attach(options: { channels: number; rate: number; latencySamples: number; buffered: boolean }): AudioBuffer;
 +}
 +
@@ -84,7 +86,7 @@ index 706044c38..4be8d7c29 100644
  };
  
  type DecoderOutput = {
-@@ -81,6 +90,7 @@ export class Decoder {
+@@ -81,6 +92,7 @@ export class Decoder {
  	readonly in: Readonlys<DecoderInput>;
  	readonly source: Source;
  	readonly sync: Sync;
@@ -92,7 +94,7 @@ index 706044c38..4be8d7c29 100644
  
  	readonly #out: DecoderOutput = {
  		context: new Signal<AudioContext | undefined>(undefined),
-@@ -127,6 +137,7 @@ export class Decoder {
+@@ -127,6 +139,7 @@ export class Decoder {
  
  		this.source = props.source;
  		this.sync = props.sync;
@@ -100,7 +102,7 @@ index 706044c38..4be8d7c29 100644
  		this.#signals.cleanup(this.sync.register(this.source.out.jitter));
  		this.#identity = this.#signals.computed((effect) => {
  			const config = effect.get(this.source.out.config);
-@@ -162,13 +173,15 @@ export class Decoder {
+@@ -162,13 +175,15 @@ export class Decoder {
  		// Expose the rate the graph actually runs at.
  		effect.set(this.#out.sampleRate, sampleRate);
  
@@ -122,7 +124,7 @@ index 706044c38..4be8d7c29 100644
  
  		effect.spawn(async () => {
  			// Register the AudioWorklet processor, racing the load against teardown. If teardown wins,
-@@ -176,18 +189,21 @@ export class Decoder {
+@@ -176,18 +191,21 @@ export class Decoder {
  			// abandoned, so building against its name would throw. Gate on the race result, not
  			// `context.state`, because `AudioContext.close()` only flips `.state` to "closed" synchronously
  			// on Chrome (Firefox/Safari report "suspended").
@@ -156,7 +158,7 @@ index 706044c38..4be8d7c29 100644
  
  			// Initial ring depth in samples.
  			const delay = this.sync.out.delay.peek();
-@@ -195,7 +211,9 @@ export class Decoder {
+@@ -195,7 +213,9 @@ export class Decoder {
  			const buffered = this.sync.out.buffered.peek();
  
  			// Let the factory pick the best transport (SharedArrayBuffer or postMessage).
@@ -167,6 +169,46 @@ index 706044c38..4be8d7c29 100644
  			this.#ring = ring;
  			effect.cleanup(() => {
  				ring.close();
+@@ -376,7 +396,7 @@ export class Decoder {
+ 
+ 				// Mark that we received this frame right now.
+ 				const timestamp = Time.Milli.fromMicro(frame.timestamp as Time.Micro);
+-				this.sync.received(timestamp, "audio");
++				this.#received(timestamp);
+ 
+ 				this.#out.stats.update((stats) => ({
+ 					bytesReceived: (stats?.bytesReceived ?? 0) + frame.payload.byteLength,
+@@ -465,7 +485,7 @@ export class Decoder {
+ 				const { frame } = next;
+ 
+ 				const timestamp = Time.Milli.fromMicro(frame.timestamp);
+-				this.sync.received(timestamp, "audio");
++				this.#received(timestamp);
+ 
+ 				this.#out.stats.update((stats) => ({
+ 					bytesReceived: (stats?.bytesReceived ?? 0) + frame.payload.byteLength,
+@@ -486,6 +506,11 @@ export class Decoder {
+ 		}));
+ 	}
+ 
++	#received(timestamp: Time.Milli): void {
++		if (this.renderer) this.renderer.received(timestamp);
++		else this.sync.received(timestamp, "audio");
++	}
++
+ 	// Decode released frames, resetting the decoder before the first frame of a new codec epoch and
+ 	// only then dropping one that is out of order. The terminal sees them in decode order, so it
+ 	// anchors on the oldest. Reports whether to keep going.
+@@ -635,7 +660,8 @@ export class Decoder {
+ 	}): boolean {
+ 		if (!this.#terminal.update(next)) return false;
+ 		this.#ring?.reset();
+-		this.sync.reset();
++		if (this.renderer) this.renderer.discontinuity();
++		else this.sync.reset();
+ 		return true;
+ 	}
+ 
 diff --git a/js/watch/src/audio/index.ts b/js/watch/src/audio/index.ts
 index 0da9202f9..a424e71ae 100644
 --- a/js/watch/src/audio/index.ts
@@ -361,10 +403,10 @@ index 000000000..99e515f2b
 +});
 diff --git a/js/watch/src/audio/mix-buffer.ts b/js/watch/src/audio/mix-buffer.ts
 new file mode 100644
-index 000000000..fe833d910
+index 000000000..719722648
 --- /dev/null
 +++ b/js/watch/src/audio/mix-buffer.ts
-@@ -0,0 +1,114 @@
+@@ -0,0 +1,106 @@
 +import { Time } from "@moq/net";
 +
 +/** A timestamp-indexed PCM reader owned by the audio worklet. */
@@ -462,14 +504,6 @@ index 000000000..fe833d910
 +		this.#scratch.delete(name);
 +	}
 +
-+	reset(): void {
-+		this.timestamp = Time.Micro.zero;
-+		this.#anchored = false;
-+		this.#active = undefined;
-+		this.#activeInputs = [["main", 1]];
-+		this.mode = "main";
-+	}
-+
 +	#window(levels: [string, number][], frames: number, channels: number): Time.Micro | undefined {
 +		for (const [name, gain] of levels) {
 +			if (gain === 0) continue;
@@ -481,11 +515,13 @@ index 000000000..fe833d910
 +}
 diff --git a/js/watch/src/audio/mixer-worklet.test.ts b/js/watch/src/audio/mixer-worklet.test.ts
 new file mode 100644
-index 000000000..3498249d4
+index 000000000..bd3bf6468
 --- /dev/null
 +++ b/js/watch/src/audio/mixer-worklet.test.ts
-@@ -0,0 +1,69 @@
+@@ -0,0 +1,122 @@
 +import { expect, test } from "bun:test";
++import { Time } from "@moq/net";
++import { allocSharedRingBuffer, SharedRingBuffer } from "./shared-ring-buffer";
 +
 +// Bun has no AudioWorkletGlobalScope. The processor and rings run unchanged behind its port boundary.
 +const savedProcessor = Object.getOwnPropertyDescriptor(globalThis, "AudioWorkletProcessor");
@@ -523,6 +559,7 @@ index 000000000..3498249d4
 +		process() {
 +			output[0].fill(0);
 +			renderer.process([], [output]);
++			return output;
 +		},
 +		close() {
 +			if (savedRate) Object.defineProperty(globalThis, "sampleRate", savedRate);
@@ -554,12 +591,62 @@ index 000000000..3498249d4
 +		f.close();
 +	}
 +});
++
++for (const shared of [false, true]) {
++	test(`${shared ? "shared" : "postMessage"} input resets cannot replay an inactive main ring`, () => {
++		const f = setup();
++		try {
++			const inputs = ["main", "g2"].map((id, generation) => {
++				const port = new Port();
++				f.port.receive({ type: "attach", id, generation, port });
++				const ring = shared ? new SharedRingBuffer(allocSharedRingBuffer(1, 48000, 48000, true)) : undefined;
++				port.receive(
++					ring
++						? { type: "init-shared", ...ring.init }
++						: { type: "init-post", channels: 1, rate: 48000, latency: 100, buffered: true },
++				);
++				if (ring) ring.setLatency(1);
++				return {
++					reset() {
++						if (ring) ring.reset();
++						else port.receive({ type: "reset", epoch: 1 });
++					},
++					write(timestamp: number, value: number) {
++						const data = [new Float32Array(9600).fill(value)];
++						if (ring) ring.insert(Time.Micro(timestamp), data);
++						else port.receive({ type: "data", timestamp, data });
++					},
++				};
++			});
++			inputs[0].write(1_000_000, 3);
++			inputs[1].write(1_000_000, 1);
++			f.process();
++			f.port.receive({ type: "mix", levels: { g2: 1 } });
++			for (let i = 0; i < 10; i++) expect(f.process()[0][0]).toBe(1);
++			const before = (f.port.sent.at(-1) as { timestamp: number }).timestamp;
++			inputs[1].reset();
++			expect(f.process()[0][0]).toBe(0);
++			f.port.receive({ type: "mix", levels: undefined });
++			const output = f.process();
++			expect(output[0][0]).toBe(3);
++			expect((f.port.sent.at(-1) as { timestamp: number }).timestamp).toBeGreaterThanOrEqual(before);
++			inputs[1].write(1_000_000, 1);
++			f.port.receive({ type: "mix", levels: { g2: 1 } });
++			expect(f.process()[0][0]).toBe(1);
++			inputs[0].reset();
++			expect(f.process()[0][0]).toBe(1);
++			expect((f.port.sent.at(-1) as { timestamp: number }).timestamp).toBeGreaterThanOrEqual(before);
++		} finally {
++			f.close();
++		}
++	});
++}
 diff --git a/js/watch/src/audio/mixer-worklet.ts b/js/watch/src/audio/mixer-worklet.ts
 new file mode 100644
-index 000000000..3fb9112bb
+index 000000000..02a5ecf9e
 --- /dev/null
 +++ b/js/watch/src/audio/mixer-worklet.ts
-@@ -0,0 +1,92 @@
+@@ -0,0 +1,91 @@
 +import { MixBuffer } from "./mix-buffer";
 +import type { Message, State } from "./render";
 +import { AudioRingBuffer } from "./ring-buffer";
@@ -579,7 +666,6 @@ index 000000000..3fb9112bb
 +		super();
 +		this.port.onmessage = ({ data }) => {
 +			if (data.type === "mix") this.#mix.levels = data.levels;
-+			if (data.type === "reset-clock") this.#mix.reset();
 +			if (data.type === "detach") {
 +				if (this.#inputs.get(data.id)?.generation !== data.generation) return;
 +				this.#inputs.get(data.id)?.port.close();
@@ -654,12 +740,13 @@ index 000000000..3fb9112bb
 +}
 diff --git a/js/watch/src/audio/mixer.test.ts b/js/watch/src/audio/mixer.test.ts
 new file mode 100644
-index 000000000..6e209df10
+index 000000000..ae61adb9c
 --- /dev/null
 +++ b/js/watch/src/audio/mixer.test.ts
-@@ -0,0 +1,296 @@
+@@ -0,0 +1,426 @@
 +import { expect, mock, test } from "bun:test";
 +import * as Catalog from "@moq/hang/catalog";
++import * as Container from "@moq/hang/container";
 +import * as Json from "@moq/json";
 +import { Origin, Path, Time } from "@moq/net";
 +import { Signal } from "@moq/signals";
@@ -686,10 +773,11 @@ index 000000000..6e209df10
 +	Catalog.RootSchema.parse({ audio: { renditions: { main: audio(channels, rate) } } });
 +
 +function setup(channels = 2) {
-+	const keys = ["AudioContext", "AudioWorkletNode", "AudioEncoder", "AudioDecoder"];
++	const keys = ["AudioContext", "AudioWorkletNode", "AudioEncoder", "AudioDecoder", "EncodedAudioChunk"];
 +	const saved = keys.map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const);
 +	const contexts: Context[] = [],
-+		nodes: Node[] = [];
++		nodes: Node[] = [],
++		codecs: Codec[] = [];
 +	class Context extends EventTarget {
 +		state = "running";
 +		sampleRate: number;
@@ -710,6 +798,15 @@ index 000000000..6e209df10
 +	}
 +	class Codec {
 +		state = "configured";
++		resets = 0;
++		decodeQueueSize = 0;
++		decode(_chunk: EncodedAudioChunk) {}
++		constructor() {
++			codecs.push(this);
++		}
++		reset() {
++			this.resets++;
++		}
 +		static async isConfigSupported() {
 +			return { supported: true };
 +		}
@@ -723,11 +820,14 @@ index 000000000..6e209df10
 +		channel = new MessageChannel();
 +		port = this.channel.port1;
 +		sent: { type: "mix"; levels?: Record<string, number> }[] = [];
++		messages: unknown[] = [];
++		disconnected = 0;
 +		constructor(context: Context) {
 +			this.context = context;
 +			nodes.push(this);
 +			const send = this.port.postMessage.bind(this.port);
 +			this.port.postMessage = (message: unknown, transfer: Transferable[] | StructuredSerializeOptions = []) => {
++				this.messages.push(message);
 +				if ((message as { type?: string }).type === "mix")
 +					this.sent.push(message as (typeof this.sent)[number]);
 +				if (Array.isArray(transfer)) send(message, transfer);
@@ -735,6 +835,7 @@ index 000000000..6e209df10
 +			};
 +		}
 +		disconnect() {
++			this.disconnected++;
 +			this.channel.port1.close();
 +			this.channel.port2.close();
 +		}
@@ -757,6 +858,15 @@ index 000000000..6e209df10
 +		AudioWorkletNode: { configurable: true, value: Node },
 +		AudioEncoder: { configurable: true, value: Codec },
 +		AudioDecoder: { configurable: true, value: Codec },
++		EncodedAudioChunk: {
++			configurable: true,
++			value: class {
++				readonly timestamp: number;
++				constructor(init: EncodedAudioChunkInit) {
++					this.timestamp = init.timestamp;
++				}
++			},
++		},
 +	});
 +	const name = new Signal(Path.from("playback/alice")),
 +		catalog = new Signal(catalogOf(channels));
@@ -771,6 +881,8 @@ index 000000000..6e209df10
 +	return {
 +		contexts,
 +		nodes,
++		codecs,
++		sync,
 +		name,
 +		catalog,
 +		owner,
@@ -954,12 +1066,116 @@ index 000000000..6e209df10
 +		await f.close();
 +	}
 +});
++
++test("an input-local discontinuity never resets the shared renderer clock", async () => {
++	const f = setup();
++	try {
++		await settle();
++		const root = f.nodes[0];
++		expect(root.messages.some((message) => (message as { type: string }).type === "attach")).toBe(true);
++		f.mixer.main.reset();
++		await settle();
++		expect(root.messages.filter((message) => (message as { type: string }).type === "reset-clock")).toEqual([]);
++		expect(f.nodes).toHaveLength(1);
++		expect(f.contexts).toHaveLength(1);
++	} finally {
++		await f.close();
++	}
++});
++
++test("a content boundary replaces the renderer and every ring without replacing the context", async () => {
++	const f = setup();
++	try {
++		await settle();
++		const previous = f.nodes[0];
++		expect(f.mixer.main.out.root.peek()).toBe(previous as unknown as AudioWorkletNode);
++		f.mixer.reset();
++		await settle();
++		expect(f.contexts).toHaveLength(1);
++		expect(f.nodes).toHaveLength(2);
++		expect(previous.disconnected).toBe(1);
++		expect(f.mixer.main.out.root.peek()).toBe(f.nodes[1] as unknown as AudioWorkletNode);
++		expect(f.nodes[1].messages.some((message) => (message as { type: string }).type === "attach")).toBe(true);
++		expect(f.mixer.out.timestamp.peek()).toBeUndefined();
++	} finally {
++		await f.close();
++	}
++});
++
++for (const input of ["child", "inactive main", "audible main"] as const) {
++	test(`a real ${input} discontinuity respects shared clock ownership`, async () => {
++		const f = setup();
++		const main = f.owner.createBroadcast(f.name.peek());
++		main.announce();
++		const mainProducer = new Container.Legacy.Producer(
++			main.createTrack("main"),
++			new Container.Legacy.Format("audio"),
++		);
++		const child = f.owner.createBroadcast(f.stems.peek()[0].name);
++		child.announce();
++		const childCatalog = new Json.Snapshot.Producer({
++			track: child.createTrack("catalog.json"),
++			schema: Catalog.RootSchema,
++			deltaRatio: 0,
++		});
++		childCatalog.update(catalogOf(2));
++		const childProducer = new Container.Legacy.Producer(
++			child.createTrack("main"),
++			new Container.Legacy.Format("audio"),
++		);
++		try {
++			if (input !== "audible main") f.mix.set({ 2: 1 });
++			await settle();
++			if (input === "inactive main") {
++				const engine = new MixBuffer();
++				for (const name of ["main", "g2"]) {
++					const ring = new AudioRingBuffer({
++						rate: 48000,
++						channels: 2,
++						latency: Time.Milli(100),
++						buffered: true,
++					});
++					ring.write(Time.Micro(1_000_000), [new Float32Array(9600), new Float32Array(9600)]);
++					engine.inputs.set(name, ring);
++				}
++				engine.levels = { g2: 1 };
++				const output = [new Float32Array(128), new Float32Array(128)];
++				engine.read(output);
++				engine.levels = { g2: 1, g3: 1 };
++				const count = engine.read(output);
++				f.nodes[0].state(engine, count, 128);
++				await settle();
++				expect(f.mixer.out.levels.peek()).toEqual({ 2: 1 });
++				expect(f.mixer.main.in.enabled.peek()).toBe(true);
++			}
++			f.sync.received(Time.Milli(1000), "video");
++			const reference = f.sync.out.reference.peek();
++			const producer = input === "child" ? childProducer : mainProducer;
++			producer.encode(new Uint8Array([0xf8, 0xff, 0xfe]), Time.Micro(6_000_000), true);
++			for (let i = 0; i < 10 && !f.mixer.out.stats.peek()?.bytesReceived; i++) await settle();
++			expect(f.mixer.out.stats.peek()?.bytesReceived).toBeGreaterThan(0);
++			if (input === "audible main") expect(f.sync.out.reference.peek()).not.toBe(reference);
++			else expect(f.sync.out.reference.peek()).toBe(reference);
++			producer.cut(Time.Micro(6_020_000));
++			for (let i = 0; i < 10 && !f.codecs.some((codec) => codec.resets > 0); i++) await settle();
++			expect(f.codecs.some((codec) => codec.resets > 0)).toBe(true);
++			await settle();
++			expect(f.sync.out.reference.peek()).toBe(input === "audible main" ? undefined : reference);
++			expect(f.nodes).toHaveLength(input === "audible main" ? 2 : 1);
++			expect(f.contexts).toHaveLength(1);
++		} finally {
++			mainProducer.close();
++			childProducer.close();
++			await f.close();
++		}
++	});
++}
 diff --git a/js/watch/src/audio/mixer.ts b/js/watch/src/audio/mixer.ts
 new file mode 100644
-index 000000000..b1b5d117a
+index 000000000..e20654bb2
 --- /dev/null
 +++ b/js/watch/src/audio/mixer.ts
-@@ -0,0 +1,293 @@
+@@ -0,0 +1,301 @@
 +import type * as Catalog from "@moq/hang/catalog";
 +import type * as Moq from "@moq/net";
 +import { Time } from "@moq/net";
@@ -1000,6 +1216,7 @@ index 000000000..b1b5d117a
 +	readonly out = readonlys(this.#out);
 +	#context = new Signal<AudioContext | undefined>(undefined);
 +	#root = new Signal<AudioWorkletNode | undefined>(undefined);
++	#renderGeneration = new Signal(0);
 +	#mainEnabled = new Signal(false);
 +	#intent = new Signal<Mix | undefined>(undefined);
 +	#children = new Signal<{ group: number; decoder: Decoder }[]>([]);
@@ -1033,14 +1250,19 @@ index 000000000..b1b5d117a
 +		this.#signals.run((effect) => {
 +			const config = effect.get(graph);
 +			if (!config) return;
++			const context = new AudioContext({ latencyHint: "interactive", sampleRate: config.sampleRate });
++			effect.set(this.#context, context);
++			effect.cleanup(() => context.close());
++		});
++		this.#signals.run((effect) => {
++			const context = effect.get(this.#context);
++			const config = effect.get(graph);
++			effect.get(this.#renderGeneration);
++			if (!context || !config) return;
 +			effect.set(this.#out.mode, "main", "main");
 +			effect.set(this.#out.stalled, true, true);
 +			effect.set(this.#out.levels, undefined);
 +			effect.set(this.#out.timestamp, undefined);
-+			const sampleRate = config.sampleRate;
-+			const context = new AudioContext({ latencyHint: "interactive", sampleRate });
-+			effect.set(this.#context, context);
-+			effect.cleanup(() => context.close());
 +			effect.spawn(async () => {
 +				const loaded = await effect.race(context.audioWorklet.addModule(MixerWorklet).then(() => true));
 +				if (!loaded) return;
@@ -1220,6 +1442,14 @@ index 000000000..b1b5d117a
 +		return {
 +			context: this.#context,
 +			root: this.#root,
++			received: (timestamp) => {
++				if (id === "main" && this.#out.levels.peek() === undefined) this.main.sync.received(timestamp, "audio");
++			},
++			discontinuity: () => {
++				if (id !== "main" || this.#out.levels.peek() !== undefined) return;
++				this.main.sync.reset();
++				this.reset();
++			},
 +			attach: ({ channels, rate, latencySamples, buffered }) => {
 +				const root = this.#root.peek();
 +				if (!root) throw new Error("mixer renderer is not ready");
@@ -1227,11 +1457,6 @@ index 000000000..b1b5d117a
 +				const generation = ++this.#generation;
 +				root.port.postMessage({ type: "attach", id, port: channel.port2, generation }, [channel.port2]);
 +				const buffer = createAudioBuffer({ port: channel.port1 }, channels, rate, latencySamples, buffered);
-+				const reset = buffer.reset.bind(buffer);
-+				buffer.reset = () => {
-+					reset();
-+					root.port.postMessage({ type: "reset-clock", id });
-+				};
 +				const close = buffer.close.bind(buffer);
 +				buffer.close = () => {
 +					close();
@@ -1243,10 +1468,9 @@ index 000000000..b1b5d117a
 +		};
 +	}
 +
-+	/** Re-anchor every input at a content boundary. */
++	/** Replace all input rings together at a content boundary, keeping the context warm. */
 +	reset(): void {
-+		this.main.reset();
-+		for (const child of this.#children.peek()) child.decoder.reset();
++		this.#renderGeneration.update((generation) => generation + 1);
 +	}
 +	/** Stop audio subscriptions and release the shared renderer. */
 +	close(): void {
