@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { runInNewContext } from "node:vm";
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 type Sample = {
@@ -32,11 +33,28 @@ const index = readFileSync(entry, "utf8");
 const player = index.match(/from "\.\/(player-[^"]+\.js)"/)?.[1];
 if (!player) throw new Error("MoQ player bundle not found");
 const bundle = readFileSync(join(dirname(entry), player), "utf8");
-const start = bundle.indexOf("Ce = class {");
-const end = bundle.indexOf("}, we = class {", start);
-if (start < 0 || end < 0) throw new Error("MoQ audio terminal not found");
+const source = ts.createSourceFile(player, bundle, ts.ScriptTarget.Latest);
+const terminals: ts.ClassExpression[] = [];
+function findTerminal(node: ts.Node) {
+  if (
+    ts.isClassExpression(node) &&
+    ["span", "clear", "update"].every((name) =>
+      node.members.some(
+        (member) =>
+          member.name &&
+          ts.isIdentifier(member.name) &&
+          member.name.text === name,
+      ),
+    )
+  )
+    terminals.push(node);
+  ts.forEachChild(node, findTerminal);
+}
+findTerminal(source);
+if (terminals.length !== 1)
+  throw new Error("MoQ audio terminal not found uniquely");
 const AudioTerminal = runInNewContext(
-  `(${bundle.slice(start + "Ce = ".length, end + 1)})`,
+  `(${terminals[0].getText(source)})`,
 ) as new () => Terminal;
 
 function sample(timestamp: number, sampleRate = 48_000): Sample {
