@@ -33,6 +33,7 @@ func TestReceiveVideoRenditionWaitsForSourceAdmission(t *testing.T) {
 			t.Run(fmt.Sprintf("audio-cached=%t/public=%t", cached, published), func(t *testing.T) {
 				mm := NewOffline(&config.CLI{BroadcasterHost: "node.test"})
 				mm.bus = bus.NewBus()
+				trustTranscoderForTest(t, mm, cert)
 				did := ms.Streamer()
 				video, ok := primaryVideoTrack(catalogFromEvents(events), 0, "")
 				require.True(t, ok)
@@ -88,6 +89,7 @@ func TestAdmittedVideoOnlySourceKeepsHLSRenditions(t *testing.T) {
 	did := ms.Streamer()
 	mm := NewOffline(&config.CLI{BroadcasterHost: "node.test", Syndicate: []string{did}})
 	mm.bus = bus.NewBus()
+	trustTranscoderForTest(t, mm, cert)
 	name := RenditionName(video.CodedWidth, video.CodedHeight)
 	sub := mm.bus.SubscribeSegment(ctx, did, name)
 	t.Cleanup(func() { mm.bus.UnsubscribeSegment(ctx, did, name, sub) })

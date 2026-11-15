@@ -106,6 +106,10 @@ func (mm *MediaManager) sourceAudioAt(did string, tfdt uint64, timescale uint32)
 // Opus audio, including an independently received EOS continuation. HLS and
 // packetized playback share one publication turn and source visibility.
 func (mm *MediaManager) PublishRenditionsForPlayback(ctx context.Context, did string, addendum []byte, published bool) error {
+	return mm.publishRenditionsForPlayback(ctx, did, addendum, published, nil)
+}
+
+func (mm *MediaManager) publishRenditionsForPlayback(ctx context.Context, did string, addendum []byte, published bool, verified []segmentValidation) error {
 	if err := mm.CheckPublisherContext(ctx); err != nil {
 		return err
 	}
@@ -130,6 +134,52 @@ func (mm *MediaManager) PublishRenditionsForPlayback(ctx context.Context, did st
 		_, _, source, err := mm.renditionPublication(did, events, published)
 		if err != nil {
 			return err
+		}
+		if len(verified) > 0 {
+			var data []byte
+			mm.segBuffersMut.Lock()
+			if buffer := mm.segBuffers[did]; buffer != nil {
+				for _, buffered := range buffer.segs {
+					if buffered.sourceLabel == source.sourceLabel {
+						data = buffered.Data
+						break
+					}
+				}
+			}
+			mm.segBuffersMut.Unlock()
+			if len(data) == 0 {
+				return ErrAudioSourceMissing
+			}
+			admitted, err := ValidateMP4MediaC2PA(ctx, data)
+			if err != nil {
+				return err
+			}
+			for _, asset := range verified {
+				// Supplied rungs are originals, not transcodes. Their signer and
+				// signed policy must authorize publication under the admitted stream.
+				if len(asset.Manifest.Ingredients) == 0 && asset.Cert == admitted.Cert {
+					original, err := ParseSegmentAssertions(ctx, &asset.Manifest)
+					if err != nil {
+						return err
+					}
+					if original.Creator != admitted.Meta.Creator {
+						return fmt.Errorf("rendition creator does not match admitted source")
+					}
+					if mm.cli.ContentFilters != nil {
+						if err := mm.applyContentFilters(ctx, original); err != nil {
+							return err
+						}
+					}
+					if !sameContentPolicy(original, admitted.Meta) {
+						return fmt.Errorf("rendition source policy does not match admitted source")
+					}
+					published = published && original.Published
+					continue
+				}
+				if err := checkRenditionIngredient(asset, admitted); err != nil {
+					return err
+				}
+			}
 		}
 		if err := mm.waitSourceHLS(ctx, did, source.sourceLabel); err != nil {
 			return err

@@ -166,6 +166,7 @@ type CLI struct {
 	SegmentDebugDir             string
 	AdminDIDs                   []string
 	Syndicate                   []string
+	TrustedTranscoders          []string
 	PlayerTelemetry             bool
 	PlaybackWorkerURL           string
 	Ingests                     *placestream.IngestGetIngestUrls_Output
@@ -303,6 +304,8 @@ const (
 	ReplicatorWebsocket string = "websocket"
 	ReplicatorIroh      string = "iroh"
 )
+
+const DefaultTrustedTranscoder = "did:web:stream.place"
 
 func (cli *CLI) NewCommand(name string) *urfavecli.Command {
 	cmd := &urfavecli.Command{
@@ -1153,6 +1156,20 @@ func (cli *CLI) NewCommand(name string) *urfavecli.Command {
 				},
 				Sources: urfavecli.EnvVars("SP_SYNDICATE"),
 			},
+			&urfavecli.StringFlag{
+				Name: "trusted-transcoders",
+				Usage: `transcoders whose renditions and completed tracks of other nodes' streams we take, besides the streamer's and our own station's: ` +
+					`station did:webs (by the key their DID document publishes) or did:keys, comma-separated; empty for none (default: "` + DefaultTrustedTranscoder + `")`,
+				Action: func(ctx context.Context, cmd *urfavecli.Command, s string) error {
+					// Set but empty means none, not the default.
+					cli.TrustedTranscoders = []string{}
+					if s != "" {
+						cli.TrustedTranscoders = strings.Split(s, ",")
+					}
+					return nil
+				},
+				Sources: urfavecli.EnvVars("SP_TRUSTED_TRANSCODERS"),
+			},
 			&urfavecli.BoolFlag{
 				Name:        "disable-syndication",
 				Usage:       `entirely disable syndication in both directions. useful for local development.`,
@@ -1596,6 +1613,10 @@ func (cli *CLI) CheckConfig() error {
 // callers that only want to know whether the configuration is sound can call
 // CheckConfig instead.
 func (cli *CLI) PrepareConfig() error {
+	if cli.TrustedTranscoders == nil {
+		cli.TrustedTranscoders = []string{DefaultTrustedTranscoder}
+	}
+
 	for _, dest := range cli.dataDirFlags {
 		*dest = strings.Replace(*dest, SPDataDir, cli.DataDir, 1)
 	}

@@ -379,7 +379,12 @@ func (r *WebsocketReplicator) openMoq(ctx context.Context, origin *placestream.B
 // feedRenditions folds a rendition addendum the origin minted into this
 // node's live window and playback bus, once its signatures check out.
 func (r *WebsocketReplicator) feedRenditions(ctx context.Context, streamer string, addendum []byte) error {
-	return r.mm.ReceiveRenditions(ctx, streamer, addendum)
+	err := r.mm.ReceiveRenditions(ctx, streamer, addendum)
+	if errors.Is(err, media.ErrUntrustedTranscoder) {
+		log.Debug(ctx, "dropping renditions from an untrusted transcoder", "streamer", streamer, "error", err)
+		return nil
+	}
+	return err
 }
 
 const sourceAddendaLimit = 8

@@ -77,3 +77,16 @@ func TestSweepConcurrencyFlag(t *testing.T) {
 	t.Setenv("SP_SWEEP_CONCURRENCY", "12")
 	require.Equal(t, 12, run(t).SweepConcurrency)
 }
+
+func TestTrustedTranscodersFlag(t *testing.T) {
+	prepared := func(cli *CLI) []string {
+		t.Helper()
+		require.NoError(t, cli.PrepareConfig())
+		return cli.TrustedTranscoders
+	}
+	require.Equal(t, []string{DefaultTrustedTranscoder}, prepared(flagRun(t)))
+	require.Equal(t, []string{"did:web:station.example", "did:key:zQ3sh"}, prepared(flagRun(t, "--trusted-transcoders=did:web:station.example,did:key:zQ3sh")))
+	require.Empty(t, prepared(flagRun(t, "--trusted-transcoders=")), "explicitly empty disables external trust")
+	t.Setenv("SP_TRUSTED_TRANSCODERS", "")
+	require.Empty(t, prepared(flagRun(t)), "an empty environment setting must not restore the default")
+}

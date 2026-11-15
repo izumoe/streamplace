@@ -83,6 +83,7 @@ func TestRenditionAudioTailPreservesPacketOrder(t *testing.T) {
 						defer cancel()
 						mm := NewOffline(&config.CLI{BroadcasterHost: "node.test"})
 						mm.bus = bus.NewBus()
+						trustTranscoderForTest(t, mm, cert)
 						did := ms.Streamer()
 						for _, segment := range completed {
 							valid, err := ValidateMP4MediaC2PA(ctx, segment)

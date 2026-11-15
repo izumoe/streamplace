@@ -268,3 +268,24 @@ func TestWebsocketReplicationBindsSourceToNamedStreamer(t *testing.T) {
 	require.ErrorContains(t, err, "not "+other.DID())
 	require.NoError(t, <-served)
 }
+
+func TestUntrustedRenditionDoesNotStopReplication(t *testing.T) {
+	ctx := t.Context()
+	foreign := signedSegments(t, ctx)[0]
+	tracks, err := media.MuxlTracks(ctx, foreign)
+	require.NoError(t, err)
+	video := tracks["video1"]
+	require.NotEmpty(t, video)
+	streamer, err := media.NewEphemeralMediaSigner("authorized-streamer")
+	require.NoError(t, err)
+	mm := media.NewOffline(&config.CLI{BroadcasterHost: "node.test"})
+	r := &WebsocketReplicator{mm: mm}
+	require.ErrorIs(t, mm.ReceiveRenditions(ctx, streamer.DID(), video), media.ErrUntrustedTranscoder)
+	require.NoError(t, r.feedRenditions(ctx, streamer.DID(), video), "optional untrusted video cannot terminate the source stream")
+	require.Empty(t, mm.BufferedSegments(streamer.DID()))
+	corrupt := append([]byte(nil), video...)
+	corrupt[len(corrupt)-1] ^= 1
+	err = r.feedRenditions(ctx, streamer.DID(), corrupt)
+	require.Error(t, err, "invalid media must remain fatal")
+	require.NotErrorIs(t, err, media.ErrUntrustedTranscoder)
+}

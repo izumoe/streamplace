@@ -87,3 +87,37 @@ deployment actually needs them.
 The Docker workflow supports isolated sibling checkouts with unique basenames.
 Use that layout: equal worktree basenames can collide on container names, and a
 Git common directory outside the mounted parent is unavailable in the container.
+
+## Upstream catch-up, November 2026
+
+Comparison: fork `885310dce` against upstream `next` at `a9dbc4d87`.
+These branches have diverged; replacing whole files would lose the DOM player,
+access policy, bios, chat ordering, signing and continuous-audio fixes.
+
+The first port adopts upstream's transcoder authorization and explicit-empty
+configuration semantics, the indefinite-archival expiration fix and five-minute
+Web Push expiry. Additional signed-fixture regressions cover primary `did:key`
+identity, audio-tail authorization and trusted cross-stream rendition replay.
+The publication code retains its existing source-admission and reconnect checks.
+See [verification and operator configuration](moq-for-devs.md#what-gets-verified).
+
+Further candidates need individual ports:
+
+- Audio stems: port receiver and viewer support for upstream streams without
+  requiring per-stem ingest or the OBS plugin. Our eRTMP ingest goal is a main
+  live mix and a separate VOD mix, with explicit live/recording routing.
+- MoQ push and node roles: recording/transcoding leases coordinate through a
+  shared database. They do not coordinate independent peer databases.
+- Persistent web assets and update recovery: adapt the bounded cache and failure
+  tests to Vite's existing worker and asset paths, preserving API/media exclusions.
+- Metadata defaults/loading, indexed profile enrichment and pending chat removals
+  are useful smaller ports. Preserve our access gates and ordered chat refresh.
+- WHIP AV1 and upstream native/mobile dependency upgrades need separate validation;
+  do not replace the optimized RTMP/muxl pipeline or change OTA compatibility as
+  a side effect of a package version bump.
+
+OBS/Desktop integration, Windows, GitLab/Tangled mirroring, dual frontend hosting
+and beta invites remain excluded. Upstream `next` currently declares package
+version 0.13.1; its separate v0.13.4 release commit is not an ancestor of `next`.
+Version alignment must identify the fork's actual commit and must not imply that
+all upstream changes or native SDK upgrades have been adopted.
