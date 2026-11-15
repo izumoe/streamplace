@@ -232,7 +232,12 @@ func (mm *MediaManager) signAudioChunk(ctx context.Context, header []byte, packe
 	if err := part.Marshal(&mp4buf); err != nil {
 		return nil, fmt.Errorf("marshal audio packets: %w", err)
 	}
-	canonical, err := muxl.RunMuxlCanonicalize(ctx, mp4buf.Bytes(), map[uint32]uint32{1: want})
+	main := mainAudioTracks(audioTracks(cat))
+	if len(main) == 0 {
+		return nil, fmt.Errorf("audio completion has no main source")
+	}
+	metadata := map[uint32]muxl.TrackMeta{want: {AlternateGroup: main[0].AlternateGroup, Label: main[0].Label}}
+	canonical, err := muxl.RunMuxlCanonicalize(ctx, mp4buf.Bytes(), map[uint32]uint32{1: want}, muxl.WithTrackMeta(metadata))
 	if err != nil {
 		return nil, err
 	}

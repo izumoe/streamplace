@@ -99,8 +99,9 @@ func TestMoqStartReportsListenerError(t *testing.T) {
 	db, err := mod.(*model.DBModel).DB.DB()
 	require.NoError(t, err)
 	defer db.Close()
-	r := NewWebsocketReplicator(bus.NewBus(), mod, nil, nil, nil)
-	err = r.Start(ctx, &config.CLI{ServerHost: "localhost", MoqAddr: "127.0.0.1:0"})
+	cli := &config.CLI{ServerHost: "localhost", MoqAddr: "127.0.0.1:0"}
+	r := NewWebsocketReplicator(cli, bus.NewBus(), mod, nil, nil, nil)
+	err = r.Start(ctx, cli)
 	require.ErrorContains(t, err, "moq listener has no TLS files")
 	require.NoError(t, ctx.Err(), "the listener error must reach the caller before the deadline")
 }

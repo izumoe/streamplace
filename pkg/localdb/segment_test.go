@@ -13,7 +13,7 @@ import (
 
 func TestSegmentPreservesAllTracks(t *testing.T) {
 	var metadata SegmentMediaData
-	require.NoError(t, json.Unmarshal([]byte(`{"video":[{"trackId":7,"codec":"h264","width":1920,"height":1080},{"trackId":20,"codec":"av1","width":1280,"height":720}],"audio":[{"trackId":42,"codec":"aac","rate":48000,"channels":2},{"trackId":99,"codec":"opus","rate":48000,"channels":2}]}`), &metadata))
+	require.NoError(t, json.Unmarshal([]byte(`{"video":[{"trackId":7,"codec":"h264","width":1920,"height":1080},{"trackId":20,"codec":"av1","width":1280,"height":720}],"audio":[{"trackId":42,"codec":"aac","rate":48000,"channels":2},{"trackId":99,"codec":"opus","rate":48000,"channels":2,"alternateGroup":2,"label":"Music: 音楽"}]}`), &metadata))
 	segment, err := (&Segment{MediaData: &metadata}).ToStreamplaceSegment()
 	require.NoError(t, err)
 	require.Len(t, segment.Video, 2)
@@ -30,6 +30,9 @@ func TestSegmentPreservesAllTracks(t *testing.T) {
 	require.Equal(t, "aac", audio[0].(map[string]any)["codec"])
 	require.Equal(t, "42", audio[0].(map[string]any)["trackId"])
 	require.Equal(t, "opus", audio[1].(map[string]any)["codec"])
+	require.Equal(t, float64(2), audio[1].(map[string]any)["alternateGroup"])
+	require.Equal(t, "Music: 音楽", audio[1].(map[string]any)["label"])
+	require.NotContains(t, audio[0].(map[string]any), "alternateGroup", "legacy tracks omit optional grouping")
 }
 
 func TestSegmentLegacyMetadata(t *testing.T) {

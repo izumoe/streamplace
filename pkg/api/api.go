@@ -49,6 +49,7 @@ import (
 	"stream.place/streamplace/pkg/model"
 	"stream.place/streamplace/pkg/notifications"
 	"stream.place/streamplace/pkg/placestream"
+	"stream.place/streamplace/pkg/replication"
 	"stream.place/streamplace/pkg/rtmps"
 	"stream.place/streamplace/pkg/spxrpc"
 	"stream.place/streamplace/pkg/statedb"
@@ -64,6 +65,7 @@ import (
 
 type StreamplaceAPI struct {
 	Access        *accessctl.Controller
+	Replicator    replication.Replicator
 	CLI           *config.CLI
 	Model         model.Model
 	StatefulDB    *statedb.StatefulDB
@@ -183,6 +185,7 @@ func (a *StreamplaceAPI) Handler(ctx context.Context) (http.Handler, error) {
 	}
 	a.XRPCServer = xrpc.(*spxrpc.Server)
 	a.XRPCServer.SetAccessController(a.Access)
+	a.XRPCServer.Replicator = a.Replicator
 	router := httprouter.New()
 
 	// Create our middleware factory with the default settings.

@@ -18,15 +18,17 @@ import (
 // aliases, so values (events, catalogs, signer inputs) flow between this package
 // and upstream with no conversion and the existing call sites are unchanged.
 type (
-	MuxlEvent        = upstream.Event
-	MuxlCatalog      = upstream.Catalog
-	MuxlCatalogVideo = upstream.CatalogVideo
-	MuxlCatalogAudio = upstream.CatalogAudio
-	MuxlVideoConfig  = upstream.VideoConfig
-	MuxlAudioConfig  = upstream.AudioConfig
-	MuxlContainer    = upstream.Container
-	SignerInput      = upstream.SignerInput
-	TranscodeInput   = upstream.TranscodeInput
+	MuxlEvent          = upstream.Event
+	MuxlCatalog        = upstream.Catalog
+	MuxlCatalogVideo   = upstream.CatalogVideo
+	MuxlCatalogAudio   = upstream.CatalogAudio
+	MuxlVideoConfig    = upstream.VideoConfig
+	MuxlAudioConfig    = upstream.AudioConfig
+	TrackMeta          = upstream.TrackMeta
+	CanonicalizeOption = upstream.CanonicalizeOption
+	MuxlContainer      = upstream.Container
+	SignerInput        = upstream.SignerInput
+	TranscodeInput     = upstream.TranscodeInput
 )
 
 // TranscodeIngredientLabel is the C2PA ingredient label SignTranscode assigns
@@ -224,17 +226,18 @@ func RunMuxlSignSegment(ctx context.Context, input io.Reader, in SignerInput, in
 // output) into a canonical MUXL fMP4. trackRemap (may be nil) reassigns track
 // IDs in the output — used to mint a transcoded rendition at a free id so it
 // can join the source's tracks in one multi-track segment without colliding.
-func RunMuxlCanonicalize(ctx context.Context, mp4 []byte, trackRemap map[uint32]uint32) ([]byte, error) {
+func RunMuxlCanonicalize(ctx context.Context, mp4 []byte, trackRemap map[uint32]uint32, opts ...CanonicalizeOption) ([]byte, error) {
 	eng, err := getEngine()
 	if err != nil {
 		return nil, err
 	}
-	var opts []upstream.CanonicalizeOption
 	if len(trackRemap) > 0 {
 		opts = append(opts, upstream.WithTrackRemap(trackRemap))
 	}
 	return eng.Canonicalize(ctx, mp4, opts...)
 }
+
+var WithTrackMeta = upstream.WithTrackMetadata
 
 // RunMuxlSignTranscode signs in.Output (an unsigned canonical MUXL segment —
 // the transcoded result) as a standalone asset declaring in.Source (the

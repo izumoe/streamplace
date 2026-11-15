@@ -7,8 +7,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/fxamacker/cbor/v2"
 	"net"
 	"net/url"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -80,7 +82,7 @@ func (r *WebsocketReplicator) serveMoQ(ctx context.Context) error {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				r.serveBroadcast(gctx, req)
+				r.serveBroadcast(gctx, origin, req)
 			}()
 		}
 		return nil
@@ -159,7 +161,7 @@ func (r *WebsocketReplicator) publishMoQRelay(ctx context.Context, origin *offic
 // serveBroadcast answers a request for a streamer's broadcast: a
 // stream that is not live here is refused rather than waited on, and a
 // live one is served until it ends on the bus.
-func (r *WebsocketReplicator) serveBroadcast(ctx context.Context, req *official.BroadcastRequest) {
+func (r *WebsocketReplicator) serveBroadcast(ctx context.Context, origin *official.OriginProducer, req *official.BroadcastRequest) {
 	streamer, err := req.Path()
 	if err != nil {
 		return
@@ -202,7 +204,7 @@ func (r *WebsocketReplicator) serveBroadcast(ctx context.Context, req *official.
 		}
 	}()
 	accepted := false
-	r.serveTracks(ctx, streamer, sourceChannel, broadcast, h264Only, func() error {
+	r.serveTracks(ctx, streamer, sourceChannel, broadcast, origin, h264Only, func() error {
 		if err := req.Accept(broadcast); err != nil {
 			return err
 		}
@@ -221,13 +223,18 @@ func (r *WebsocketReplicator) serveBroadcast(ctx context.Context, req *official.
 // broadcast reachable once the first source segment's tracks are all in the
 // catalog: it grows a track at a time, and a subscriber that saw part of
 // the set would reassemble partial segments.
-func (r *WebsocketReplicator) serveTracks(ctx context.Context, streamer, sourceChannel string, broadcast *official.BroadcastProducer, h264Only bool, publish func() error) {
+func (r *WebsocketReplicator) serveTracks(ctx context.Context, streamer, sourceChannel string, broadcast *official.BroadcastProducer, origin *official.OriginProducer, h264Only bool, publish func() error) {
 	source := r.bus.SubscribeSegmentBuf(ctx, streamer, sourceChannel, 2)
 	defer r.bus.UnsubscribeSegment(context.Background(), streamer, sourceChannel, source)
 	renditions := r.bus.SubscribeSegmentBuf(ctx, streamer, media.RenditionsChannel, 4)
 	defer r.bus.UnsubscribeSegment(context.Background(), streamer, media.RenditionsChannel, renditions)
 	tracks := moqTracks{}
 	defer tracks.finish()
+	var stems *moqAudioStems
+	if sourceChannel == media.PlaybackSourceRendition && origin != nil {
+		stems = &moqAudioStems{origin: origin, path: "playback/" + streamer}
+		defer stems.close()
+	}
 	// The tracks of one source segment share a group sequence, which is
 	// how a peer puts the segment back together (see consumeSource).
 	var sequence uint64
@@ -247,7 +254,7 @@ func (r *WebsocketReplicator) serveTracks(ctx context.Context, streamer, sourceC
 					continue
 				}
 				if sourceChannel == media.PlaybackSourceRendition {
-					err = tracks.publishPlayback(ctx, broadcast, seg.Muxl)
+					err = tracks.publishPlayback(ctx, broadcast, seg.Muxl, stems, false)
 				} else {
 					err = tracks.publishAudioAddendum(ctx, broadcast, seg.Muxl)
 				}
@@ -259,6 +266,12 @@ func (r *WebsocketReplicator) serveTracks(ctx context.Context, streamer, sourceC
 			}
 			if !seg.Published {
 				if sourceChannel == media.PlaybackSourceRendition {
+					if stems != nil {
+						stems.close()
+						if err := stems.catalog(broadcast); err != nil {
+							return
+						}
+					}
 					if err := tracks.finishGroups(); err != nil {
 						log.Warn(ctx, "moq: could not finish playback groups", "streamer", streamer, "error", err)
 						return
@@ -275,7 +288,9 @@ func (r *WebsocketReplicator) serveTracks(ctx context.Context, streamer, sourceC
 				if batchDuration%time.Millisecond != 0 {
 					milliseconds++
 				}
-				if err := broadcast.SetCatalogSection("streamplace", fmt.Sprintf(`{"batchDurationMs":%d}`, milliseconds)); err != nil {
+				if stems != nil {
+					stems.batch = batchDuration
+				} else if err := broadcast.SetCatalogSection("streamplace", fmt.Sprintf(`{"batchDurationMs":%d}`, milliseconds)); err != nil {
 					log.Warn(ctx, "moq: could not publish playback timing", "streamer", streamer, "error", err)
 					return
 				}
@@ -284,7 +299,7 @@ func (r *WebsocketReplicator) serveTracks(ctx context.Context, streamer, sourceC
 			n := sequence
 			sequence++
 			if sourceChannel == media.PlaybackSourceRendition {
-				err = tracks.publishPlayback(ctx, broadcast, seg.Muxl)
+				err = tracks.publishPlayback(ctx, broadcast, seg.Muxl, stems, true)
 			} else {
 				err = tracks.publish(ctx, broadcast, seg.Muxl, h264Only, func(t *official.CMAFProducer) (*official.CMAFGroupProducer, error) { return t.CreateGroup(n) })
 			}
@@ -293,7 +308,7 @@ func (r *WebsocketReplicator) serveTracks(ctx context.Context, streamer, sourceC
 				continue
 			}
 			if sourceChannel == media.PlaybackSourceRendition {
-				err = tracks.publishPlayback(ctx, broadcast, seg.Muxl)
+				err = tracks.publishPlayback(ctx, broadcast, seg.Muxl, stems, false)
 			} else {
 				err = tracks.publish(ctx, broadcast, seg.Muxl, false, (*official.CMAFProducer).AppendGroup)
 			}
@@ -317,6 +332,7 @@ func (r *WebsocketReplicator) serveTracks(ctx context.Context, streamer, sourceC
 type moqTrack struct {
 	*official.CMAFProducer
 	catalog []byte
+	audio   bool
 	group   *official.CMAFGroupProducer
 }
 
@@ -455,10 +471,9 @@ func (ts moqTracks) publishTrack(ctx context.Context, broadcast *official.Broadc
 	return nil
 }
 
-// publishPlayback keeps each video's GoP open across admission batches.
-// Browser groups must begin at a real sync sample; peer groups instead keep
-// their shared admission sequence so consumeSource can reassemble them.
-func (ts moqTracks) publishPlayback(ctx context.Context, broadcast *official.BroadcastProducer, seg []byte) error {
+// Playback groups begin at a video sync sample; peer groups retain their
+// shared admission sequence so consumeSource can reassemble them.
+func (ts moqTracks) publishPlayback(ctx context.Context, broadcast *official.BroadcastProducer, seg []byte, stems *moqAudioStems, source bool) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	events := make(chan *muxl.MuxlEvent, 16)
@@ -476,18 +491,22 @@ func (ts moqTracks) publishPlayback(ctx context.Context, broadcast *official.Bro
 		}
 		if event.Type == "init" {
 			init = event
+			if stems != nil && source && init.Catalog != nil && init.Catalog.Audio != nil {
+				publishErr = stems.configure(init.Catalog, ts)
+			}
 			continue
 		}
-		write := func(name string, id uint32, video bool) error {
+		write := func(target moqTracks, producer *official.BroadcastProducer, name string, id uint32, video bool) error {
 			key := strconv.FormatUint(uint64(id), 10)
 			data := event.Tracks[key]
 			if len(data) == 0 {
 				return nil
 			}
-			t, fragments, err := ts.track(ctx, broadcast, name, data, init.TrackInits[key])
+			t, fragments, err := target.track(ctx, producer, name, data, init.TrackInits[key])
 			if err != nil {
 				return err
 			}
+			t.audio = !video
 			samples := event.Samples[key]
 			if len(fragments) != len(samples.Sizes) {
 				return fmt.Errorf("track %s has %d fragments for %d samples", name, len(fragments), len(samples.Sizes))
@@ -520,14 +539,29 @@ func (ts moqTracks) publishPlayback(ctx context.Context, broadcast *official.Bro
 		} else {
 			if init.Catalog.Video != nil {
 				for name, config := range init.Catalog.Video.Renditions {
-					if publishErr = write(name, config.TrackID(), true); publishErr != nil {
+					if publishErr = write(ts, broadcast, name, config.TrackID(), true); publishErr != nil {
 						break
 					}
 				}
 			}
 			if publishErr == nil && init.Catalog.Audio != nil {
+				main, selected := media.PlaybackAudioGroups(init.Catalog)
+				if stems != nil {
+					main = stems.main
+				}
 				for name, config := range init.Catalog.Audio.Renditions {
-					if publishErr = write(name, config.TrackID(), false); publishErr != nil {
+					target, producer := ts, broadcast
+					if config.AlternateGroup != main {
+						if stems == nil || !slices.ContainsFunc(selected, func(a muxl.MuxlAudioConfig) bool { return a.TrackID() == config.TrackID() }) {
+							continue
+						}
+						child := stems.children[config.AlternateGroup]
+						if child == nil {
+							continue
+						}
+						target, producer = child.tracks, child.producer
+					}
+					if publishErr = write(target, producer, name, config.TrackID(), false); publishErr != nil {
 						break
 					}
 				}
@@ -544,14 +578,23 @@ func (ts moqTracks) publishPlayback(ctx context.Context, broadcast *official.Bro
 		return publishErr
 	}
 	if init != nil && init.Catalog != nil && init.Catalog.Audio != nil {
-		for name := range init.Catalog.Audio.Renditions {
-			if t := ts[name]; t != nil && t.group != nil {
+		for name, config := range init.Catalog.Audio.Renditions {
+			t := ts[name]
+			if stems != nil && config.AlternateGroup != stems.main {
+				if child := stems.children[config.AlternateGroup]; child != nil {
+					t = child.tracks[name]
+				}
+			}
+			if t != nil && t.group != nil {
 				if err := t.group.Finish(); err != nil {
 					return fmt.Errorf("track %s group: %w", name, err)
 				}
 				t.group = nil
 			}
 		}
+	}
+	if stems != nil {
+		return stems.catalog(broadcast)
 	}
 	return nil
 }
@@ -562,7 +605,7 @@ func (ts moqTracks) track(ctx context.Context, broadcast *official.BroadcastProd
 		return nil, nil, fmt.Errorf("track %s: %w", name, err)
 	}
 	t := ts[name]
-	if t != nil && !bytes.Equal(t.catalog, catalog) {
+	if t != nil && !bytes.Equal(t.catalog, catalog) && !sameAudioDecoderCatalog(t.catalog, catalog) {
 		return nil, nil, fmt.Errorf("track %s changed its codec config", name)
 	}
 	if t == nil {
@@ -581,6 +624,46 @@ func (ts moqTracks) track(ctx context.Context, broadcast *official.BroadcastProd
 		ts[name] = t
 	}
 	return t, fragments, nil
+}
+
+// Group and label affect routing and controls, not the decoder configuration.
+func sameAudioDecoderCatalog(left, right []byte) bool {
+	if len(left) < 24 || len(right) < 24 || !bytes.Equal(left[4:24], right[4:24]) {
+		return false
+	}
+	decode := func(box []byte) (map[string]any, error) {
+		mode, err := cbor.DecOptions{DefaultMapType: reflect.TypeFor[map[string]any]()}.DecMode()
+		if err != nil {
+			return nil, err
+		}
+		var catalog map[string]any
+		if err := mode.Unmarshal(box[24:], &catalog); err != nil {
+			return nil, err
+		}
+		audio, ok := catalog["audio"].(map[string]any)
+		if !ok {
+			return nil, errors.New("catalog has no audio")
+		}
+		renditions, ok := audio["renditions"].(map[string]any)
+		if !ok || len(renditions) == 0 {
+			return nil, errors.New("catalog has no audio renditions")
+		}
+		for _, raw := range renditions {
+			config, ok := raw.(map[string]any)
+			if !ok {
+				return nil, errors.New("invalid audio configuration")
+			}
+			delete(config, "alternateGroup")
+			delete(config, "label")
+		}
+		return catalog, nil
+	}
+	a, err := decode(left)
+	if err != nil {
+		return false
+	}
+	b, err := decode(right)
+	return err == nil && reflect.DeepEqual(a, b)
 }
 
 // cmafFragments splits one track's canonical segment into its CMAF

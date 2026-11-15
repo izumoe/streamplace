@@ -121,7 +121,7 @@ func TestMoqDeliversAudioContinuationBeforeVideoEnds(t *testing.T) {
 			ready := make(chan struct{})
 			served := make(chan struct{})
 			go func() {
-				r.serveTracks(replayCtx, "did:test:audio", moqSourceChannel, replay, false, func() error { close(ready); return nil })
+				r.serveTracks(replayCtx, "did:test:audio", moqSourceChannel, replay, nil, false, func() error { close(ready); return nil })
 				close(served)
 			}()
 			defer func() { stop(); <-served }()
@@ -181,7 +181,7 @@ func TestMoqLegacyOmitsAudioContinuation(t *testing.T) {
 	r := &WebsocketReplicator{bus: b}
 	go func() {
 		defer close(done)
-		r.serveTracks(ctx, streamer, moqSourceChannel, producer, true, func() error { close(ready); return nil })
+		r.serveTracks(ctx, streamer, moqSourceChannel, producer, nil, true, func() error { close(ready); return nil })
 	}()
 	defer func() { cancel(); <-done }()
 	select {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -55,6 +56,31 @@ func (mm *MediaManager) WebRTCPlayback2(ctx context.Context, user string, rendit
 	audioRTPSender, err := peerConnection.AddTrack(audioTrack)
 	if err != nil {
 		return nil, fmt.Errorf("failed to add audio track to peer connection: %w", err)
+	}
+
+	audioSenders := []*webrtc.RTPSender{audioRTPSender}
+	stemTracks := map[uint32]*webrtc.TrackLocalStaticSample{}
+	busRendition := rendition
+	if audioOnly || rendition == "source" {
+		busRendition = WebRTCSourceRendition
+	}
+	latest := mm.bus.LatestSegment(user, busRendition)
+	if latest != nil && !latest.Published && viewer != user && !mm.cli.WideOpen {
+		latest = nil
+	}
+	for _, group := range stemGroupsFor(latest, offeredAudioTracks(offer)-1) {
+		track, err := webrtc.NewTrackLocalStaticSample(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus}, fmt.Sprintf("audio-g%d", group), "pion")
+		if err != nil {
+			_ = peerConnection.Close()
+			return nil, err
+		}
+		sender, err := peerConnection.AddTrack(track)
+		if err != nil {
+			_ = peerConnection.Close()
+			return nil, fmt.Errorf("add stem track: %w", err)
+		}
+		audioSenders = append(audioSenders, sender)
+		stemTracks[group] = track
 	}
 
 	closePeerConnection := func() {
@@ -184,6 +210,10 @@ func (mm *MediaManager) WebRTCPlayback2(ctx context.Context, user string, rendit
 			}()
 
 			var videoPacer, audioPacer samplePacer
+			stemPacers := map[uint32]*samplePacer{}
+			for group := range stemTracks {
+				stemPacers[group] = &samplePacer{}
+			}
 			for {
 				var segment playbackSegment
 				select {
@@ -202,6 +232,9 @@ func (mm *MediaManager) WebRTCPlayback2(ctx context.Context, user string, rendit
 					idle := time.Since(started)
 					videoPacer.pause(idle)
 					audioPacer.pause(idle)
+					for _, pacer := range stemPacers {
+						pacer.pause(idle)
+					}
 				}
 
 				packet := segment.packet
@@ -226,6 +259,13 @@ func (mm *MediaManager) WebRTCPlayback2(ctx context.Context, user string, rendit
 					audioPacer.deadline = time.Time{}
 					log.Warn(ctx, "no audio samples to write")
 				}
+				for _, stem := range packet.Stems {
+					track, pacer := stemTracks[stem.Group], stemPacers[stem.Group]
+					if track == nil || len(stem.Audio) == 0 {
+						continue
+					}
+					g.Go(func() error { return pacer.writeSamples(groupCtx, track, stem.Audio, scalar, 0) })
+				}
 				if err := g.Wait(); err != nil {
 					if ctx.Err() == nil || !errors.Is(err, io.ErrClosedPipe) {
 						log.Error(ctx, "failed to write samples", "error", err)
@@ -246,14 +286,16 @@ func (mm *MediaManager) WebRTCPlayback2(ctx context.Context, user string, rendit
 			}()
 		}
 
-		go func() {
-			rtcpBuf := make([]byte, 1500)
-			for {
-				if _, _, rtcpErr := audioRTPSender.Read(rtcpBuf); rtcpErr != nil {
-					return
+		for _, sender := range audioSenders {
+			go func() {
+				rtcpBuf := make([]byte, 1500)
+				for {
+					if _, _, err := sender.Read(rtcpBuf); err != nil {
+						return
+					}
 				}
-			}
-		}()
+			}()
+		}
 
 		// Set the handler for ICE connection state
 		// This will notify you when the peer has connected/disconnected
@@ -283,6 +325,33 @@ func (p *samplePacer) pause(idle time.Duration) {
 	if !p.deadline.IsZero() {
 		p.deadline = p.deadline.Add(idle)
 	}
+}
+
+// offeredAudioTracks bounds senders by the receiver's offered transceivers.
+func offeredAudioTracks(offer *webrtc.SessionDescription) int {
+	parsed, err := offer.Unmarshal()
+	if err != nil {
+		return 1
+	}
+	n := 0
+	for _, md := range parsed.MediaDescriptions {
+		if md.MediaName.Media == "audio" {
+			n++
+		}
+	}
+	return max(n, 1)
+}
+
+func stemGroupsFor(latest *bus.Seg, limit int) []uint32 {
+	if latest == nil || latest.PacketizedData == nil || limit <= 0 {
+		return nil
+	}
+	var groups []uint32
+	for _, stem := range latest.PacketizedData.Stems {
+		groups = append(groups, stem.Group)
+	}
+	sort.Slice(groups, func(i, j int) bool { return groups[i] < groups[j] })
+	return groups[:min(len(groups), limit, maxStems)]
 }
 
 // Split the audio span uniformly so timestamp gaps do not expand its RTP clock.

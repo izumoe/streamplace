@@ -27,6 +27,7 @@ import (
 	"stream.place/streamplace/pkg/log"
 	"stream.place/streamplace/pkg/media"
 	"stream.place/streamplace/pkg/model"
+	"stream.place/streamplace/pkg/replication"
 	"stream.place/streamplace/pkg/statedb"
 	"stream.place/streamplace/pkg/upload"
 	"stream.place/streamplace/pkg/viewlog"
@@ -34,6 +35,7 @@ import (
 
 type Server struct {
 	Access          *accessctl.Controller
+	Replicator      replication.Replicator
 	e               *echo.Echo
 	cli             *config.CLI
 	model           model.Model

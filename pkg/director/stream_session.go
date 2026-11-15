@@ -1158,13 +1158,8 @@ func (ss *StreamSession) AddToWebRTC(ctx context.Context, spseg *placestream.Seg
 				log.Warn(ctx, "invalid supplied video track ID", "track", *video.TrackId)
 				continue
 			}
-			data, err := media.PresentationWithOpus(ctx, seg.Muxl, uint32(id))
-			if err != nil {
-				log.Warn(ctx, "could not present supplied rendition", "rendition", name, "error", err)
-				continue
-			}
-			frame := &bus.Seg{Filepath: seg.Filepath, Data: data, Published: seg.Published}
-			frame.PacketizedData, err = media.Packetize(ctx, ss.cli, frame, 0)
+			frame := &bus.Seg{Filepath: seg.Filepath, Muxl: seg.Muxl, Published: seg.Published}
+			frame.PacketizedData, err = media.Packetize(ctx, ss.cli, frame, uint32(id))
 			if err != nil {
 				log.Warn(ctx, "could not packetize supplied rendition", "rendition", name, "error", err)
 				continue

@@ -119,3 +119,17 @@ func TestUnsubscribeSegmentReleasesQueuedSegments(t *testing.T) {
 		})
 	}
 }
+
+func TestLatestSegmentIgnoresAudioContinuations(t *testing.T) {
+	b := NewBus()
+	require.Nil(t, b.LatestSegment("streamer", "source"))
+	source := &Seg{Filepath: "source"}
+	b.PublishSegment(t.Context(), "streamer", "source", source)
+	b.PublishSegment(t.Context(), "streamer", "source", &Seg{Filepath: "source", AudioOnly: true})
+	require.Same(t, source, b.LatestSegment("streamer", "source"))
+	replacement := &Seg{Filepath: "replacement"}
+	b.PublishSegment(t.Context(), "streamer", "source", replacement)
+	require.Same(t, replacement, b.LatestSegment("streamer", "source"))
+	b.EndSession(t.Context(), "streamer", "source")
+	require.Nil(t, b.LatestSegment("streamer", "source"))
+}

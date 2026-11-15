@@ -195,7 +195,7 @@ func TestMoqSourceRoutesPreserveFullLadder(t *testing.T) {
 				return
 			}
 			wg.Add(1)
-			go func() { defer wg.Done(); r.serveBroadcast(ctx, req) }()
+			go func() { defer wg.Done(); r.serveBroadcast(ctx, origin, req) }()
 		}
 	}()
 	defer func() { cancel(); requests.Cancel(); <-requested }()
@@ -297,7 +297,7 @@ func TestMoqLegacyRejectsAV1OnlySource(t *testing.T) {
 				return
 			}
 			wg.Add(1)
-			go func() { defer wg.Done(); r.serveBroadcast(ctx, req) }()
+			go func() { defer wg.Done(); r.serveBroadcast(ctx, origin, req) }()
 		}
 	}()
 	defer func() { cancel(); requests.Cancel(); <-served }()

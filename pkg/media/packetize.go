@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -56,26 +57,42 @@ func Packetize(ctx context.Context, cli *config.CLI, seg *bus.Seg, videoID uint3
 
 	ctx = log.WithLogValues(ctx, "func", "Packetize", "uuid", uu.String())
 
-	// WebRTC playback needs Opus. From a dual-codec segment select video+Opus
-	// and present it as a flat MP4, so the demux below yields exactly one
-	// (Opus) audio pad for opusparse — no extra AAC pad to strand.
+	// Keep the main Opus mix and bounded stems, excluding AAC alternatives.
+	// Each selected audio track gets one demux lane without another decode.
+	audio := []muxl.MuxlAudioConfig{{}}
 	if len(seg.Muxl) > 0 {
-		opusM4s, err := selectSegmentTracks(ctx, seg.Muxl, videoID, "avc1", true)
+		events, err := unwrapMuxlEvents(ctx, seg.Muxl)
+		if err != nil {
+			return nil, err
+		}
+		opusM4s, selected, err := playbackTracks(events, videoID, "avc1", true, true)
+		audio = selected
+		if len(audio) == 0 {
+			audio = []muxl.MuxlAudioConfig{{}}
+		}
 		if err != nil {
 			return nil, fmt.Errorf("select opus audio: %w", err)
 		}
-		var flat bytes.Buffer
-		if err := muxl.RunMuxlWrap(ctx, bytes.NewReader(opusM4s), "flat", &flat); err != nil {
+		// Supplied rungs keep reordered pictures beyond the flat decode span.
+		format := "flat"
+		if videoID != 0 {
+			format = "fmp4"
+		}
+		var presentation bytes.Buffer
+		if err := muxl.RunMuxlWrap(ctx, bytes.NewReader(opusM4s), format, &presentation); err != nil {
 			return nil, fmt.Errorf("wrap opus segment: %w", err)
 		}
-		seg = &bus.Seg{Filepath: seg.Filepath, Data: flat.Bytes(), Muxl: opusM4s}
+		seg = &bus.Seg{Filepath: seg.Filepath, Data: presentation.Bytes(), Muxl: opusM4s}
 	}
 
 	cli.DumpDebugSegment(ctx, fmt.Sprintf("packetize-input-%s.mp4", uu.String()), bytes.NewReader(seg.Data))
 
 	pipelineSlice := []string{
 		fmt.Sprintf("%s name=videoparse ! video/x-h264,stream-format=byte-stream ! appsink sync=false name=videoappsink", constants.Queue2Big),
-		fmt.Sprintf("%s name=audioparse ! appsink sync=false name=audioappsink", constants.Queue2Big),
+	}
+
+	for i := range audio {
+		pipelineSlice = append(pipelineSlice, fmt.Sprintf("%s name=audioparse%d ! appsink sync=false name=audioappsink%d", constants.Queue2Big, i, i))
 	}
 
 	pipelineElem, err := gst.ParseLaunch(strings.Join(pipelineSlice, "\n"))
@@ -87,7 +104,7 @@ func Packetize(ctx context.Context, cli *config.CLI, seg *bus.Seg, videoID uint3
 		return nil, fmt.Errorf("failed to create GStreamer pipeline: not a pipeline")
 	}
 
-	demuxBin, err := ConcatDemuxBin(ctx, seg, true)
+	demuxBin, err := ConcatDemuxBin(ctx, seg, true, len(audio))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create concat bin: %w", err)
 	}
@@ -101,19 +118,9 @@ func Packetize(ctx context.Context, cli *config.CLI, seg *bus.Seg, videoID uint3
 		return nil, fmt.Errorf("failed to get demux bin video src pad")
 	}
 
-	demuxBinPadAudioSrc := demuxBin.GetStaticPad("audio_0")
-	if demuxBinPadAudioSrc == nil {
-		return nil, fmt.Errorf("failed to get demux bin audio src pad")
-	}
-
 	videoParse := pipeline.GetByName("videoparse")
 	if videoParse == nil {
 		return nil, fmt.Errorf("failed to get video parse element")
-	}
-
-	audioParse := pipeline.GetByName("audioparse")
-	if audioParse == nil {
-		return nil, fmt.Errorf("failed to get audio parse element")
 	}
 
 	linked := demuxBinPadVideoSrc.Link(videoParse.GetStaticPad("sink"))
@@ -121,9 +128,15 @@ func Packetize(ctx context.Context, cli *config.CLI, seg *bus.Seg, videoID uint3
 		return nil, fmt.Errorf("failed to link demux bin video src pad to video parse element: %v", linked)
 	}
 
-	linked = demuxBinPadAudioSrc.Link(audioParse.GetStaticPad("sink"))
-	if linked != gst.PadLinkOK {
-		return nil, fmt.Errorf("failed to link demux bin audio src pad to audio parse element: %v", linked)
+	for i := range audio {
+		src := demuxBin.GetStaticPad(fmt.Sprintf("audio_%d", i))
+		parse := pipeline.GetByName(fmt.Sprintf("audioparse%d", i))
+		if src == nil || parse == nil {
+			return nil, fmt.Errorf("missing audio branch %d", i)
+		}
+		if result := src.Link(parse.GetStaticPad("sink")); result != gst.PadLinkOK {
+			return nil, fmt.Errorf("link audio branch %d: %v", i, result)
+		}
 	}
 
 	videoSink := pipeline.GetByName("videoappsink")
@@ -131,14 +144,10 @@ func Packetize(ctx context.Context, cli *config.CLI, seg *bus.Seg, videoID uint3
 		return nil, fmt.Errorf("failed to get video appsink element")
 	}
 
-	audioSink := pipeline.GetByName("audioappsink")
-	if audioSink == nil {
-		return nil, fmt.Errorf("failed to get audio appsink element")
-	}
-
 	videoOutput := []rawSample{}
-	audioOutput := []rawSample{}
-	var videoBatch, audioBatch sampleSpan
+	audioOutput := make([][]rawSample, len(audio))
+	var videoBatch sampleSpan
+	audioBatches := make([]sampleSpan, len(audio))
 	// eosCh := make(chan struct{})
 
 	// Slice-less video data (parameter sets / SEI metadata with no picture)
@@ -198,46 +207,56 @@ func Packetize(ctx context.Context, cli *config.CLI, seg *bus.Seg, videoID uint3
 	})
 
 	segDur := time.Duration(0)
+	main := mainAudioGroup(audio)
 
-	audioSink.(app.AppSink).SetCallbacks(&app.AppSinkCallbacks{
-		NewSample: func(sink app.AppSink) gst.FlowReturn {
-			sample := sink.PullSample()
-			if sample == nil {
-				log.Warn(ctx, "audioappsink NewSampleFunc EOS")
-				return gst.FlowEOS
-			}
+	for i, config := range audio {
+		audioSink := pipeline.GetByName(fmt.Sprintf("audioappsink%d", i))
+		if audioSink == nil {
+			return nil, fmt.Errorf("missing audio sink %d", i)
+		}
+		audioSink.(app.AppSink).SetCallbacks(&app.AppSinkCallbacks{
+			NewSample: func(sink app.AppSink) gst.FlowReturn {
+				sample := sink.PullSample()
+				if sample == nil {
+					log.Warn(ctx, "audioappsink NewSampleFunc EOS")
+					return gst.FlowEOS
+				}
 
-			buffer := sample.GetBuffer()
-			if buffer == nil {
-				return gst.FlowError
-			}
+				buffer := sample.GetBuffer()
+				if buffer == nil {
+					return gst.FlowError
+				}
 
-			samples, err := copyBufferData(buffer)
-			if err != nil {
-				log.Error(ctx, "failed to read audio buffer", "error", err)
-				return gst.FlowError
-			}
-			// log.Warn(ctx, "audioappsink NewSampleFunc", "sample", len(samples))
+				samples, err := copyBufferData(buffer)
+				if err != nil {
+					log.Error(ctx, "failed to read audio buffer", "error", err)
+					return gst.FlowError
+				}
+				// log.Warn(ctx, "audioappsink NewSampleFunc", "sample", len(samples))
 
-			raw := newRawSample(samples, buffer)
-			audioOutput = append(audioOutput, raw)
-			timestamp := sample.GetSegment().ToRunningTime(gst.FormatTime, uint64(buffer.PTS()))
-			audioBatch.include(gst.ClockTime(timestamp), raw.bufDur)
+				raw := newRawSample(samples, buffer)
+				audioOutput[i] = append(audioOutput[i], raw)
+				timestamp := sample.GetSegment().ToRunningTime(gst.FormatTime, uint64(buffer.PTS()))
+				audioBatches[i].include(gst.ClockTime(timestamp), raw.bufDur)
 
-			dur, ok := clockTimeDuration(buffer.Duration())
-			if ok {
-				segDur += dur
-			} else {
-				log.Error(ctx, "no audio duration", "samples", len(samples))
-				return gst.FlowError
-			}
+				dur, ok := clockTimeDuration(buffer.Duration())
+				if ok {
+					if config.AlternateGroup == main {
+						segDur += dur
+					}
+				} else {
+					log.Error(ctx, "no audio duration", "samples", len(samples))
+					return gst.FlowError
+				}
 
-			return gst.FlowOK
-		},
-		EOS: func(sink app.AppSink) {
-			log.Debug(ctx, "audioappsink EOSFunc")
-		},
-	})
+				return gst.FlowOK
+			},
+			EOS: func(sink app.AppSink) {
+				log.Debug(ctx, "audioappsink EOSFunc")
+			},
+		})
+
+	}
 
 	busErr := make(chan error)
 	go func() {
@@ -286,15 +305,27 @@ func Packetize(ctx context.Context, cli *config.CLI, seg *bus.Seg, videoID uint3
 		}
 	}
 	batch := videoBatch
-	if audioBatch.valid {
-		batch.include(gst.ClockTime(audioBatch.start), audioBatch.end-audioBatch.start)
+	for _, audioBatch := range audioBatches {
+		if audioBatch.valid {
+			batch.include(gst.ClockTime(audioBatch.start), audioBatch.end-audioBatch.start)
+		}
 	}
-	return &bus.PacketizedSegment{
-		Video:         video,
-		Audio:         finalizeSampleDurations(audioOutput, segDur),
-		Duration:      duration,
-		BatchDuration: batch.end - batch.start,
-	}, nil
+	packet := &bus.PacketizedSegment{Video: video, Duration: duration, BatchDuration: batch.end - batch.start}
+	for i, config := range audio {
+		span := audioBatches[i]
+		total := span.end - span.start
+		if config.AlternateGroup == main {
+			total = segDur
+		}
+		samples := finalizeSampleDurations(audioOutput[i], total)
+		if config.AlternateGroup == main {
+			packet.Audio = samples
+		} else {
+			packet.Stems = append(packet.Stems, bus.PacketizedStem{Group: config.AlternateGroup, Audio: samples})
+		}
+	}
+	sort.Slice(packet.Stems, func(i, j int) bool { return packet.Stems[i].Group < packet.Stems[j].Group })
+	return packet, nil
 }
 
 // Each appsink records its own running-time span, including edit-list offsets;

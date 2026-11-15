@@ -438,7 +438,7 @@ func runMain(ctx context.Context, build *config.BuildFlags, platformJobs []jobFu
 	}
 	var wsrep *websocketrep.WebsocketReplicator
 	if slices.Contains(cli.Replicators, config.ReplicatorWebsocket) {
-		wsrep = websocketrep.NewWebsocketReplicator(b, mod, mm, state, moqSelfSigned)
+		wsrep = websocketrep.NewWebsocketReplicator(cli, b, mod, mm, state, moqSelfSigned)
 		replicator = wsrep
 	}
 
@@ -590,6 +590,7 @@ func runMain(ctx context.Context, build *config.BuildFlags, platformJobs []jobFu
 	}
 
 	a.Access = accessController
+	a.Replicator = replicator
 
 	ctx = log.WithLogValues(ctx, "version", build.Version)
 

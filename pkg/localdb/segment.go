@@ -27,11 +27,13 @@ type SegmentMediadataVideo struct {
 }
 
 type SegmentMediadataAudio struct {
-	TrackID    uint32 `json:"trackId,omitempty"`
-	Codec      string `json:"codec,omitempty"`
-	SigningKey string `json:"signingKey,omitempty"`
-	Rate       int    `json:"rate"`
-	Channels   int    `json:"channels"`
+	AlternateGroup uint32 `json:"alternateGroup,omitempty"`
+	Label          string `json:"label,omitempty"`
+	TrackID        uint32 `json:"trackId,omitempty"`
+	Codec          string `json:"codec,omitempty"`
+	SigningKey     string `json:"signingKey,omitempty"`
+	Rate           int    `json:"rate"`
+	Channels       int    `json:"channels"`
 }
 
 type SegmentMediaData struct {
@@ -232,6 +234,13 @@ func (s *Segment) ToStreamplaceSegment() (*placestream.Segment, error) {
 			codec = "opus"
 		}
 		audios[i] = placestream.Segment_Audio{Codec: codec, Rate: int64(audio.Rate), Channels: int64(audio.Channels)}
+		if audio.AlternateGroup != 0 {
+			group := int64(audio.AlternateGroup)
+			audios[i].AlternateGroup = &group
+		}
+		if audio.Label != "" {
+			audios[i].Label = &audio.Label
+		}
 		if audio.TrackID != 0 {
 			id := strconv.FormatUint(uint64(audio.TrackID), 10)
 			audios[i].TrackId = &id

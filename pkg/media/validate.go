@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/abema/go-mp4"
 	"github.com/bluesky-social/indigo/atproto/atcrypto"
 	"github.com/bluesky-social/indigo/atproto/syntax"
 	"go.opentelemetry.io/otel"
@@ -507,6 +508,9 @@ func ValidateMP4Media(ctx context.Context, buf []byte) (*ValidationResult, error
 	if err != nil {
 		return nil, err
 	}
+	if err := readAudioTrackMetadata(playable, mediaData); err != nil {
+		return nil, fmt.Errorf("read signed audio metadata: %w", err)
+	}
 	validationResult.MediaData = mediaData
 	validationResult.Playable = playable
 	for _, video := range mediaData.Video {
@@ -516,6 +520,44 @@ func ValidateMP4Media(ctx context.Context, buf []byte) (*ValidationResult, error
 		audio.SigningKey = validationResult.trackSigningKeys[audio.TrackID]
 	}
 	return validationResult, nil
+}
+
+// Wrap synthesizes these headers from the signed catalog. Reuse that result
+// rather than opening another WASM module to rediscover the same metadata.
+func readAudioTrackMetadata(playable []byte, data *localdb.SegmentMediaData) error {
+	reader := bytes.NewReader(playable)
+	tracks, err := mp4.ExtractBox(reader, nil, mp4.BoxPath{mp4.BoxTypeMoov(), mp4.BoxTypeTrak()})
+	if err != nil {
+		return err
+	}
+	for _, track := range tracks {
+		headers, err := mp4.ExtractBoxWithPayload(reader, track, mp4.BoxPath{mp4.BoxTypeTkhd()})
+		if err != nil {
+			return err
+		}
+		if len(headers) != 1 {
+			return fmt.Errorf("track must have one header")
+		}
+		header := headers[0].Payload.(*mp4.Tkhd)
+		for _, audio := range data.Audio {
+			if audio.TrackID != header.TrackID {
+				continue
+			}
+			audio.AlternateGroup = uint32(uint16(header.AlternateGroup))
+			names, err := mp4.ExtractBox(reader, track, mp4.BoxPath{mp4.BoxTypeUdta(), mp4.StrToBoxType("name")})
+			if err != nil {
+				return err
+			}
+			if len(names) > 1 {
+				return fmt.Errorf("audio track has multiple labels")
+			}
+			if len(names) == 1 {
+				name := names[0]
+				audio.Label = string(playable[name.Offset+name.HeaderSize : name.Offset+name.Size])
+			}
+		}
+	}
+	return nil
 }
 
 func ValidateMP4MediaData(ctx context.Context, buf []byte) (*localdb.SegmentMediaData, error) {

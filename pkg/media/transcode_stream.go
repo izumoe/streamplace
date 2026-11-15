@@ -644,7 +644,7 @@ func audioTrackID(cat *muxl.MuxlCatalog) (uint32, bool) {
 	if cat == nil || cat.Audio == nil {
 		return 0, false
 	}
-	for _, a := range cat.Audio.Renditions {
+	for _, a := range mainAudioTracks(audioTracks(cat)) {
 		return a.TrackID(), true
 	}
 	return 0, false

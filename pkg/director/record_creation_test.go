@@ -2,7 +2,6 @@ package director
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -39,10 +38,7 @@ func TestMetadataCreatesMissingRecords(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	cli := &config.CLI{ServerHost: "node.test", BroadcasterHost: "node.test", WebsocketURL: "wss://node.test", DevAccountCreds: map[string]string{did: "test-password"}}
-	replicator := websocketrep.NewWebsocketReplicator(bus.NewBus(), mod, nil, nil, nil)
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	require.ErrorIs(t, replicator.Start(ctx, cli), context.Canceled)
+	replicator := websocketrep.NewWebsocketReplicator(cli, bus.NewBus(), mod, nil, nil, nil)
 	require.NoError(t, mod.UpdateRepo(&model.Repo{DID: did, Handle: "publisher.test"}))
 	var broadcast bytes.Buffer
 	require.NoError(t, (&placestream.Livestream{Title: "Test broadcast", CreatedAt: time.Now().UTC().Format(time.RFC3339)}).MarshalCBOR(&broadcast))

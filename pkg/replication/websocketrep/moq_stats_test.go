@@ -27,6 +27,7 @@ func TestMoqViewerSnapshot(t *testing.T) {
 	}{
 		{"canonical", `{"tenant/playback/did:plc:a":{"broadcasts_started":5,"broadcasts_ended":2,"subscriptions_started":20},"tenant/source/did:plc:a":{"broadcasts_started":99},"other/playback/did:plc:a":{"broadcasts_started":42}}`, map[string]int{"did:plc:a": 3}},
 		{"legacy", `{"tenant/playback/did:plc:a":{"broadcasts":3,"broadcasts_closed":1}}`, map[string]int{"did:plc:a": 2}},
+		{"stem broadcasts are not extra viewers", `{"tenant/playback/did:plc:a":{"broadcasts_started":1},"tenant/playback/did:plc:a/audio-g2":{"broadcasts_started":1},"tenant/playback/did:plc:a/audio-g3":{"broadcasts_started":1}}`, map[string]int{"did:plc:a": 1}},
 		{"canonical zero wins", `{"tenant/playback/did:plc:a":{"broadcasts_started":0,"broadcasts":99}}`, map[string]int{"did:plc:a": 0}},
 		{"reset", `{"tenant/playback/did:plc:a":{"broadcasts_started":1}}`, map[string]int{"did:plc:a": 1}},
 		{"empty", `{}`, map[string]int{}},

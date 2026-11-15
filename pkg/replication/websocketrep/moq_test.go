@@ -185,7 +185,7 @@ func TestMoqPlaybackGroupsFollowVideoSyncFrames(t *testing.T) {
 					defer close(done)
 					request, err := requests.RequestedBroadcast(serveCtx)
 					if err == nil {
-						r.serveBroadcast(serveCtx, request)
+						r.serveBroadcast(serveCtx, origin, request)
 					}
 				}()
 				defer func() {
