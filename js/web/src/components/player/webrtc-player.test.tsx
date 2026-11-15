@@ -1,3 +1,4 @@
+import { createServer } from "node:http";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
@@ -22,6 +23,22 @@ beforeAll(() => {
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: (key: string) => key }),
 }));
+
+class TestStream {
+  tracks: MediaStreamTrack[] = [];
+  addTrack(track: MediaStreamTrack) {
+    this.tracks.push(track);
+  }
+  removeTrack(track: MediaStreamTrack) {
+    this.tracks = this.tracks.filter((item) => item !== track);
+  }
+  getVideoTracks() {
+    return this.tracks.filter((track) => track.kind === "video");
+  }
+  getAudioTracks() {
+    return this.tracks.filter((track) => track.kind === "audio");
+  }
+}
 
 // This browser boundary controls connection loss and asynchronous stats delivery.
 // Negotiation is covered by the real WebRTC browser flow.
@@ -48,6 +65,7 @@ beforeEach(async () => {
   vi.useFakeTimers();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("RTCPeerConnection", Peer);
+  vi.stubGlobal("MediaStream", TestStream);
   Peer.peers = [];
   snapshots.length = 0;
   container = document.createElement("div");
@@ -108,3 +126,94 @@ it.each(["reconnect", "unmount"])(
     expect(snapshots).toHaveLength(0);
   },
 );
+
+it("resolves an early random audio ID after the answer is available", async () => {
+  await act(async () => root.unmount());
+  const answer =
+    "m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=mid:main\r\na=msid:pion audio\r\n";
+  const server = createServer((_request, response) => {
+    response.setHeader("Content-Type", "application/sdp");
+    response.setHeader("Access-Control-Allow-Origin", "*");
+    response.end(answer);
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string")
+    throw new Error("WHEP fixture did not bind");
+  const video = document.createElement("video");
+  let earlyAudio: MediaStreamTrack[] = [];
+  const main = Object.assign(new EventTarget(), {
+    id: "browser-id",
+    kind: "audio",
+    readyState: "live",
+  });
+  class LatePeer extends Peer {
+    iceGatheringState = "complete";
+    signalingState = "stable";
+    localDescription: RTCSessionDescriptionInit | null = null;
+    remoteDescription: RTCSessionDescriptionInit | null = null;
+    negotiating = false;
+    addTransceiver() {
+      if (this.negotiating) return;
+      this.negotiating = true;
+      queueMicrotask(() => this.dispatchEvent(new Event("negotiationneeded")));
+    }
+    async createOffer() {
+      return { type: "offer", sdp: "v=0" };
+    }
+    async setLocalDescription(description: RTCSessionDescriptionInit) {
+      this.localDescription = description;
+    }
+    async setRemoteDescription(description: RTCSessionDescriptionInit) {
+      this.dispatchEvent(
+        Object.assign(new Event("track"), {
+          track: main,
+          transceiver: { mid: "main" },
+          streams: [],
+        }),
+      );
+      earlyAudio = (video.srcObject as unknown as TestStream).getAudioTracks();
+      this.remoteDescription = description;
+      this.dispatchEvent(new Event("signalingstatechange"));
+    }
+  }
+  vi.stubGlobal("RTCPeerConnection", LatePeer);
+  vi.stubGlobal(
+    "RTCSessionDescription",
+    class {
+      constructor(value: RTCSessionDescriptionInit) {
+        Object.assign(this, value);
+      }
+    },
+  );
+  const play = vi
+    .spyOn(HTMLMediaElement.prototype, "play")
+    .mockResolvedValue(undefined);
+  root = createRoot(container);
+  try {
+    await act(async () =>
+      root.render(
+        <WebRTCPlayer
+          videoRef={{ current: video }}
+          src={`http://127.0.0.1:${address.port}/playlist?streamer=did:plc:test`}
+          active
+        />,
+      ),
+    );
+    await act(async () =>
+      vi.waitFor(() =>
+        expect(
+          (video.srcObject as unknown as TestStream | null)?.getAudioTracks(),
+        ).toEqual([main]),
+      ),
+    );
+    expect(earlyAudio).toEqual([]);
+    expect(main.readyState).toBe("live");
+  } finally {
+    await act(async () => root.unmount());
+    play.mockRestore();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+  expect(video.srcObject).toBeNull();
+  expect(Peer.peers.at(-1)!.connectionState).toBe("closed");
+});

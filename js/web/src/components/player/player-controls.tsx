@@ -30,9 +30,15 @@ import {
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
 import { Slider } from "../ui/slider";
+import { AudioMixControls } from "./audio-mix-controls";
+import type { AudioMix, AudioStem } from "./audio-stems";
 import type { QualityOption } from "./player";
 
 export type PlayerControlsProps = {
+  audioStems?: AudioStem[];
+  audioMix?: AudioMix;
+  audioMixStatus?: "loading" | "unavailable";
+  onAudioMixChange?: (mix: AudioMix) => void;
   videoRef: RefObject<HTMLVideoElement | null>;
   /** State and actions for a backend rendered outside the video element. */
   playback?: {
@@ -78,6 +84,10 @@ export function shouldShowUnmutePrompt(playing: boolean, muted: boolean) {
 }
 
 export function PlayerControls({
+  audioStems,
+  audioMix = null,
+  audioMixStatus,
+  onAudioMixChange,
   videoRef,
   playback,
   containerRef,
@@ -485,6 +495,18 @@ export function PlayerControls({
                   </DropdownMenuRadioItem>
                 </DropdownMenuRadioGroup>
               </DropdownMenuGroup>
+
+              {!!audioStems?.length && onAudioMixChange && (
+                <>
+                  <DropdownMenuSeparator />
+                  <AudioMixControls
+                    stems={audioStems}
+                    mix={audioMix}
+                    onMixChange={onAudioMixChange}
+                    status={audioMixStatus}
+                  />
+                </>
+              )}
 
               {qualities.length > 0 && (
                 <>

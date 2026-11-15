@@ -9,10 +9,17 @@ const fixture = vi.hoisted(() => ({
   player: undefined as unknown,
   audio: true as boolean | "empty",
   batchDurationMs: 1000,
+  mixing: false,
   resolve: undefined as ((support: AudioDecoderSupport) => void) | undefined,
 }));
 
 type Playback = {
+  mixer?: {
+    out: {
+      timestamp: Watch.Signals.Signal<Watch.Net.Time.Milli | undefined>;
+      stalled: Watch.Signals.Signal<boolean>;
+    };
+  };
   sync: Watch.Sync;
   renderer: {
     out: {
@@ -39,6 +46,19 @@ vi.mock("@moq/watch", async (original) => {
   // Network, rendering and speakers are boundaries. Catalog propagation,
   // codec probing and rendition selection use the real SDK source and signals.
   class Player {
+    mixer = fixture.mixing
+      ? {
+          out: {
+            timestamp: new Signal<Watch.Net.Time.Milli | undefined>(undefined),
+            stalled: new Signal(false),
+            mode: new Signal<"main" | "loading" | "stems">("loading"),
+            levels: new Signal<Record<number, number> | undefined>({ 2: 1 }),
+            reason: new Signal<
+              "unavailable" | "unsupported" | "buffering" | undefined
+            >(undefined),
+          },
+        }
+      : undefined;
     broadcast = {
       out: {
         catalog: new Signal<Watch.Hang.Catalog.Root | undefined>(undefined),
@@ -148,6 +168,7 @@ beforeEach(async () => {
   fixture.player = undefined;
   fixture.resolve = undefined;
   fixture.audio = true;
+  fixture.mixing = false;
   fixture.batchDurationMs = 1000;
   container = document.createElement("div");
   document.body.appendChild(container);
@@ -189,6 +210,28 @@ async function render(
     ),
   );
 }
+
+it("uses the active mix clock for A/V timing and progress when the main decoder is idle", async () => {
+  fixture.mixing = true;
+  vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+  const sdk = await import("@moq/watch");
+  await render();
+  const player = fixture.player as Playback;
+  for (const timestamp of [0, 8000, 11000]) {
+    await act(async () => {
+      player.audio.out.timestamp.set(sdk.Net.Time.Milli(0));
+      player.audio.out.stalled.set(true);
+      player.mixer!.out.timestamp.set(sdk.Net.Time.Milli(timestamp));
+      player.renderer.out.timestamp.set(sdk.Net.Time.Milli(timestamp + 100));
+      await vi.advanceTimersByTimeAsync(
+        timestamp === 0 ? 1000 : timestamp === 8000 ? 8000 : 3000,
+      );
+    });
+    expect(unavailable).not.toHaveBeenCalled();
+    expect(stats?.avSyncMs).toBe(100);
+    expect(stats?.codecs).toBe("opus");
+  }
+});
 
 it("reports progressing audio while video rendering is hidden", async () => {
   vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });

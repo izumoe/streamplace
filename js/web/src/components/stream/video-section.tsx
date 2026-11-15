@@ -9,6 +9,7 @@ import type { Liveness } from "../../hooks/use-liveness-state";
 import { captureError } from "../../lib/log";
 import { useStore as useAppStore } from "../../lib/store";
 import { getStreamplaceUrl } from "../../lib/streamplace-url";
+import { audioStems, type AudioStem } from "../player/audio-stems";
 import { DanmuOverlay } from "./danmu-overlay";
 import { PlayerOffline } from "./player-offline";
 import { UserOffline } from "./user-offline";
@@ -83,6 +84,7 @@ export function VideoSection({
   return (
     <VideoSectionInner
       user={user}
+      audioStems={audioStems(state.segment?.audio ?? [])}
       liveness={liveness}
       segment={state.segment?.video?.at(0) ?? null}
       contentWarnings={state.segment?.contentWarnings?.warnings ?? []}
@@ -108,6 +110,7 @@ export function VideoSection({
  */
 export function VideoSectionInner({
   user,
+  audioStems,
   liveness,
   segment,
   contentWarnings = [],
@@ -127,6 +130,7 @@ export function VideoSectionInner({
   overlay,
 }: {
   user: string;
+  audioStems?: AudioStem[];
   liveness: Liveness;
   segment: Segment;
   contentWarnings?: string[];
@@ -191,6 +195,7 @@ export function VideoSectionInner({
               }`}
             >
               <Player
+                audioStems={audioStems}
                 src={playlistUrl}
                 poster={thumbnailUrl}
                 active

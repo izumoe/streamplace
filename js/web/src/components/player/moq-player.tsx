@@ -1,8 +1,10 @@
 import type * as Watch from "@moq/watch";
 import { useEffect, useImperativeHandle, useRef, type RefObject } from "react";
 import { useTranslation } from "react-i18next";
+import type { AudioMix, AudioStem } from "./audio-stems";
 import { createMoqSession } from "./moq-session";
 import {
+  getMoqAudioStems,
   getMoqBatchDuration,
   getMoqPlaybackFloor,
   getMoqPlaybackSource,
@@ -12,6 +14,9 @@ import type { PlayerBackendHandle, PlayerStats, QualityOption } from "./player";
 import { getQualityLabels } from "./quality-labels";
 
 type MoQPlayerProps = {
+  audioMix?: AudioMix;
+  onAudioStemsChange?: (stems: AudioStem[]) => void;
+  onAudioMixStatus?: (status: "loading" | "unavailable" | undefined) => void;
   canvasRef: RefObject<HTMLCanvasElement | null>;
   src: string;
   paused: boolean;
@@ -33,10 +38,29 @@ type Controls = {
   muted: Watch.Signals.Signal<boolean>;
   volume: Watch.Signals.Signal<number>;
   target: Watch.Signals.Signal<Watch.Video.Target | undefined>;
+  audioStems: Watch.Signals.Signal<
+    (AudioStem & { name: Watch.Net.Path.Valid })[]
+  >;
+  audioMix: Watch.Signals.Signal<Record<number, number> | undefined>;
 };
 
+function updateAudioMix(controls: Controls, mix: AudioMix | undefined) {
+  controls.audioMix.set(
+    mix == null
+      ? undefined
+      : Object.fromEntries(
+          controls.audioStems
+            .peek()
+            .map((stem) => [
+              stem.alternateGroup,
+              mix[stem.alternateGroup] ?? 1,
+            ]),
+        ),
+  );
+}
+
 export function MoQPlayer(props: MoQPlayerProps) {
-  const { canvasRef, src, paused, muted, volume, ref } = props;
+  const { canvasRef, src, paused, muted, volume, audioMix, ref } = props;
   const propsRef = useRef(props);
   propsRef.current = props;
   const { t } = useTranslation();
@@ -62,7 +86,8 @@ export function MoQPlayer(props: MoQPlayerProps) {
     controlsRef.current?.paused.set(paused);
     controlsRef.current?.muted.set(muted);
     controlsRef.current?.volume.set(volume);
-  }, [paused, muted, volume]);
+    if (controlsRef.current) updateAudioMix(controlsRef.current, audioMix);
+  }, [paused, muted, volume, audioMix]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -108,7 +133,9 @@ export function MoQPlayer(props: MoQPlayerProps) {
       const now = Date.now();
       const state = propsRef.current;
       const video = player?.renderer.out.timestamp.peek();
-      const audio = player?.audio.out.timestamp.peek();
+      const audio = player?.mixer
+        ? player.mixer.out.timestamp.peek()
+        : player?.audio.out.timestamp.peek();
       if (video !== undefined) videoStarted = true;
       const audioRenditions =
         player?.audio.source.out.catalog.peek()?.renditions;
@@ -187,7 +214,7 @@ export function MoQPlayer(props: MoQPlayerProps) {
           audio === undefined ||
           state.muted ||
           state.paused ||
-          player.audio.out.stalled.peek()
+          (player.mixer?.out.stalled.peek() ?? player.audio.out.stalled.peek())
             ? undefined
             : video - audio,
         totalFrames: frames,
@@ -195,7 +222,12 @@ export function MoQPlayer(props: MoQPlayerProps) {
         availableBandwidth: connection?.probe.peek()?.estimatedRecvRate,
         level: target?.name ? renditionsRef.current.indexOf(target.name) : -1,
         codecs:
-          [config?.codec, player.audio.source.out.config.peek()?.codec]
+          [
+            config?.codec,
+            player.mixer?.out.levels.peek() !== undefined
+              ? "opus"
+              : player.audio.source.out.config.peek()?.codec,
+          ]
             .filter(Boolean)
             .join(", ") || undefined,
       });
@@ -222,6 +254,12 @@ export function MoQPlayer(props: MoQPlayerProps) {
           paused: new Watch.Signals.Signal(propsRef.current.paused),
           muted: new Watch.Signals.Signal(true),
           volume: new Watch.Signals.Signal(propsRef.current.volume),
+          audioStems: new Watch.Signals.Signal<
+            (AudioStem & { name: Watch.Net.Path.Valid })[]
+          >([]),
+          audioMix: new Watch.Signals.Signal<
+            Record<number, number> | undefined
+          >(propsRef.current.audioMix ?? undefined),
           target: new Watch.Signals.Signal<Watch.Video.Target | undefined>(
             undefined,
           ),
@@ -271,8 +309,49 @@ export function MoQPlayer(props: MoQPlayerProps) {
           if (ready) {
             controls.paused.set(propsRef.current.paused);
             controls.volume.set(propsRef.current.volume);
+            updateAudioMix(controls, propsRef.current.audioMix);
           }
         });
+        let lastStems: AudioStem[] = [];
+        effects.run((effect) => {
+          const catalog = effect.get(currentPlayer.broadcast.out.catalog);
+          const stems = catalog ? getMoqAudioStems(catalog) : [];
+          controls.audioStems.set(
+            stems.map((stem) => ({
+              ...stem,
+              name: Watch.Net.Path.from(
+                source.name,
+                `audio-g${stem.alternateGroup}`,
+              ),
+            })),
+          );
+          updateAudioMix(controls, propsRef.current.audioMix);
+          if (
+            stems.length !== lastStems.length ||
+            stems.some(
+              (stem, index) =>
+                stem.alternateGroup !== lastStems[index].alternateGroup ||
+                stem.label !== lastStems[index].label,
+            )
+          ) {
+            lastStems = stems;
+            propsRef.current.onAudioStemsChange?.(stems);
+          }
+        });
+        if (currentPlayer.mixer) {
+          effects.run((effect) => {
+            const mixer = currentPlayer.mixer!;
+            const mode = effect.get(mixer.out.mode);
+            const reason = effect.get(mixer.out.reason);
+            propsRef.current.onAudioMixStatus?.(
+              reason === "unsupported" || reason === "unavailable"
+                ? "unavailable"
+                : mode === "loading" || reason === "buffering"
+                  ? "loading"
+                  : undefined,
+            );
+          });
+        }
         let waitingToPlay = true;
         effects.cleanup(
           currentPlayer.renderer.out.timestamp.subscribe((timestamp) => {

@@ -121,3 +121,54 @@ and beta invites remain excluded. Upstream `next` currently declares package
 version 0.13.1; its separate v0.13.4 release commit is not an ancestor of `next`.
 Version alignment must identify the fork's actual commit and must not imply that
 all upstream changes or native SDK upgrades have been adopted.
+
+### Received audio stems
+
+The viewer port includes MoQ and WebRTC. Playback starts with the full mix;
+custom mixing silences that mix before playing additive stems. Main/VOD are
+alternative complete mixes and must never be summed or exposed as ordinary
+stems.
+
+Use optional catalog descriptors and audio-only child MoQ broadcasts. This
+keeps the old main-mix catalog intact and reuses native CMAF validation and
+codec descriptions. Publish child audio from the same validated source events;
+do not add another encoder or re-sign received assets. All selected audio uses
+one AudioContext and the video's existing synchronization clock.
+
+- [x] Preserve received groups/labels in muxl and in completed main audio/EOS tails.
+- [x] Make main-track selection, HLS, replication and WebRTC pairing group-aware.
+- [x] Publish bounded optional MoQ stem broadcasts without rewriting PDS origins.
+- [x] Add synchronized MoQ and WebRTC mixing with shared mute/volume/pause handling.
+- [x] Add compact Vite controls and exercise switching, fallback and source changes.
+- [x] Verify signed grouped input over real replication and both viewer transports.
+
+Keep the fork's sample pacers, source-ingredient checks and bounded caches.
+Missing stem codecs do not trigger per-stem transcoding. HLS stays on the main
+mix. Stream changes reset mix controls; labels never grant permissions. The
+separate eRTMP main/VOD ingest phase needs explicit live/recording routing.
+
+The lowest audio group is the full mix; absent group metadata means group zero.
+Up to two higher groups with Opus are offered as additive stems. Codecs within
+one group are alternatives. Unsupported MoQ channel layouts or sample rates keep
+the full mix rather than dropping channels. Stem decoders start only when the
+viewer requests a custom mix; ordinary playback retains one audio output.
+
+A receiving node with live public stem media advertises its own playback endpoint
+using its existing listener/relay configuration. This avoids depending on the
+origin to understand the optional child broadcasts. No origin record is rewritten.
+The HLS window can retain this routing choice for up to 30 seconds after the last
+stem segment; the live catalog removes obsolete controls immediately.
+
+MoQ switches only at the shared audio cursor. A missing audible stem restores the
+full mix when samples cover that cursor. If reconnecting main audio starts later,
+playback waits rather than skipping audio independently of video, and the existing
+10-second transport watchdog remains the recovery path. This is not a guarantee
+of gap-free playback under arbitrary packet loss.
+
+Verification uses real signed AVC/AAC/Opus input, independent origin and receiver
+nodes, native MoQ replication and the shipping Chromium UI. Full mix, voice-only
+control, restoration, video progress and audio cleanup pass over MoQ and WebRTC;
+all three AVC WebRTC rungs retain three progressing audio streams. SDK worklet
+tests cover shared-memory and postMessage rings, incompatible layouts, buffering
+and synchronized switching. These checks do not replace listening on physical
+devices or measure full-pipeline performance.

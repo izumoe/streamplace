@@ -15,6 +15,7 @@ import { useTranslation } from "react-i18next";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { Loader } from "../ui/loader";
+import type { AudioMix, AudioStem } from "./audio-stems";
 import { ContentWarningOverlay } from "./content-warning-overlay";
 import { HLSPlayer } from "./hls-player";
 import { MoQPlayer } from "./moq-player";
@@ -71,6 +72,7 @@ export type PlayerProps = {
   contentWarnings?: string[];
   /** Whether the current user is the stream owner. */
   isStreamer?: boolean;
+  audioStems?: AudioStem[];
 };
 
 /** One quality option shown in the player's settings menu. */
@@ -199,6 +201,7 @@ export function Player({
   overlay,
   contentWarnings = [],
   isStreamer,
+  audioStems,
 }: PlayerProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -233,6 +236,34 @@ export function Player({
           : supportsMoqPlayback() && moqUnavailableFor !== src
             ? "moq"
             : "webrtc";
+  const audioScope = `${src}:${transport}`;
+  const [audioSelection, setAudioSelection] = useState<{
+    scope: string;
+    stems: AudioStem[];
+    mix: AudioMix;
+    status?: "loading" | "unavailable";
+  }>({ scope: "", stems: [], mix: null, status: undefined });
+  const audioMix =
+    audioSelection.scope === audioScope ? audioSelection.mix : null;
+  const receivedStems =
+    audioSelection.scope === audioScope ? audioSelection.stems : [];
+  const handleAudioStems = useCallback(
+    (stems: AudioStem[]) => {
+      setAudioSelection((previous) => ({
+        scope: audioScope,
+        stems,
+        mix:
+          stems.length > 0 && previous.scope === audioScope
+            ? previous.mix
+            : null,
+        status:
+          stems.length > 0 && previous.scope === audioScope
+            ? previous.status
+            : undefined,
+      }));
+    },
+    [audioScope],
+  );
   const [showStats, setShowStats] = useState(false);
   const [stats, setStats] = useState<PlayerStats | null>(null);
   const StatsError = useCallback(
@@ -516,6 +547,15 @@ export function Player({
           paused={moqPaused}
           muted={moqMuted}
           volume={moqVolume}
+          audioMix={audioMix}
+          onAudioStemsChange={handleAudioStems}
+          onAudioMixStatus={(status) =>
+            setAudioSelection((previous) =>
+              previous.scope === audioScope
+                ? { ...previous, status }
+                : previous,
+            )
+          }
           onUnavailable={handleMoqUnavailable}
           onPlaying={handlePlaying}
           onBufferingChange={setBuffering}
@@ -527,6 +567,9 @@ export function Player({
         active && (
           <PlayerBackend
             src={src}
+            audioStems={audioStems}
+            audioMix={audioMix}
+            onAudioStemsChange={handleAudioStems}
             useWebRTC={transport === "webrtc"}
             mode={mode}
             startTime={startTime}
@@ -579,6 +622,21 @@ export function Player({
                   },
                 }
               : undefined
+          }
+          audioStems={receivedStems}
+          audioMix={audioMix}
+          audioMixStatus={
+            audioSelection.scope === audioScope
+              ? audioSelection.status
+              : undefined
+          }
+          onAudioMixChange={(mix) =>
+            setAudioSelection({
+              scope: audioScope,
+              stems: receivedStems,
+              mix,
+              status: undefined,
+            })
           }
           videoRef={videoRef}
           containerRef={containerRef}
@@ -646,6 +704,9 @@ export function Player({
  */
 function PlayerBackend({
   src,
+  audioStems,
+  audioMix,
+  onAudioStemsChange,
   useWebRTC,
   mode,
   startTime,
@@ -659,6 +720,9 @@ function PlayerBackend({
   ref,
 }: {
   src: string;
+  audioStems?: AudioStem[];
+  audioMix: AudioMix;
+  onAudioStemsChange: (stems: AudioStem[]) => void;
   useWebRTC: boolean;
   mode: "live" | "vod";
   startTime?: number;
@@ -674,6 +738,9 @@ function PlayerBackend({
   if (mode === "live" && (useWebRTC || src.startsWith("webrtc://"))) {
     return (
       <WebRTCPlayer
+        audioStems={audioStems}
+        audioMix={audioMix}
+        onAudioStemsChange={onAudioStemsChange}
         ref={ref}
         videoRef={videoRef}
         src={src}
