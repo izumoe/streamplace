@@ -35,8 +35,9 @@ type PacketizedSample struct {
 }
 
 type PacketizedStem struct {
-	Group uint32
-	Audio []PacketizedSample
+	Group  uint32
+	Offset time.Duration // first sample relative to this packet's main audio
+	Audio  []PacketizedSample
 }
 
 type PacketizedSegment struct {

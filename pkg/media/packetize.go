@@ -60,6 +60,7 @@ func Packetize(ctx context.Context, cli *config.CLI, seg *bus.Seg, videoID uint3
 	// Keep the main Opus mix and bounded stems, excluding AAC alternatives.
 	// Each selected audio track gets one demux lane without another decode.
 	audio := []muxl.MuxlAudioConfig{{}}
+	var audioStarts []time.Duration
 	if len(seg.Muxl) > 0 {
 		events, err := unwrapMuxlEvents(ctx, seg.Muxl)
 		if err != nil {
@@ -72,6 +73,26 @@ func Packetize(ctx context.Context, cli *config.CLI, seg *bus.Seg, videoID uint3
 		}
 		if err != nil {
 			return nil, fmt.Errorf("select opus audio: %w", err)
+		}
+		// Demux edit lists can rebase each pad independently; retain signed offsets.
+		if len(audio) > 1 {
+			audioStarts = make([]time.Duration, len(audio))
+			for i, config := range audio {
+				id := fmt.Sprint(config.TrackID())
+				for _, event := range events {
+					samples := event.Samples[id]
+					if len(samples.Sizes) == 0 || config.Timescale() == 0 {
+						continue
+					}
+					scale := uint64(config.Timescale())
+					ticks := event.FirstDecodeTimes[id]
+					audioStarts[i] = time.Duration(ticks/scale)*time.Second + time.Duration(ticks%scale)*time.Second/time.Duration(scale)
+					if len(samples.CtsOffsets) > 0 {
+						audioStarts[i] += time.Duration(samples.CtsOffsets[0]) * time.Second / time.Duration(scale)
+					}
+					break
+				}
+			}
 		}
 		// Supplied rungs keep reordered pictures beyond the flat decode span.
 		format := "flat"
@@ -311,6 +332,16 @@ func Packetize(ctx context.Context, cli *config.CLI, seg *bus.Seg, videoID uint3
 		}
 	}
 	packet := &bus.PacketizedSegment{Video: video, Duration: duration, BatchDuration: batch.end - batch.start}
+	var mainStart time.Duration
+	for i, config := range audio {
+		if config.AlternateGroup == main {
+			mainStart = audioBatches[i].start
+			if audioStarts != nil {
+				mainStart = audioStarts[i]
+			}
+			break
+		}
+	}
 	for i, config := range audio {
 		span := audioBatches[i]
 		total := span.end - span.start
@@ -321,7 +352,11 @@ func Packetize(ctx context.Context, cli *config.CLI, seg *bus.Seg, videoID uint3
 		if config.AlternateGroup == main {
 			packet.Audio = samples
 		} else {
-			packet.Stems = append(packet.Stems, bus.PacketizedStem{Group: config.AlternateGroup, Audio: samples})
+			start := span.start
+			if audioStarts != nil {
+				start = audioStarts[i]
+			}
+			packet.Stems = append(packet.Stems, bus.PacketizedStem{Group: config.AlternateGroup, Offset: start - mainStart, Audio: samples})
 		}
 	}
 	sort.Slice(packet.Stems, func(i, j int) bool { return packet.Stems[i].Group < packet.Stems[j].Group })

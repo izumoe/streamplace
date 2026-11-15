@@ -267,14 +267,14 @@ func TestWriteAudioSamplesUsesSegmentDuration(t *testing.T) {
 			var pacer samplePacer
 			started := time.Now()
 			for range 100 {
-				require.NoError(t, pacer.writeAudioSamples(t.Context(), track, packet, scalar))
+				require.NoError(t, pacer.writeAudioSamples(t.Context(), track, packet.Audio, packet.Duration, scalar))
 			}
 			require.Equal(t, 200*time.Duration(float64(20*time.Millisecond)/scalar), time.Since(started), "source timestamp gaps must not expand audio scheduling across GoPs")
 		}
 		packet.Duration = 0
 		started := time.Now()
 		var pacer samplePacer
-		require.NoError(t, pacer.writeAudioSamples(t.Context(), track, packet, 1))
+		require.NoError(t, pacer.writeAudioSamples(t.Context(), track, packet.Audio, packet.Duration, 1))
 		require.Zero(t, time.Since(started), "missing segment duration must not start audio pacing")
 	})
 }
@@ -305,7 +305,7 @@ func TestPlaybackPreservesTrackClocksAcrossSegments(t *testing.T) {
 						expected += time.Duration(float64(span) / scalar)
 						group, ctx := errgroup.WithContext(t.Context())
 						group.Go(func() error { return videoPacer.writeSamples(ctx, video, packet.Video, scalar, 0) })
-						group.Go(func() error { return audioPacer.writeAudioSamples(ctx, audio, packet, scalar) })
+						group.Go(func() error { return audioPacer.writeAudioSamples(ctx, audio, packet.Audio, packet.Duration, scalar) })
 						require.NoError(t, group.Wait())
 					}
 				}
@@ -315,28 +315,50 @@ func TestPlaybackPreservesTrackClocksAcrossSegments(t *testing.T) {
 	}
 }
 
-func TestPlaybackPacingResumesAfterIdle(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		track, err := webrtc.NewTrackLocalStaticSample(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus, ClockRate: 48000}, "audio", "stream")
-		require.NoError(t, err)
-		var pacer samplePacer
-		pacer.pause(time.Second)
-		samples := []bus.PacketizedSample{{Duration: 20 * time.Millisecond}, {Duration: 20 * time.Millisecond}}
-		require.NoError(t, pacer.writeSamples(t.Context(), track, samples, 1, 0))
-		idleStarted := time.Now()
-		time.Sleep(5 * time.Second)
-		pacer.pause(time.Since(idleStarted))
-		resumed := time.Now()
-		require.NoError(t, pacer.writeSamples(t.Context(), track, samples, 1, 0))
-		require.Equal(t, 40*time.Millisecond, time.Since(resumed), "a source stall must not turn the next GoP into overdue samples")
-		resumed = time.Now()
-		require.NoError(t, pacer.writeSamples(t.Context(), track, samples, 2, 0))
-		require.Equal(t, 20*time.Millisecond, time.Since(resumed), "new samples use the current backlog scalar")
+func TestStemPacerSharesMainSchedule(t *testing.T) {
+	for _, scalar := range []float64{1, 1.5} {
+		for _, offset := range []time.Duration{-20 * time.Millisecond, 20 * time.Millisecond} {
+			t.Run(fmt.Sprintf("%g/%s", scalar, offset), func(t *testing.T) {
+				synctest.Test(t, func(t *testing.T) {
+					track, err := webrtc.NewTrackLocalStaticSample(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus, ClockRate: 48000}, "audio-g2", "stream")
+					require.NoError(t, err)
+					stem := bus.PacketizedStem{Group: 2, Offset: offset, Audio: []bus.PacketizedSample{{Duration: 20 * time.Millisecond}, {Duration: 20 * time.Millisecond}}}
+					start := time.Now()
+					mainStart := start.Add(-time.Duration(float64(min(offset, 0)) / scalar))
+					var pacer samplePacer
+					require.NoError(t, pacer.writeStemSamples(t.Context(), track, stem.Audio, scalar, mainStart.Add(time.Duration(float64(offset)/scalar)), offset))
+					require.InDelta(t, float64(time.Duration(float64(max(offset, 0)+40*time.Millisecond)/scalar)), float64(time.Since(start)), 2,
+						"relative starts share the main schedule while backlog acceleration only changes wall pacing")
+					// Main-only source and EOS packets still move the shared reference.
+					require.NoError(t, pacer.writeStemSamples(t.Context(), track, stem.Audio, scalar, mainStart.Add(time.Duration(float64(200*time.Millisecond+offset)/scalar)), 200*time.Millisecond+offset))
+					require.Equal(t, 240*time.Millisecond+offset, pacer.position, "missing stem intervals retain their real media clock")
+					require.InDelta(t, float64(time.Duration(float64(max(offset, 0)+240*time.Millisecond)/scalar)), float64(time.Since(start)), 4,
+						"missing intervals wait for the current main schedule instead of an overdue stem deadline")
+				})
+			})
+		}
+	}
+}
 
-		var nextSession samplePacer
-		resumed = time.Now()
-		require.NoError(t, nextSession.writeSamples(t.Context(), track, samples, 1, 0))
-		require.Equal(t, 40*time.Millisecond, time.Since(resumed), "a new playback session owns a fresh clock")
+func TestStemPacerCancelsBeforeDelayedStart(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		track, err := webrtc.NewTrackLocalStaticSample(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus, ClockRate: 48000}, "audio-g2", "stream")
+		require.NoError(t, err)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		var pacer samplePacer
+		start := time.Now()
+		done := make(chan error, 1)
+		go func() {
+			done <- pacer.writeStemSamples(ctx, track, []bus.PacketizedSample{{Duration: 20 * time.Millisecond}}, 1, start.Add(time.Second), time.Second)
+		}()
+		synctest.Wait()
+		time.Sleep(10 * time.Millisecond)
+		cancel()
+		synctest.Wait()
+		require.NoError(t, <-done)
+		require.Equal(t, 10*time.Millisecond, time.Since(start))
+		require.Zero(t, pacer.position, "cancelled delayed audio must not be counted as played")
 	})
 }
 
