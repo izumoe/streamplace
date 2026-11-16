@@ -655,6 +655,14 @@ func metadataFromVerifiedSegments(ctx context.Context, segments []segmentValidat
 		return nil, err
 	}
 	meta.Published = meta.Published && !restricted
+	valid := &ValidationResult{
+		Pub:              pub,
+		Meta:             meta,
+		Manifest:         &primary.Manifest,
+		Cert:             primary.Cert,
+		trackSigningKeys: trackKeys,
+		verifiedSegments: segments,
+	}
 	// A batch spanning a source policy change stays private. Node-signed
 	// addenda have independent metadata and cannot change source policy.
 	for i := range segments {
@@ -664,6 +672,13 @@ func metadataFromVerifiedSegments(ctx context.Context, segments []segmentValidat
 		}
 		other, err := ParseSegmentAssertions(ctx, &segment.Manifest)
 		if err != nil {
+			// Derivatives may omit source metadata, but must bind to an original in this batch.
+			if len(segment.Manifest.Ingredients) > 0 && (errors.Is(err, ErrMissingMetadata) || errors.Is(err, ErrInvalidMetadata)) {
+				if err := checkRenditionIngredient(*segment, valid); err != nil {
+					return nil, err
+				}
+				continue
+			}
 			return nil, fmt.Errorf("track %d segment metadata: %w", segment.TrackID, err)
 		}
 		if meta.Published != other.Published || meta.Creator != other.Creator || !sameContentPolicy(meta, other) {
@@ -671,15 +686,7 @@ func metadataFromVerifiedSegments(ctx context.Context, segments []segmentValidat
 		}
 	}
 
-	return &ValidationResult{
-		Pub:              pub,
-		Meta:             meta,
-		MediaData:        nil, // filled in by ValidateMP4MediaData
-		Manifest:         &primary.Manifest,
-		Cert:             primary.Cert,
-		trackSigningKeys: trackKeys,
-		verifiedSegments: segments,
-	}, nil
+	return valid, nil
 }
 
 func sameContentPolicy(left, right *SegmentMetadata) bool {
@@ -777,7 +784,7 @@ func checkRenditionIngredient(asset segmentValidation, source *ValidationResult)
 		found := false
 		if ingredient.ActiveManifest != nil {
 			for _, original := range source.verifiedSegments {
-				if source.trackSigningKeys[original.TrackID] == source.Pub.DIDKey() && original.Manifest.Label != nil && *original.Manifest.Label == *ingredient.ActiveManifest {
+				if len(original.Manifest.Ingredients) == 0 && source.trackSigningKeys[original.TrackID] == source.Pub.DIDKey() && original.Manifest.Label != nil && *original.Manifest.Label == *ingredient.ActiveManifest {
 					found = true
 					break
 				}
