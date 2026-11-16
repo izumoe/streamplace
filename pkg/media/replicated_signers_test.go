@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"stream.place/streamplace/pkg/atproto"
 	"testing"
 
@@ -16,7 +17,96 @@ import (
 	"stream.place/streamplace/pkg/bus"
 	"stream.place/streamplace/pkg/config"
 	"stream.place/streamplace/pkg/crypto/signers"
+	"stream.place/streamplace/pkg/muxl"
 )
+
+func TestReplicatedAudioDerivativeBindsOriginalMetadata(t *testing.T) {
+	ctx := t.Context()
+	signer := audioSignerForTest(t)
+	sources := allSignedBareSegments(t, ctx, signer, getFixture("h264-opus-frag.mp4"))
+	require.GreaterOrEqual(t, len(sources), 2)
+	input, err := signer.SigningInput()
+	require.NoError(t, err)
+	aac, err := os.ReadFile(getFixture("ertmp-red-h264.mp4"))
+	require.NoError(t, err)
+	canonical, err := muxl.RunMuxlCanonicalize(ctx, aac, map[uint32]uint32{2: 3})
+	require.NoError(t, err)
+	events, err := unwrapMuxlEvents(ctx, canonical)
+	require.NoError(t, err)
+	var unsigned []byte
+	for _, event := range events {
+		if len(event.Tracks["3"]) > 0 {
+			unsigned = event.Tracks["3"]
+			break
+		}
+	}
+	require.NotEmpty(t, unsigned)
+	mm := NewOffline(&config.CLI{BroadcasterHost: "node.test", Syndicate: []string{signer.Streamer()}})
+	mm.nodeCert, mm.nodeKeyPEM = nodeSignerForTest(t)
+	mm.nodeSignerOnce.Do(func() {})
+	signDerivative := func(source []byte) []byte {
+		data, err := muxl.RunMuxlSignTranscode(ctx, muxl.TranscodeInput{
+			Output: unsigned, Source: source, CertPEM: input.CertPEM, KeyPEM: input.KeyPEM,
+			Manifest: transcodeManifestFor(signer.Streamer(), "transcoded audio"),
+		})
+		require.NoError(t, err)
+		return data
+	}
+	var derivative []byte
+	for _, source := range sources[:2] {
+		original, err := ValidateMP4MediaC2PA(ctx, source)
+		require.NoError(t, err)
+		derivative = signDerivative(source)
+		assets, _, err := verifiedRenditions(ctx, derivative)
+		require.NoError(t, err, "derivative signatures and ingredient hashes validate")
+		_, err = ParseSegmentAssertions(ctx, &assets[0].Manifest)
+		require.ErrorIs(t, err, ErrInvalidMetadata, "upstream derivatives omit the original's stream title")
+		valid, err := ValidateMP4MediaC2PA(ctx, append(bytes.Clone(source), derivative...))
+		require.NoError(t, err)
+		require.Equal(t, original.Meta, valid.Meta)
+		require.Equal(t, original.Manifest.Label, valid.Manifest.Label)
+		admitted, _, err := mm.validateSource(ctx, append(bytes.Clone(source), derivative...), false, signer.Streamer())
+		require.NoError(t, err)
+		require.Len(t, admitted.mediaData.Audio, 2, "both original Opus and derived AAC remain playable")
+	}
+	t.Run("another source", func(t *testing.T) {
+		_, err := ValidateMP4MediaC2PA(ctx, append(bytes.Clone(sources[0]), derivative...))
+		require.ErrorContains(t, err, "source ingredient")
+	})
+	t.Run("source still required", func(t *testing.T) {
+		_, err := ValidateMP4MediaC2PA(ctx, derivative)
+		require.Error(t, err)
+	})
+	t.Run("every ingredient required", func(t *testing.T) {
+		mixed := signDerivative(append(bytes.Clone(sources[0]), sources[1]...))
+		_, err := ValidateMP4MediaC2PA(ctx, append(bytes.Clone(sources[0]), mixed...))
+		require.ErrorContains(t, err, "source ingredient")
+	})
+	t.Run("tampered derivative", func(t *testing.T) {
+		corrupt := bytes.Clone(derivative)
+		corrupt[len(corrupt)-1] ^= 1
+		_, err := ValidateMP4MediaC2PA(ctx, append(bytes.Clone(sources[1]), corrupt...))
+		require.Error(t, err)
+	})
+	t.Run("private source", func(t *testing.T) {
+		manifest := signer.PrebuiltManifest
+		defer func() { signer.PrebuiltManifest = manifest }()
+		signer.PrebuiltManifest = audioPolicyManifest(t, manifest, false, "all rights reserved")
+		private := allSignedBareSegments(t, ctx, signer, getFixture("h264-opus-frag.mp4"))[0]
+		original, err := ValidateMP4MediaC2PA(ctx, private)
+		require.NoError(t, err)
+		valid, err := ValidateMP4MediaC2PA(ctx, append(bytes.Clone(private), signDerivative(private)...))
+		require.NoError(t, err)
+		require.False(t, valid.Meta.Published)
+		require.Equal(t, original.Meta, valid.Meta, "a derivative cannot replace its original's private policy")
+	})
+	t.Run("malformed original", func(t *testing.T) {
+		signer.PrebuiltManifest = bytes.ReplaceAll(signer.PrebuiltManifest, []byte("dc:title"), []byte("dc:description"))
+		malformed := allSignedBareSegments(t, ctx, signer, getFixture("h264-opus-frag.mp4"))[0]
+		_, err := ValidateMP4MediaC2PA(ctx, append(bytes.Clone(sources[0]), malformed...))
+		require.ErrorIs(t, err, ErrInvalidMetadata)
+	})
+}
 
 func TestReplicatedVideoRequiresAuthorizedSigner(t *testing.T) {
 	ctx := t.Context()
@@ -64,11 +154,7 @@ func TestReplicatedVideoRequiresAuthorizedSigner(t *testing.T) {
 			require.NotEmpty(t, sub.C)
 			<-sub.C
 			_, _, err = mm.validateSource(ctx, append(bytes.Clone(source), data...), false, signer.Streamer())
-			if authority.name == "streamer" {
-				require.ErrorContains(t, err, "segment metadata", "trust cannot bypass source metadata consistency")
-			} else {
-				require.NoError(t, err)
-			}
+			require.NoError(t, err, "a verified derivative binds to its original source regardless of signer reuse")
 		})
 	}
 	pub, err := signers.ParseES256KCert(outsiderCert)
