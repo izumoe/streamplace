@@ -329,6 +329,33 @@ async function checkMoqPlayback(
     })
     .toBe(`playback/${process.env.ACCOUNT_DID}`);
 
+  // Keep media arriving during cold worklet loading; repeated requests share the module cache.
+  await page.addInitScript(() => {
+    const Native = window.AudioContext;
+    window.AudioContext = new Proxy(Native, {
+      construct(target, args, newTarget) {
+        const context = Reflect.construct(
+          target,
+          args,
+          newTarget,
+        ) as AudioContext;
+        const load = context.audioWorklet.addModule.bind(context.audioWorklet);
+        const modules = new Map<string, Promise<void>>();
+        context.audioWorklet.addModule = (...args) => {
+          const key = String(args[0]);
+          let pending = modules.get(key);
+          if (!pending) {
+            pending = new Promise<void>((resolve) =>
+              setTimeout(resolve, 2000),
+            ).then(() => load(...args));
+            modules.set(key, pending);
+          }
+          return pending;
+        };
+        return context;
+      },
+    });
+  });
   await page.addInitScript(observeAudioOutput);
   await page.addInitScript(() => {
     window.moqVideoDecoders = [];

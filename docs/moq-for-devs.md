@@ -633,6 +633,24 @@ This caps pending coded requests at one, preserving accepted codec work and the
 decoded presentation buffer. It does not bound end-to-end latency or discard
 frames outside the consumer's existing age policy.
 
+Shared-clock audio uses the upstream pitch-preserving WSOLA implementation and
+its decision/corpus fixtures from
+[`d57d4dc605a230279a6a68113ffa1244977f3037`](https://github.com/moq-dev/moq/commit/d57d4dc605a230279a6a68113ffa1244977f3037),
+backported onto the released SDK. One stretch runs after mixing, keeping stem
+splices and stereo channels aligned. Small clock errors recover at up to 10%
+instead of discarding queued PCM. The two-second recovery bound permits a
+coordinated seek when target PCM exists; it does not add two seconds of delay.
+Cold joins discard unheard preroll after the initial floor primes.
+
+The existing rings retain staged PCM until the shared output cursor commits it,
+rejecting changed inputs by revision. Decoder backpressure counts actual PCM
+and pending native output, including warmup and trimmed callbacks. Worklet
+readiness gates decoding. Consumer-reported gaps re-prime the native codec while
+preserving queued PCM, encoder pre-skip and the shared clock. The first delivery
+flag is normalized before startup sorting, and stale frames cannot reset the
+codec. These changes affect decoded playback, leaving signed media and node
+validation unchanged.
+
 The readable source, regression tests and packaging configuration are in
 `patches/moq-watch-0.6.6-source.patch`, against upstream commit
 [`9da79786c2392271e51313f4fc24487f47d36975`](https://github.com/moq-dev/moq/commit/9da79786c2392271e51313f4fc24487f47d36975).
@@ -652,25 +670,24 @@ git -C "$moq_sdk_dir" apply "$PWD/patches/moq-watch-0.6.6-source.patch"
 (
   cd "$moq_sdk_dir"
   bun install --frozen-lockfile --filter moq --filter @moq/watch
-  cd js/watch
-  bun run test ./src/media.test.ts ./src/player.test.ts ./src/video/source.test.ts ./src/video/decoder.test.ts
-  bun run build
+  bun test ./js/watch/src
+  bun run --cwd js/watch check
+  bun run --cwd js/watch build
 )
 pnpm patch @moq/watch@0.6.6 --edit-dir .build/moq-watch-package
-cp "$moq_sdk_dir/js/watch/dist/player-B6mw85kT.js" .build/moq-watch-package/
+cp -R "$moq_sdk_dir/js/watch/dist/." .build/moq-watch-package/
 pnpm patch-commit .build/moq-watch-package
 ```
 
 The unpatched normal build reproduced all 138 published package files byte for
 byte. The patch build keeps the published shared-chunk filename and disables
-source maps. Copy only that generated chunk: its runtime changes are rendition
-selection, audio budgeting, handoff priorities, decoder reuse, video decoder
-backpressure and removal of its source-map reference. Generated binding names
-in adjacent regions can change with the build; review the readable source patch
-and regenerate the runtime. The generated chunk's SHA-256 is
-`ddefda27ac5ed6a133fb417e97304cbddb8fa6327a07be1811593db0754cc48b`.
-`moq-quality.test.ts` checks the installed package so a missing patch fails the
-ordinary web test suite.
+source maps. Copy the complete generated output so runtime and declarations stay
+in sync, including the added audio modules. Generated binding names in adjacent
+regions can change with the build; review the readable source patch and
+regenerate the runtime. Installed-package quality, timing and PCM playout tests
+catch a missing or stale patch in the ordinary web test suite.
+The generated shared chunk's SHA-256 is
+`edc7f17abf4c5a92bbcce02ff07a1638eacad34555c65fb10e807ab982ff5b88`.
 
 The real MoQ playback test reproduced 89 pending decode requests, then passed
 with at most one while video, PCM audio output, pause/resume and decoder cleanup
@@ -678,3 +695,19 @@ remained functional. Its existing receiver-thread pressure also exercises the
 native path. The multitrack test verifies actual H264 and supported AV1 decoding
 and switching. These checks establish queue behavior, not long-run latency
 stability; source aging and shared host load require separate measurements.
+
+Audio regressions run the shipped mixer worklet through both shared-memory and
+postMessage rings. They cover early batches, fractional sample boundaries,
+changing delay, cold preroll and synchronized stem correction. The real browser
+smoke delays worklet loading by two seconds, exercises pause/resume and HLS
+return, checks A/V timing, and verifies transport/resource teardown.
+The signed received-stems test also verifies full-mix and solo playback on the
+receiving node using actual PCM output.
+
+At 48 kHz stereo with a 1.2-second floor, stretch state and scratch PCM add about
+46 KiB per mixer. Shared ring capacity is unchanged; the postMessage path adds
+450 KiB per allocated input to preserve correction headroom. These are typed-array
+capacities, excluding encoded data and other browser memory. A bounded Bun
+benchmark measured mean PCM correction work below 1% of one core, with scheduling
+outliers beyond a callback's duration. This is not a browser deadline or device
+listening guarantee.
