@@ -2,12 +2,18 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/bluesky-social/indigo/atproto/atcrypto"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
+	"stream.place/streamplace/pkg/atproto"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -82,6 +88,42 @@ func TestE2EPublisherFlags(t *testing.T) {
 				return nil, stop
 			}
 			require.ErrorIs(t, cmd.Run(t.Context(), tc.args), stop)
+		})
+	}
+}
+
+func TestE2EStationKey(t *testing.T) {
+	key, err := atcrypto.GeneratePrivateKeyK256()
+	require.NoError(t, err)
+	pub, err := key.PublicKey()
+	require.NoError(t, err)
+	doc, err := json.Marshal(atproto.DIDDoc("node.test", pub.Multibase()))
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name, body string
+		status     int
+		ok         bool
+	}{
+		{"station key", string(doc), http.StatusOK, true},
+		{"missing key", `{}`, http.StatusOK, false},
+		{"invalid document", `{`, http.StatusOK, false},
+		{"server error", string(doc), http.StatusInternalServerError, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				require.Equal(t, "/.well-known/did.json", r.URL.Path)
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer srv.Close()
+			got, err := e2eStationKey(t.Context(), strings.TrimPrefix(srv.URL, "http://"))
+			if tc.ok {
+				require.NoError(t, err)
+				require.Equal(t, pub.DIDKey(), got)
+			} else {
+				require.Error(t, err)
+				require.Empty(t, got)
+			}
 		})
 	}
 }

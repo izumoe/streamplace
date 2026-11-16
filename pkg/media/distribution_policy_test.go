@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"stream.place/streamplace/pkg/aqtime"
 	c2patypes "stream.place/streamplace/pkg/c2patypes"
+	"stream.place/streamplace/pkg/config"
 	"stream.place/streamplace/pkg/localdb"
 )
 
@@ -74,4 +75,37 @@ func TestSegmentRecordCarriesAllowGenAiTraining(t *testing.T) {
 	require.NotNil(t, record.DistributionPolicy.AllowGenAiTraining)
 	require.False(t, *record.DistributionPolicy.AllowGenAiTraining)
 	require.Nil(t, record.DistributionPolicy.DeleteAfter)
+}
+func TestDistributionPolicyFilterAllowsIndefiniteArchiving(t *testing.T) {
+	filters := &config.ContentFilters{}
+	filters.DistributionPolicy.Enabled = true
+	mm := &MediaManager{cli: &config.CLI{ContentFilters: filters}}
+	indefinite := int64(-1)
+	expired := int64(30)
+	future := int64(3600)
+	for _, tc := range []struct {
+		name        string
+		deleteAfter *int64
+		expires     bool
+	}{
+		{name: "undeclared"},
+		{name: "indefinite", deleteAfter: &indefinite},
+		{name: "unexpired", deleteAfter: &future},
+		{name: "expired", deleteAfter: &expired, expires: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			meta := &SegmentMetadata{
+				StartTime: aqtime.FromTime(time.Now().Add(-time.Minute)),
+				DistributionPolicy: &localdb.DistributionPolicy{
+					DeleteAfterSeconds: tc.deleteAfter,
+				},
+			}
+			err := mm.applyContentFilters(t.Context(), meta)
+			if tc.expires {
+				require.ErrorContains(t, err, "distribution policy expired")
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
 }

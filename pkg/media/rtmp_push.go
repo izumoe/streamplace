@@ -103,7 +103,7 @@ func (mm *MediaManager) writeRTMPSource(ctx context.Context, user, rendition str
 				}
 				cat := catalogFromEvents(events)
 				if cat != nil && cat.Audio != nil {
-					for _, audio := range cat.Audio.Renditions {
+					for _, audio := range mainAudioTracks(audioTracks(cat)) {
 						if isAACCodec(audio.Codec) {
 							if _, err := w.Write(concatTrackAcrossSegments(events, fmt.Sprint(audio.TrackID()))); err != nil {
 								return err

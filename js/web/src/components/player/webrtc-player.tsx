@@ -7,7 +7,13 @@ import { useEffect, useImperativeHandle, useRef, type RefObject } from "react";
 import { useTranslation } from "react-i18next";
 import { place, type StreamplaceAgent } from "streamplace";
 import { getStreamplaceUrl } from "../../lib/streamplace-url";
+import type { AudioMix, AudioStem } from "./audio-stems";
 import type { PlayerBackendHandle, PlayerStats } from "./player";
+import {
+  inboundAudioGroup,
+  WebRTCAudio,
+  WebRTCMediaProgress,
+} from "./webrtc-audio";
 import { getWebRTCVideoTiming } from "./webrtc-stats";
 
 export type WebRTCPlayerProps = {
@@ -25,6 +31,9 @@ export type WebRTCPlayerProps = {
   onError?: (message: string) => void;
   /** Called roughly once per second with a stats snapshot. */
   onStatsChange?: (stats: PlayerStats) => void;
+  audioStems?: AudioStem[];
+  audioMix?: AudioMix;
+  onAudioStemsChange?: (stems: AudioStem[]) => void;
 };
 
 const RECONNECT_DELAY_MS = 3000;
@@ -77,6 +86,9 @@ export function WebRTCPlayer({
   active,
   onError,
   onStatsChange,
+  audioStems = [],
+  audioMix = null,
+  onAudioStemsChange,
 }: WebRTCPlayerProps & {
   ref?: RefObject<PlayerBackendHandle | null>;
 }) {
@@ -85,7 +97,15 @@ export function WebRTCPlayer({
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttemptsRef = useRef(0);
   const gaveUpRef = useRef(false);
-  const agentRef = useRef<StreamplaceAgent | null>(null);
+  const audioRef = useRef<WebRTCAudio | null>(null);
+  const audioStemsRef = useRef(audioStems);
+  const onAudioStemsChangeRef = useRef(onAudioStemsChange);
+  audioStemsRef.current = audioStems;
+  onAudioStemsChangeRef.current = onAudioStemsChange;
+
+  useEffect(() => {
+    audioRef.current?.setMix(audioStems, audioMix);
+  }, [audioStems, audioMix]);
 
   // WebRTC doesn't have quality levels; expose a no-op so the chrome
   // doesn't break if the user clicks the quality menu.
@@ -112,21 +132,25 @@ export function WebRTCPlayer({
 
   useEffect(() => {
     if (!active) return;
-    const video = videoRef.current;
-    if (!video) return;
+    const element = videoRef.current;
+    if (!element) return;
+    const video: HTMLVideoElement = element;
 
     const streamer = extractStreamer(src);
     const serverUrl = extractServerUrl(src);
 
     let cancelled = false;
+    let agent: StreamplaceAgent | null = null;
+    reconnectAttemptsRef.current = 0;
+    gaveUpRef.current = false;
 
     // Lazily create the agent; imported dynamically so the HLS-only path
     // never pays the import cost.
     async function getAgent(): Promise<StreamplaceAgent> {
-      if (agentRef.current) return agentRef.current;
+      if (agent) return agent;
       const { StreamplaceAgent } = await import("streamplace");
-      agentRef.current = new StreamplaceAgent(serverUrl);
-      return agentRef.current;
+      agent = new StreamplaceAgent(serverUrl);
+      return agent;
     }
 
     function stopStatsPolling() {
@@ -152,13 +176,19 @@ export function WebRTCPlayer({
           stopStatsPolling();
           const previous = pcRef.current;
           pcRef.current = null;
+          audioRef.current?.close();
+          audioRef.current = null;
           previous?.close();
           connect();
         }
       }, RECONNECT_DELAY_MS);
     }
 
-    async function negotiate(pc: RTCPeerConnection, streamer: string) {
+    async function negotiate(
+      pc: RTCPeerConnection,
+      streamer: string,
+      syncAudio: () => void,
+    ) {
       try {
         const offer = await pc.createOffer({
           offerToReceiveAudio: true,
@@ -173,13 +203,14 @@ export function WebRTCPlayer({
 
         // Wait for ICE gathering to complete (or time out).
         const gatheredOffer = await waitForICE(pc);
+        if (cancelled || pc !== pcRef.current) return;
         if (!gatheredOffer || !gatheredOffer.sdp) {
           onErrorRef.current?.(t("player-error-ice-failed"));
           return;
         }
 
         const agent = await getAgent();
-        if (cancelled) return;
+        if (cancelled || pc !== pcRef.current) return;
 
         // POST the offer via the WHEP endpoint.
         const response = await agent.client.call(
@@ -190,7 +221,7 @@ export function WebRTCPlayer({
           },
         );
 
-        if (cancelled) return;
+        if (cancelled || pc !== pcRef.current) return;
 
         const answerSdp =
           typeof response === "string"
@@ -200,8 +231,9 @@ export function WebRTCPlayer({
         await pc.setRemoteDescription(
           new RTCSessionDescription({ type: "answer", sdp: answerSdp }),
         );
+        if (!cancelled && pc === pcRef.current) syncAudio();
       } catch (err) {
-        if (cancelled) return;
+        if (cancelled || pc !== pcRef.current) return;
         console.error("WebRTC negotiation failed:", err);
         onErrorRef.current?.(t("player-error-negotiation-failed"));
         scheduleReconnect();
@@ -210,12 +242,9 @@ export function WebRTCPlayer({
 
     function startStatsPolling(pc: RTCPeerConnection) {
       const lastFpsSample = { time: 0, frames: 0 };
-      let lastFramesReceived = 0;
-      let lastAudioReceived = 0;
+      const progress = new WebRTCMediaProgress(STUCK_THRESHOLD_MS);
       let lastBytesReceived = 0;
       let lastBitrateSampleTime = 0;
-      let lastChangeTime = Date.now();
-      let hasReceivedFrames = false;
 
       statsIntervalRef.current = setInterval(async () => {
         if (cancelled || pc !== pcRef.current) return;
@@ -223,7 +252,7 @@ export function WebRTCPlayer({
           const stats = await pc.getStats();
           if (cancelled || pc !== pcRef.current) return;
           let framesReceived = 0;
-          let audioReceived = 0;
+          const inbound: InboundRtpStats[] = [];
           let width = 0;
           let height = 0;
           let codec = "";
@@ -234,6 +263,7 @@ export function WebRTCPlayer({
             if (report.type !== "inbound-rtp") return;
             const r = report as InboundRtpStats;
             const kind = r.mediaType ?? r.kind ?? "";
+            inbound.push(r);
             if (kind === "video") {
               timing = getWebRTCVideoTiming(r);
               framesReceived = r.framesReceived ?? 0;
@@ -252,27 +282,10 @@ export function WebRTCPlayer({
                 }
               }
             }
-            if (kind === "audio") {
-              audioReceived = r.lastPacketReceivedTimestamp ?? 0;
-            }
           });
 
-          // Stuck detection: if no new frames for STUCK_THRESHOLD_MS, the
-          // stream is probably stalled. Only start checking after we've
-          // received at least one frame; before that the connection is
-          // still establishing.
           const now = Date.now();
-          if (
-            framesReceived !== lastFramesReceived ||
-            audioReceived !== lastAudioReceived
-          ) {
-            lastFramesReceived = framesReceived;
-            lastAudioReceived = audioReceived;
-            lastChangeTime = now;
-            hasReceivedFrames = true;
-          }
-
-          if (hasReceivedFrames && now - lastChangeTime > STUCK_THRESHOLD_MS) {
+          if (progress.stalled(inbound, now)) {
             onErrorRef.current?.(t("player-error-stream-stalled"));
             scheduleReconnect();
             return;
@@ -344,23 +357,55 @@ export function WebRTCPlayer({
 
       // Receive both video and audio.
       peerConnection.addTransceiver("video", { direction: "recvonly" });
-      peerConnection.addTransceiver("audio", { direction: "recvonly" });
+      for (let i = 0; i < 3; i++) {
+        peerConnection.addTransceiver("audio", { direction: "recvonly" });
+      }
+      const stream = new MediaStream();
+      const audio = new WebRTCAudio(video, stream, (stems) =>
+        onAudioStemsChangeRef.current?.(stems),
+      );
+      audioRef.current = audio;
+      audio.setMix(audioStemsRef.current, null);
+      const audioTracks = new Map<MediaStreamTrack, RTCRtpTransceiver>();
+      const syncAudio = () => {
+        for (const [track, transceiver] of audioTracks) {
+          audio.add(
+            track,
+            inboundAudioGroup(
+              track.id,
+              transceiver.mid,
+              peerConnection.remoteDescription?.sdp ?? "",
+            ),
+          );
+        }
+      };
+      peerConnection.addEventListener("signalingstatechange", () => {
+        if (
+          !cancelled &&
+          peerConnection === pcRef.current &&
+          peerConnection.signalingState === "stable"
+        )
+          syncAudio();
+      });
 
-      // When tracks arrive, attach the first stream to the video element.
       peerConnection.addEventListener("track", (event) => {
-        if (cancelled) return;
-        // First media arriving means the connection actually works. If
-        // we later stall and have to reconnect, start the failure count
-        // from scratch; this isn't a string of broken attempts.
+        if (cancelled || peerConnection !== pcRef.current) return;
         reconnectAttemptsRef.current = 0;
-        if (event.streams && event.streams[0]) {
-          const v = videoRef.current;
-          if (v) {
-            v.srcObject = event.streams[0];
-            v.play().catch((err) =>
+        if (event.track.kind === "video") {
+          for (const track of stream.getVideoTracks())
+            stream.removeTrack(track);
+          stream.addTrack(event.track);
+        } else {
+          audioTracks.set(event.track, event.transceiver);
+          syncAudio();
+        }
+        if (video.srcObject !== stream) {
+          video.srcObject = stream;
+          video
+            .play()
+            .catch((err) =>
               console.warn("[webrtc-player] play() rejected", err),
             );
-          }
         }
       });
 
@@ -381,7 +426,7 @@ export function WebRTCPlayer({
       // Trigger negotiation when transceivers are added.
       peerConnection.addEventListener("negotiationneeded", () => {
         if (cancelled) return;
-        negotiate(peerConnection, streamer);
+        negotiate(peerConnection, streamer, syncAudio);
       });
 
       // Start stats polling.
@@ -401,6 +446,9 @@ export function WebRTCPlayer({
         clearTimeout(reconnectTimerRef.current);
         reconnectTimerRef.current = null;
       }
+      audioRef.current?.close();
+      audioRef.current = null;
+      onAudioStemsChangeRef.current?.([]);
       pcRef.current?.close();
       pcRef.current = null;
       video.srcObject = null;
@@ -418,20 +466,22 @@ function waitForICE(
   pc: RTCPeerConnection,
 ): Promise<RTCSessionDescription | null> {
   return new Promise((resolve) => {
-    const timeout = setTimeout(() => {
-      if (pc.connectionState === "closed") return;
-      resolve(pc.localDescription);
-    }, ICE_GATHERING_TIMEOUT_MS);
-
-    pc.addEventListener(
-      "icegatheringstatechange",
-      () => {
-        if (pc.iceGatheringState === "complete") {
-          clearTimeout(timeout);
-          resolve(pc.localDescription);
-        }
-      },
-      { once: true },
-    );
+    const finish = () => {
+      clearTimeout(timeout);
+      pc.removeEventListener("icegatheringstatechange", check);
+      pc.removeEventListener("connectionstatechange", check);
+      resolve(pc.connectionState === "closed" ? null : pc.localDescription);
+    };
+    const check = () => {
+      if (
+        pc.iceGatheringState === "complete" ||
+        pc.connectionState === "closed"
+      )
+        finish();
+    };
+    const timeout = setTimeout(finish, ICE_GATHERING_TIMEOUT_MS);
+    pc.addEventListener("icegatheringstatechange", check);
+    pc.addEventListener("connectionstatechange", check);
+    check();
   });
 }

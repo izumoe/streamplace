@@ -25,19 +25,33 @@ func (s *Server) handlePlaceStreamPlaybackGetPlaybackServer(ctx context.Context,
 	out := &placestream.PlaybackGetPlaybackServer_Output{
 		Servers: []string{fmt.Sprintf("https://%s", addr)},
 	}
-	origin, err := s.statefulDB.GetLatestBroadcastOriginForStreamer(streamer)
-	if err != nil {
-		return nil, fmt.Errorf("get broadcast origin: %w", err)
-	}
-	// Origins refresh every 30 seconds while ingest is active.
-	if origin != nil && origin.MoqURL != "" && time.Since(origin.UpdatedAt) < time.Minute {
-		sessionURL := url.URL{Scheme: "https", Host: DIDWebToHost(origin.ServerDID), Path: "/api/moq/session", RawQuery: url.Values{"streamer": {streamer}}.Encode()}
-		session := sessionURL.String()
-		out.Moq = &placestream.PlaybackGetPlaybackServer_Moq{
-			Url:        origin.MoqURL,
-			SessionUrl: &session,
-			Name:       "playback/" + streamer,
+	var originURL, originDID string
+	if s.Replicator != nil && s.mm != nil {
+		window, published := s.mm.GetLiveWindow(streamer)
+		if window != nil && published && window.HasAudioStems() {
+			own := &placestream.BroadcastOrigin{Streamer: streamer}
+			if err := s.Replicator.BuildOriginRecord(own); err != nil {
+				return nil, fmt.Errorf("get local playback origin: %w", err)
+			}
+			if own.MoqURL != nil {
+				originURL, originDID = *own.MoqURL, s.cli.ServerDID()
+			}
 		}
+	}
+	if originURL == "" {
+		origin, err := s.statefulDB.GetLatestBroadcastOriginForStreamer(streamer)
+		if err != nil {
+			return nil, fmt.Errorf("get broadcast origin: %w", err)
+		}
+		// Origins refresh every 30 seconds while ingest is active.
+		if origin != nil && origin.MoqURL != "" && time.Since(origin.UpdatedAt) < time.Minute {
+			originURL, originDID = origin.MoqURL, origin.ServerDID
+		}
+	}
+	if originURL != "" {
+		sessionURL := url.URL{Scheme: "https", Host: DIDWebToHost(originDID), Path: "/api/moq/session", RawQuery: url.Values{"streamer": {streamer}}.Encode()}
+		session := sessionURL.String()
+		out.Moq = &placestream.PlaybackGetPlaybackServer_Moq{Url: originURL, SessionUrl: &session, Name: "playback/" + streamer}
 	}
 	return out, nil
 }

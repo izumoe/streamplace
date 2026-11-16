@@ -15,7 +15,7 @@ patchedDependencies:
     hash: 86f3a7bd6e2f649545bfdccb698a86c1de8f3b30eb5a15282b171b7349359905
     path: patches/@moq__hang@0.5.4.patch
   '@moq/watch@0.6.6':
-    hash: da9a59914985ca5bc21db7421d7ee9d7404e46a02528b26db1fc62609d6b92c3
+    hash: edbe1db3f416905c5b70e5e5e210c3dcb500d2e4b39cb1f2157e28bd05f7ee8e
     path: patches/@moq__watch@0.6.6.patch
   core-js:
     hash: 21c25ca1c792d52c0af7b9b268c163b4bda8a72bb061fcc6a07c81a8a42ecfe7
@@ -779,7 +779,7 @@ importers:
         version: 5.3.0
       '@moq/watch':
         specifier: 0.6.6
-        version: 0.6.6(patch_hash=da9a59914985ca5bc21db7421d7ee9d7404e46a02528b26db1fc62609d6b92c3)(@types/react@19.2.18)(@zod/mini@4.6.7(zod@4.6.7))(react@19.2.0)(zod@4.6.7)
+        version: 0.6.6(patch_hash=edbe1db3f416905c5b70e5e5e210c3dcb500d2e4b39cb1f2157e28bd05f7ee8e)(@types/react@19.2.18)(@zod/mini@4.6.7(zod@4.6.7))(react@19.2.0)(zod@4.6.7)
       '@sentry/react':
         specifier: ^11.8.0
         version: 11.8.0(react@19.2.0)
@@ -19983,7 +19983,7 @@ snapshots:
       '@types/react': 19.2.18
       react: 19.2.0
 
-  '@moq/watch@0.6.6(patch_hash=da9a59914985ca5bc21db7421d7ee9d7404e46a02528b26db1fc62609d6b92c3)(@types/react@19.2.18)(@zod/mini@4.6.7(zod@4.6.7))(react@19.2.0)(zod@4.6.7)':
+  '@moq/watch@0.6.6(patch_hash=edbe1db3f416905c5b70e5e5e210c3dcb500d2e4b39cb1f2157e28bd05f7ee8e)(@types/react@19.2.18)(@zod/mini@4.6.7(zod@4.6.7))(react@19.2.0)(zod@4.6.7)':
     dependencies:
       '@moq/hang': 0.5.4(patch_hash=86f3a7bd6e2f649545bfdccb698a86c1de8f3b30eb5a15282b171b7349359905)(@types/react@19.2.18)(react@19.2.0)
       '@moq/json': 0.4.3(@types/react@19.2.18)(@zod/mini@4.6.7(zod@4.6.7))(react@19.2.0)(zod@4.6.7)

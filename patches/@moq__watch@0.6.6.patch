@@ -1,10 +1,412 @@
+diff --git a/audio/buffer.d.ts b/audio/buffer.d.ts
+index 689bcefcbab2ea1e85d77f8c7061cfe0fc4c002a..60bee0bbd8c432055495f8710cc7c32bea77adaf 100644
+--- a/audio/buffer.d.ts
++++ b/audio/buffer.d.ts
+@@ -47,5 +47,5 @@ export declare function supportsSharedArrayBuffer(): boolean;
+  * Create the best audio buffer implementation for the current environment.
+  * Picks `SharedAudioBuffer` when possible, falling back to `PostAudioBuffer`.
+  */
+-export declare function createAudioBuffer(worklet: AudioWorkletNode, channels: number, rate: number, latencySamples: number, buffered?: boolean): AudioBuffer;
++export declare function createAudioBuffer(worklet: Pick<AudioWorkletNode, "port">, channels: number, rate: number, latencySamples: number, buffered?: boolean): AudioBuffer;
+ //# sourceMappingURL=buffer.d.ts.map
+\ No newline at end of file
+diff --git a/audio/buffer.d.ts.map b/audio/buffer.d.ts.map
+index 86e3be5a3b2cd1b559fd9b49541b014083c082a4..c752146c9e5b5b94ca2d55713bd2d731fb210201 100644
+--- a/audio/buffer.d.ts.map
++++ b/audio/buffer.d.ts.map
+@@ -1 +1 @@
+-{"version":3,"file":"buffer.d.ts","sourceRoot":"","sources":["../../src/audio/buffer.ts"],"names":[],"mappings":"AAAA,OAAO,EAAE,IAAI,EAAE,MAAM,UAAU,CAAC;AAChC,OAAO,EAAU,KAAK,MAAM,EAAU,MAAM,cAAc,CAAC;AAyH3D;;;;;;;;GAQG;AACH,MAAM,WAAW,WAAW;IAC3B,QAAQ,CAAC,IAAI,EAAE,MAAM,CAAC;IACtB,QAAQ,CAAC,QAAQ,EAAE,MAAM,CAAC;IAE1B,gFAAgF;IAChF,MAAM,CAAC,SAAS,EAAE,IAAI,CAAC,KAAK,EAAE,IAAI,EAAE,YAAY,EAAE,GAAG,IAAI,CAAC;IAE1D,4CAA4C;IAC5C,UAAU,CAAC,OAAO,EAAE,MAAM,GAAG,IAAI,CAAC;IAElC,+FAA+F;IAC/F,KAAK,IAAI,IAAI,CAAC;IAEd;;;;;;OAMG;IACH,QAAQ,CAAC,SAAS,EAAE,IAAI,CAAC,KAAK,GAAG,IAAI,CAAC;IAEtC;;;;;;OAMG;IACH,IAAI,CAAC,SAAS,EAAE,IAAI,CAAC,KAAK,EAAE,MAAM,EAAE,WAAW,GAAG,OAAO,CAAC,IAAI,CAAC,CAAC;IAEhE,iEAAiE;IACjE,QAAQ,CAAC,SAAS,EAAE,MAAM,CAAC,IAAI,CAAC,KAAK,CAAC,CAAC;IAEvC,uDAAuD;IACvD,QAAQ,CAAC,OAAO,EAAE,MAAM,CAAC,OAAO,CAAC,CAAC;IAElC,gEAAgE;IAChE,KAAK,IAAI,IAAI,CAAC;CACd;AAED,0FAA0F;AAC1F,wBAAgB,yBAAyB,IAAI,OAAO,CAMnD;AAED;;;GAGG;AACH,wBAAgB,iBAAiB,CAChC,OAAO,EAAE,gBAAgB,EACzB,QAAQ,EAAE,MAAM,EAChB,IAAI,EAAE,MAAM,EACZ,cAAc,EAAE,MAAM,EACtB,QAAQ,UAAQ,GACd,WAAW,CAUb"}
+\ No newline at end of file
++{"version":3,"file":"buffer.d.ts","sourceRoot":"","sources":["../../src/audio/buffer.ts"],"names":[],"mappings":"AAAA,OAAO,EAAE,IAAI,EAAE,MAAM,UAAU,CAAC;AAChC,OAAO,EAAU,KAAK,MAAM,EAAU,MAAM,cAAc,CAAC;AAyH3D;;;;;;;;GAQG;AACH,MAAM,WAAW,WAAW;IAC3B,QAAQ,CAAC,IAAI,EAAE,MAAM,CAAC;IACtB,QAAQ,CAAC,QAAQ,EAAE,MAAM,CAAC;IAE1B,gFAAgF;IAChF,MAAM,CAAC,SAAS,EAAE,IAAI,CAAC,KAAK,EAAE,IAAI,EAAE,YAAY,EAAE,GAAG,IAAI,CAAC;IAE1D,4CAA4C;IAC5C,UAAU,CAAC,OAAO,EAAE,MAAM,GAAG,IAAI,CAAC;IAElC,+FAA+F;IAC/F,KAAK,IAAI,IAAI,CAAC;IAEd;;;;;;OAMG;IACH,QAAQ,CAAC,SAAS,EAAE,IAAI,CAAC,KAAK,GAAG,IAAI,CAAC;IAEtC;;;;;;OAMG;IACH,IAAI,CAAC,SAAS,EAAE,IAAI,CAAC,KAAK,EAAE,MAAM,EAAE,WAAW,GAAG,OAAO,CAAC,IAAI,CAAC,CAAC;IAEhE,iEAAiE;IACjE,QAAQ,CAAC,SAAS,EAAE,MAAM,CAAC,IAAI,CAAC,KAAK,CAAC,CAAC;IAEvC,uDAAuD;IACvD,QAAQ,CAAC,OAAO,EAAE,MAAM,CAAC,OAAO,CAAC,CAAC;IAElC,gEAAgE;IAChE,KAAK,IAAI,IAAI,CAAC;CACd;AAED,0FAA0F;AAC1F,wBAAgB,yBAAyB,IAAI,OAAO,CAMnD;AAED;;;GAGG;AACH,wBAAgB,iBAAiB,CAChC,OAAO,EAAE,IAAI,CAAC,gBAAgB,EAAE,MAAM,CAAC,EACvC,QAAQ,EAAE,MAAM,EAChB,IAAI,EAAE,MAAM,EACZ,cAAc,EAAE,MAAM,EACtB,QAAQ,UAAQ,GACd,WAAW,CAUb"}
+\ No newline at end of file
+diff --git a/audio/decoder.d.ts b/audio/decoder.d.ts
+index 9d4f63f40571c3ac3eb135212b08aa1ceaf2efb5..9da603183cd75520f01c6ed153fbe120fa480c1b 100644
+--- a/audio/decoder.d.ts
++++ b/audio/decoder.d.ts
+@@ -3,16 +3,32 @@ import * as Container from "@moq/hang/container";
+ import { Time } from "@moq/net";
+ import { type Getter, type Inputs, type Readonlys, Signal } from "@moq/signals";
+ import type { Sync } from "../sync";
++import { type AudioBuffer } from "./buffer";
+ import type { Source } from "./source";
+ export type DecoderInput = {
+     enabled: Getter<boolean>;
+ };
+ /** Constructor properties for {@link Decoder}. */
++/** Shared PCM renderer supplied by a multi-input player. */
++export interface RenderTarget {
++    readonly context: Getter<AudioContext | undefined>;
++    readonly root: Getter<AudioWorkletNode | undefined>;
++    discontinuity(): void;
++    received(timestamp: Time.Milli): void;
++    attach(options: {
++        channels: number;
++        rate: number;
++        latencySamples: number;
++        buffered: boolean;
++    }): AudioBuffer;
++}
+ export type DecoderProps = Inputs<DecoderInput> & {
+     /** Rendition selector supplying encoded audio. */
+     source: Source;
+     /** Shared playback clock. */
+     sync: Sync;
++    /** Shared renderer; omitted decoders own their context and worklet. */
++    renderer?: RenderTarget;
+ };
+ type DecoderOutput = {
+     context: Signal<AudioContext | undefined>;
+@@ -38,6 +54,7 @@ export declare class Decoder {
+     readonly in: Readonlys<DecoderInput>;
+     readonly source: Source;
+     readonly sync: Sync;
++    readonly renderer: RenderTarget | undefined;
+     readonly out: Readonlys<DecoderOutput>;
+     constructor(props: DecoderProps);
+     reset(): void;
+diff --git a/audio/decoder.d.ts.map b/audio/decoder.d.ts.map
+index 3bd41f0e4085d043043f6ea4fabcc67ce756d13f..22c27b2045ed72242ad0b17cff01a660480ff5a3 100644
+--- a/audio/decoder.d.ts.map
++++ b/audio/decoder.d.ts.map
+@@ -1 +1 @@
+-{"version":3,"file":"decoder.d.ts","sourceRoot":"","sources":["../../src/audio/decoder.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,OAAO,MAAM,mBAAmB,CAAC;AAC7C,OAAO,KAAK,SAAS,MAAM,qBAAqB,CAAC;AAGjD,OAAO,EAAE,IAAI,EAAE,MAAM,UAAU,CAAC;AAChC,OAAO,EAGN,KAAK,MAAM,EAEX,KAAK,MAAM,EACX,KAAK,SAAS,EAEd,MAAM,EACN,MAAM,cAAc,CAAC;AAItB,OAAO,KAAK,EAAE,IAAI,EAAE,MAAM,SAAS,CAAC;AAQpC,OAAO,KAAK,EAAE,MAAM,EAAE,MAAM,UAAU,CAAC;AASvC,MAAM,MAAM,YAAY,GAAG;IAE1B,OAAO,EAAE,MAAM,CAAC,OAAO,CAAC,CAAC;CACzB,CAAC;AAEF,kDAAkD;AAClD,MAAM,MAAM,YAAY,GAAG,MAAM,CAAC,YAAY,CAAC,GAAG;IACjD,kDAAkD;IAClD,MAAM,EAAE,MAAM,CAAC;IACf,6BAA6B;IAC7B,IAAI,EAAE,IAAI,CAAC;CACX,CAAC;AAEF,KAAK,aAAa,GAAG;IACpB,OAAO,EAAE,MAAM,CAAC,YAAY,GAAG,SAAS,CAAC,CAAC;IAI1C,IAAI,EAAE,MAAM,CAAC,SAAS,GAAG,SAAS,CAAC,CAAC;IAEpC,UAAU,EAAE,MAAM,CAAC,MAAM,GAAG,SAAS,CAAC,CAAC;IACvC,KAAK,EAAE,MAAM,CAAC,KAAK,GAAG,SAAS,CAAC,CAAC;IAGjC,SAAS,EAAE,MAAM,CAAC,IAAI,CAAC,KAAK,GAAG,SAAS,CAAC,CAAC;IAG1C,OAAO,EAAE,MAAM,CAAC,OAAO,CAAC,CAAC;IAGzB,QAAQ,EAAE,MAAM,CAAC,SAAS,CAAC,cAAc,CAAC,CAAC;CAC3C,CAAC;AAEF,6DAA6D;AAC7D,MAAM,WAAW,KAAK;IACrB,wCAAwC;IACxC,aAAa,EAAE,MAAM,CAAC;CACtB;AAED;;;;GAIG;AACH,qBAAa,OAAO;;IACnB,QAAQ,CAAC,EAAE,EAAE,SAAS,CAAC,YAAY,CAAC,CAAC;IACrC,QAAQ,CAAC,MAAM,EAAE,MAAM,CAAC;IACxB,QAAQ,CAAC,IAAI,EAAE,IAAI,CAAC;IAWpB,QAAQ,CAAC,GAAG,2BAAwB;IA6BpC,YAAY,KAAK,EAAE,YAAY,EAqB9B;IAgeD,KAAK,IAAI,IAAI,CAEZ;IAgBD,KAAK,SAEJ;IAGD,MAAM,CAAC,SAAS,mBAAa;CAC7B;AAED,iBAAe,SAAS,CAAC,MAAM,EAAE,OAAO,CAAC,WAAW,GAAG,OAAO,CAAC,OAAO,CAAC,CAsCtE"}
+\ No newline at end of file
++{"version":3,"file":"decoder.d.ts","sourceRoot":"","sources":["../../src/audio/decoder.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,OAAO,MAAM,mBAAmB,CAAC;AAC7C,OAAO,KAAK,SAAS,MAAM,qBAAqB,CAAC;AAGjD,OAAO,EAAE,IAAI,EAAE,MAAM,UAAU,CAAC;AAChC,OAAO,EAGN,KAAK,MAAM,EAEX,KAAK,MAAM,EACX,KAAK,SAAS,EAEd,MAAM,EACN,MAAM,cAAc,CAAC;AAItB,OAAO,KAAK,EAAE,IAAI,EAAE,MAAM,SAAS,CAAC;AACpC,OAAO,EAAE,KAAK,WAAW,EAAqB,MAAM,UAAU,CAAC;AAO/D,OAAO,KAAK,EAAE,MAAM,EAAE,MAAM,UAAU,CAAC;AASvC,MAAM,MAAM,YAAY,GAAG;IAE1B,OAAO,EAAE,MAAM,CAAC,OAAO,CAAC,CAAC;CACzB,CAAC;AAEF,kDAAkD;AAClD,4DAA4D;AAC5D,MAAM,WAAW,YAAY;IAC5B,QAAQ,CAAC,OAAO,EAAE,MAAM,CAAC,YAAY,GAAG,SAAS,CAAC,CAAC;IACnD,QAAQ,CAAC,IAAI,EAAE,MAAM,CAAC,gBAAgB,GAAG,SAAS,CAAC,CAAC;IACpD,aAAa,IAAI,IAAI,CAAC;IACtB,QAAQ,CAAC,SAAS,EAAE,IAAI,CAAC,KAAK,GAAG,IAAI,CAAC;IACtC,MAAM,CAAC,OAAO,EAAE;QAAE,QAAQ,EAAE,MAAM,CAAC;QAAC,IAAI,EAAE,MAAM,CAAC;QAAC,cAAc,EAAE,MAAM,CAAC;QAAC,QAAQ,EAAE,OAAO,CAAA;KAAE,GAAG,WAAW,CAAC;CAC5G;AAED,MAAM,MAAM,YAAY,GAAG,MAAM,CAAC,YAAY,CAAC,GAAG;IACjD,kDAAkD;IAClD,MAAM,EAAE,MAAM,CAAC;IACf,6BAA6B;IAC7B,IAAI,EAAE,IAAI,CAAC;IACX,uEAAuE;IACvE,QAAQ,CAAC,EAAE,YAAY,CAAC;CACxB,CAAC;AAEF,KAAK,aAAa,GAAG;IACpB,OAAO,EAAE,MAAM,CAAC,YAAY,GAAG,SAAS,CAAC,CAAC;IAI1C,IAAI,EAAE,MAAM,CAAC,SAAS,GAAG,SAAS,CAAC,CAAC;IAEpC,UAAU,EAAE,MAAM,CAAC,MAAM,GAAG,SAAS,CAAC,CAAC;IACvC,KAAK,EAAE,MAAM,CAAC,KAAK,GAAG,SAAS,CAAC,CAAC;IAGjC,SAAS,EAAE,MAAM,CAAC,IAAI,CAAC,KAAK,GAAG,SAAS,CAAC,CAAC;IAG1C,OAAO,EAAE,MAAM,CAAC,OAAO,CAAC,CAAC;IAGzB,QAAQ,EAAE,MAAM,CAAC,SAAS,CAAC,cAAc,CAAC,CAAC;CAC3C,CAAC;AAEF,6DAA6D;AAC7D,MAAM,WAAW,KAAK;IACrB,wCAAwC;IACxC,aAAa,EAAE,MAAM,CAAC;CACtB;AAED;;;;GAIG;AACH,qBAAa,OAAO;;IACnB,QAAQ,CAAC,EAAE,EAAE,SAAS,CAAC,YAAY,CAAC,CAAC;IACrC,QAAQ,CAAC,MAAM,EAAE,MAAM,CAAC;IACxB,QAAQ,CAAC,IAAI,EAAE,IAAI,CAAC;IACpB,QAAQ,CAAC,QAAQ,EAAE,YAAY,GAAG,SAAS,CAAC;IAW5C,QAAQ,CAAC,GAAG,2BAAwB;IA6BpC,YAAY,KAAK,EAAE,YAAY,EAsB9B;IA4eD,KAAK,IAAI,IAAI,CAEZ;IAiBD,KAAK,SAEJ;IAGD,MAAM,CAAC,SAAS,mBAAa;CAC7B;AAED,iBAAe,SAAS,CAAC,MAAM,EAAE,OAAO,CAAC,WAAW,GAAG,OAAO,CAAC,OAAO,CAAC,CAsCtE"}
+\ No newline at end of file
+diff --git a/audio/index.d.ts b/audio/index.d.ts
+index d4cbd6380d435c028e655162c51745ed14a8d15a..e64a8d7ecdd144a5ddf400392f3d112839305062 100644
+--- a/audio/index.d.ts
++++ b/audio/index.d.ts
+@@ -1,4 +1,5 @@
+ export * from "./decoder";
+ export * from "./emitter";
+ export * from "./source";
++export * from "./mixer";
+ //# sourceMappingURL=index.d.ts.map
+\ No newline at end of file
+diff --git a/audio/index.d.ts.map b/audio/index.d.ts.map
+index ac174b65d98f4d769a96975c866db5d90b7cf91d..852fe2fb8f7addacd6b320188b467818baea572e 100644
+--- a/audio/index.d.ts.map
++++ b/audio/index.d.ts.map
+@@ -1 +1 @@
+-{"version":3,"file":"index.d.ts","sourceRoot":"","sources":["../../src/audio/index.ts"],"names":[],"mappings":"AAAA,cAAc,WAAW,CAAC;AAC1B,cAAc,WAAW,CAAC;AAC1B,cAAc,UAAU,CAAC"}
+\ No newline at end of file
++{"version":3,"file":"index.d.ts","sourceRoot":"","sources":["../../src/audio/index.ts"],"names":[],"mappings":"AAAA,cAAc,WAAW,CAAC;AAC1B,cAAc,WAAW,CAAC;AAC1B,cAAc,UAAU,CAAC;AAEzB,cAAc,SAAS,CAAC"}
+\ No newline at end of file
+diff --git a/audio/mix-buffer.d.ts b/audio/mix-buffer.d.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..5fea349d9f2dc4995eb63827c91526c7c8edf0e2
+--- /dev/null
++++ b/audio/mix-buffer.d.ts
+@@ -0,0 +1,24 @@
++import { Time } from "@moq/net";
++/** A timestamp-indexed PCM reader owned by the audio worklet. */
++export interface MixInput {
++    readonly rate: number;
++    readonly channels: number;
++    readonly mediaTimestamp: Time.Micro;
++    availableAt(timestamp: Time.Micro): number;
++    readAt(output: Float32Array[], timestamp: Time.Micro): number;
++    read(output: Float32Array[]): number;
++}
++/** Mixes additive inputs at one media cursor, with the full mix as an exclusive alternative. */
++export declare class MixBuffer {
++    #private;
++    readonly inputs: Map<string, MixInput>;
++    /** Requested stem gains; undefined selects the complete main mix. */
++    set levels(value: Record<string, number> | undefined);
++    get levels(): Record<string, number> | undefined;
++    mode: "main" | "loading" | "stems";
++    timestamp: Time.Micro;
++    read(output: Float32Array[]): number;
++    get effectiveLevels(): Record<string, number> | undefined;
++    remove(name: string): void;
++}
++//# sourceMappingURL=mix-buffer.d.ts.map
+\ No newline at end of file
+diff --git a/audio/mix-buffer.d.ts.map b/audio/mix-buffer.d.ts.map
+new file mode 100644
+index 0000000000000000000000000000000000000000..8ad8feadc76715ccdf67b97bbd9d7695302f617b
+--- /dev/null
++++ b/audio/mix-buffer.d.ts.map
+@@ -0,0 +1 @@
++{"version":3,"file":"mix-buffer.d.ts","sourceRoot":"","sources":["../../src/audio/mix-buffer.ts"],"names":[],"mappings":"AAAA,OAAO,EAAE,IAAI,EAAE,MAAM,UAAU,CAAC;AAEhC,iEAAiE;AACjE,MAAM,WAAW,QAAQ;IACxB,QAAQ,CAAC,IAAI,EAAE,MAAM,CAAC;IACtB,QAAQ,CAAC,QAAQ,EAAE,MAAM,CAAC;IAC1B,QAAQ,CAAC,cAAc,EAAE,IAAI,CAAC,KAAK,CAAC;IACpC,WAAW,CAAC,SAAS,EAAE,IAAI,CAAC,KAAK,GAAG,MAAM,CAAC;IAC3C,MAAM,CAAC,MAAM,EAAE,YAAY,EAAE,EAAE,SAAS,EAAE,IAAI,CAAC,KAAK,GAAG,MAAM,CAAC;IAC9D,IAAI,CAAC,MAAM,EAAE,YAAY,EAAE,GAAG,MAAM,CAAC;CACrC;AAED,gGAAgG;AAChG,qBAAa,SAAS;;IACrB,QAAQ,CAAC,MAAM,wBAA+B;IAI9C,qEAAqE;IACrE,IAAI,MAAM,CAAC,KAAK,EAAE,MAAM,CAAC,MAAM,EAAE,MAAM,CAAC,GAAG,SAAS,EAGnD;IACD,IAAI,MAAM,IAAI,MAAM,CAAC,MAAM,EAAE,MAAM,CAAC,GAAG,SAAS,CAE/C;IACD,IAAI,EAAE,MAAM,GAAG,SAAS,GAAG,OAAO,CAAU;IAC5C,SAAS,aAAmB;IAK5B,IAAI,CAAC,MAAM,EAAE,YAAY,EAAE,GAAG,MAAM,CAsDnC;IAED,IAAI,eAAe,IAAI,MAAM,CAAC,MAAM,EAAE,MAAM,CAAC,GAAG,SAAS,CAExD;IAED,MAAM,CAAC,IAAI,EAAE,MAAM,GAAG,IAAI,CAGzB;CAUD"}
+\ No newline at end of file
+diff --git a/audio/mixer-worklet.d.ts b/audio/mixer-worklet.d.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..69f7181b3874657d8313f2472348b1c318424d2c
+--- /dev/null
++++ b/audio/mixer-worklet.d.ts
+@@ -0,0 +1,7 @@
++/** The shared audio worklet that owns every selected input's playout cursor. */
++export declare class MixerRender extends AudioWorkletProcessor {
++    #private;
++    constructor();
++    process(_inputs: Float32Array[][], outputs: Float32Array[][]): boolean;
++}
++//# sourceMappingURL=mixer-worklet.d.ts.map
+\ No newline at end of file
+diff --git a/audio/mixer-worklet.d.ts.map b/audio/mixer-worklet.d.ts.map
+new file mode 100644
+index 0000000000000000000000000000000000000000..53bead4e2335f183b283df039c135c6f42a850d6
+--- /dev/null
++++ b/audio/mixer-worklet.d.ts.map
+@@ -0,0 +1 @@
++{"version":3,"file":"mixer-worklet.d.ts","sourceRoot":"","sources":["../../src/audio/mixer-worklet.ts"],"names":[],"mappings":"AAKA,gFAAgF;AAChF,qBAAa,WAAY,SAAQ,qBAAqB;;IASrD,cAkCC;IAED,OAAO,CAAC,OAAO,EAAE,YAAY,EAAE,EAAE,EAAE,OAAO,EAAE,YAAY,EAAE,EAAE,GAAG,OAAO,CAsCrE;CACD"}
+\ No newline at end of file
+diff --git a/audio/mixer.d.ts b/audio/mixer.d.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..b05af7f72f40cded2e215722a31f26275050afc0
+--- /dev/null
++++ b/audio/mixer.d.ts
+@@ -0,0 +1,54 @@
++import type * as Moq from "@moq/net";
++import { Time } from "@moq/net";
++import { type Getter, type Inputs, Signal } from "@moq/signals";
++import { Broadcast } from "../broadcast";
++import type { Sync } from "../sync";
++import { Decoder } from "./decoder";
++import { Source } from "./source";
++/** A separately published additive audio group. */
++export type Stem = {
++    alternateGroup: number;
++    name: Moq.Path.Valid;
++    label?: string;
++};
++/** Per-group gain; undefined selects the complete main mix. */
++export type Mix = Record<number, number>;
++/** Download policy and requested additive mix. */
++export type MixerInput = {
++    enabled: Getter<boolean>;
++    stems: Getter<Stem[] | undefined>;
++    mix: Getter<Mix | undefined>;
++};
++/** Constructor properties for synchronized audio mixing. */
++export type MixerProps = Inputs<MixerInput> & {
++    source: Source;
++    broadcast: Broadcast;
++    sync: Sync;
++};
++/** Owns one audio context and render cursor for the main mix and optional additive stems. */
++export declare class Mixer {
++    #private;
++    readonly in: Moq.Signals.Readonlys<{
++        enabled: Getter<boolean>;
++        stems: Getter<Stem[] | undefined>;
++        mix: Getter<Mix | undefined>;
++    }>;
++    readonly main: Decoder;
++    readonly out: Moq.Signals.Readonlys<{
++        mode: Signal<"loading" | "main" | "stems">;
++        reason: Signal<"buffering" | "unavailable" | "unsupported" | undefined>;
++        timestamp: Signal<Time.Milli | undefined>;
++        stalled: Signal<boolean>;
++        stats: Signal<{
++            bytesReceived: number;
++        } | undefined>;
++        bitrate: Signal<number>;
++        levels: Signal<Mix | undefined>;
++    }>;
++    constructor(props: MixerProps);
++    /** Replace all input rings together at a content boundary, keeping the context warm. */
++    reset(): void;
++    /** Stop audio subscriptions and release the shared renderer. */
++    close(): void;
++}
++//# sourceMappingURL=mixer.d.ts.map
+\ No newline at end of file
+diff --git a/audio/mixer.d.ts.map b/audio/mixer.d.ts.map
+new file mode 100644
+index 0000000000000000000000000000000000000000..a39ce8139a0ed70a0e9a30402d42824ea2d6b462
+--- /dev/null
++++ b/audio/mixer.d.ts.map
+@@ -0,0 +1 @@
++{"version":3,"file":"mixer.d.ts","sourceRoot":"","sources":["../../src/audio/mixer.ts"],"names":[],"mappings":"AACA,OAAO,KAAK,KAAK,GAAG,MAAM,UAAU,CAAC;AACrC,OAAO,EAAE,IAAI,EAAE,MAAM,UAAU,CAAC;AAChC,OAAO,EAAU,KAAK,MAAM,EAAU,KAAK,MAAM,EAAa,MAAM,EAAE,MAAM,cAAc,CAAC;AAC3F,OAAO,EAAE,SAAS,EAAE,MAAM,cAAc,CAAC;AACzC,OAAO,KAAK,EAAE,IAAI,EAAE,MAAM,SAAS,CAAC;AAEpC,OAAO,EAAE,OAAO,EAAqB,MAAM,WAAW,CAAC;AAEvD,OAAO,EAAE,MAAM,EAAE,MAAM,UAAU,CAAC;AAElC,mDAAmD;AACnD,MAAM,MAAM,IAAI,GAAG;IAAE,cAAc,EAAE,MAAM,CAAC;IAAC,IAAI,EAAE,GAAG,CAAC,IAAI,CAAC,KAAK,CAAC;IAAC,KAAK,CAAC,EAAE,MAAM,CAAA;CAAE,CAAC;AACpF,+DAA+D;AAC/D,MAAM,MAAM,GAAG,GAAG,MAAM,CAAC,MAAM,EAAE,MAAM,CAAC,CAAC;AACzC,kDAAkD;AAClD,MAAM,MAAM,UAAU,GAAG;IACxB,OAAO,EAAE,MAAM,CAAC,OAAO,CAAC,CAAC;IACzB,KAAK,EAAE,MAAM,CAAC,IAAI,EAAE,GAAG,SAAS,CAAC,CAAC;IAClC,GAAG,EAAE,MAAM,CAAC,GAAG,GAAG,SAAS,CAAC,CAAC;CAC7B,CAAC;AACF,4DAA4D;AAC5D,MAAM,MAAM,UAAU,GAAG,MAAM,CAAC,UAAU,CAAC,GAAG;IAAE,MAAM,EAAE,MAAM,CAAC;IAAC,SAAS,EAAE,SAAS,CAAC;IAAC,IAAI,EAAE,IAAI,CAAA;CAAE,CAAC;AAEnG,6FAA6F;AAC7F,qBAAa,KAAK;;IACjB,QAAQ,CAAC,EAAE;;;;OAAC;IACZ,QAAQ,CAAC,IAAI,EAAE,OAAO,CAAC;IAUvB,QAAQ,CAAC,GAAG;;;;;;2BAJwB,MAAM;;;;OAIN;IAWpC,YAAY,KAAK,EAAE,UAAU,EAoN5B;IAgCD,wFAAwF;IACxF,KAAK,IAAI,IAAI,CAEZ;IACD,gEAAgE;IAChE,KAAK,IAAI,IAAI,CAEZ;CACD"}
+\ No newline at end of file
+diff --git a/audio/ring-buffer.d.ts b/audio/ring-buffer.d.ts
+index 7c1c6216b05a3d8b188acbda17b4426d84e04256..5f60a356b4fbd2c2c8fb520c93bad3cd6123c05c 100644
+--- a/audio/ring-buffer.d.ts
++++ b/audio/ring-buffer.d.ts
+@@ -25,6 +25,11 @@ export declare class AudioRingBuffer {
+      */
+     truncate(timestamp: Time.Micro): void;
+     reset(): void;
++    /** Samples available at an absolute media position without rewinding the cursor. */
++    availableAt(timestamp: Time.Micro): number;
++    /** Read an exact media window, leaving independent buffer-depth skips to the mixer. */
++    readAt(output: Float32Array[], timestamp: Time.Micro): number;
++    get mediaTimestamp(): Time.Micro;
+     read(output: Float32Array[]): number;
+ }
+ //# sourceMappingURL=ring-buffer.d.ts.map
+\ No newline at end of file
+diff --git a/audio/ring-buffer.d.ts.map b/audio/ring-buffer.d.ts.map
+index c79b33c42cd36065b35afc2f1504ece953a30d09..88510a3675b70143627afc594cd3e7b1ba28fae0 100644
+--- a/audio/ring-buffer.d.ts.map
++++ b/audio/ring-buffer.d.ts.map
+@@ -1 +1 @@
+-{"version":3,"file":"ring-buffer.d.ts","sourceRoot":"","sources":["../../src/audio/ring-buffer.ts"],"names":[],"mappings":"AAAA,OAAO,EAAE,IAAI,EAAE,MAAM,UAAU,CAAC;AAEhC,qBAAa,eAAe;;IAK3B,QAAQ,CAAC,IAAI,EAAE,MAAM,CAAC;IACtB,QAAQ,CAAC,QAAQ,EAAE,MAAM,CAAC;IAU1B,YAAY,KAAK,EAAE;QAClB,IAAI,EAAE,MAAM,CAAC;QACb,QAAQ,EAAE,MAAM,CAAC;QACjB,OAAO,EAAE,IAAI,CAAC,KAAK,CAAC;QACpB,QAAQ,CAAC,EAAE,OAAO,CAAC;KACnB,EAqBA;IAMD,IAAI,OAAO,IAAI,OAAO,CAErB;IAED,IAAI,SAAS,IAAI,IAAI,CAAC,KAAK,CAE1B;IAED,mFAAmF;IACnF,IAAI,QAAQ,IAAI,OAAO,CAEtB;IAED,IAAI,MAAM,IAAI,MAAM,CAEnB;IAED,IAAI,QAAQ,IAAI,MAAM,CAErB;IAED,MAAM,CAAC,OAAO,EAAE,IAAI,CAAC,KAAK,GAAG,IAAI,CAgBhC;IAgCD,KAAK,CAAC,SAAS,EAAE,IAAI,CAAC,KAAK,EAAE,IAAI,EAAE,YAAY,EAAE,GAAG,IAAI,CA8EvD;IAED;;;;;OAKG;IACH,QAAQ,CAAC,SAAS,EAAE,IAAI,CAAC,KAAK,GAAG,IAAI,CAKpC;IAGD,KAAK,IAAI,IAAI,CAKZ;IAED,IAAI,CAAC,MAAM,EAAE,YAAY,EAAE,GAAG,MAAM,CAqBnC;CACD"}
+\ No newline at end of file
++{"version":3,"file":"ring-buffer.d.ts","sourceRoot":"","sources":["../../src/audio/ring-buffer.ts"],"names":[],"mappings":"AAAA,OAAO,EAAE,IAAI,EAAE,MAAM,UAAU,CAAC;AAEhC,qBAAa,eAAe;;IAK3B,QAAQ,CAAC,IAAI,EAAE,MAAM,CAAC;IACtB,QAAQ,CAAC,QAAQ,EAAE,MAAM,CAAC;IAU1B,YAAY,KAAK,EAAE;QAClB,IAAI,EAAE,MAAM,CAAC;QACb,QAAQ,EAAE,MAAM,CAAC;QACjB,OAAO,EAAE,IAAI,CAAC,KAAK,CAAC;QACpB,QAAQ,CAAC,EAAE,OAAO,CAAC;KACnB,EAqBA;IAMD,IAAI,OAAO,IAAI,OAAO,CAErB;IAED,IAAI,SAAS,IAAI,IAAI,CAAC,KAAK,CAE1B;IAED,mFAAmF;IACnF,IAAI,QAAQ,IAAI,OAAO,CAEtB;IAED,IAAI,MAAM,IAAI,MAAM,CAEnB;IAED,IAAI,QAAQ,IAAI,MAAM,CAErB;IAED,MAAM,CAAC,OAAO,EAAE,IAAI,CAAC,KAAK,GAAG,IAAI,CAgBhC;IAgCD,KAAK,CAAC,SAAS,EAAE,IAAI,CAAC,KAAK,EAAE,IAAI,EAAE,YAAY,EAAE,GAAG,IAAI,CA8EvD;IAED;;;;;OAKG;IACH,QAAQ,CAAC,SAAS,EAAE,IAAI,CAAC,KAAK,GAAG,IAAI,CAKpC;IAGD,KAAK,IAAI,IAAI,CAKZ;IAED,oFAAoF;IACpF,WAAW,CAAC,SAAS,EAAE,IAAI,CAAC,KAAK,GAAG,MAAM,CAIzC;IAED,uFAAuF;IACvF,MAAM,CAAC,MAAM,EAAE,YAAY,EAAE,EAAE,SAAS,EAAE,IAAI,CAAC,KAAK,GAAG,MAAM,CAI5D;IAED,IAAI,cAAc,IAAI,IAAI,CAAC,KAAK,CAE/B;IAED,IAAI,CAAC,MAAM,EAAE,YAAY,EAAE,GAAG,MAAM,CAqBnC;CACD"}
+\ No newline at end of file
+diff --git a/audio/shared-ring-buffer.d.ts b/audio/shared-ring-buffer.d.ts
+index d5d398c4ad8c463b81d923f475c50d9c3a091f34..1eb58813b48f9b3343087e07fc28cf8d76c9bd04 100644
+--- a/audio/shared-ring-buffer.d.ts
++++ b/audio/shared-ring-buffer.d.ts
+@@ -6,6 +6,7 @@ export interface SharedRingBufferInit {
+     samples: SharedArrayBuffer;
+     control: SharedArrayBuffer;
+     state: SharedArrayBuffer;
++    anchor: SharedArrayBuffer;
+     buffered: boolean;
+ }
+ /**
+@@ -40,7 +41,13 @@ export declare class SharedRingBuffer {
+      * Read audio samples into the output buffers.
+      * AudioWorklet only. Returns the number of samples read.
+      */
+-    read(output: Float32Array[]): number;
++    read(output: Float32Array[], at?: Time.Micro): number;
++    /** Samples available at an absolute media position without rewinding the cursor. */
++    availableAt(timestamp: Time.Micro): number;
++    /** Read an exact media window, retaining the normal reader's epoch checks. */
++    readAt(output: Float32Array[], timestamp: Time.Micro): number;
++    /** Absolute media cursor, also available to an independently wrapped worklet reader. */
++    get mediaTimestamp(): Time.Micro;
+     /**
+      * Update the target latency in samples. Main thread only.
+      *
+diff --git a/audio/shared-ring-buffer.d.ts.map b/audio/shared-ring-buffer.d.ts.map
+index 169781b3c30de8cdf360963833343e17a3f03be5..3ad2b92dbdcc31d3255f299b853111f7648247a4 100644
+--- a/audio/shared-ring-buffer.d.ts.map
++++ b/audio/shared-ring-buffer.d.ts.map
+@@ -1 +1 @@
+-{"version":3,"file":"shared-ring-buffer.d.ts","sourceRoot":"","sources":["../../src/audio/shared-ring-buffer.ts"],"names":[],"mappings":"AAAA,OAAO,EAAE,IAAI,EAAE,MAAM,UAAU,CAAC;AAkDhC,MAAM,WAAW,oBAAoB;IACpC,QAAQ,EAAE,MAAM,CAAC;IACjB,QAAQ,EAAE,MAAM,CAAC;IACjB,IAAI,EAAE,MAAM,CAAC;IACb,OAAO,EAAE,iBAAiB,CAAC;IAC3B,OAAO,EAAE,iBAAiB,CAAC;IAC3B,KAAK,EAAE,iBAAiB,CAAC;IAEzB,QAAQ,EAAE,OAAO,CAAC;CAClB;AAOD;;;;;GAKG;AACH,wBAAgB,qBAAqB,CACpC,QAAQ,EAAE,MAAM,EAChB,QAAQ,EAAE,MAAM,EAChB,IAAI,EAAE,MAAM,EACZ,QAAQ,UAAQ,GACd,oBAAoB,CAgBtB;AAkBD,qBAAa,gBAAgB;;IAC5B,QAAQ,CAAC,QAAQ,EAAE,MAAM,CAAC;IAC1B,QAAQ,CAAC,QAAQ,EAAE,MAAM,CAAC;IAC1B,QAAQ,CAAC,IAAI,EAAE,MAAM,CAAC;IACtB,QAAQ,CAAC,QAAQ,EAAE,OAAO,CAAC;IAC3B,QAAQ,CAAC,IAAI,EAAE,oBAAoB,CAAC;IAuBpC;;;;;;;OAOG;IACH,YAAY,IAAI,EAAE,oBAAoB,EAAE,QAAQ,CAAC,EAAE,gBAAgB,EAiBlE;IAwDD;;;OAGG;IACH,MAAM,CAAC,SAAS,EAAE,IAAI,CAAC,KAAK,EAAE,IAAI,EAAE,YAAY,EAAE,GAAG,IAAI,CA+ExD;IAYD;;;OAGG;IACH,IAAI,CAAC,MAAM,EAAE,YAAY,EAAE,GAAG,MAAM,CAwDnC;IAED;;;;;;;OAOG;IACH,UAAU,CAAC,OAAO,EAAE,MAAM,GAAG,IAAI,CAchC;IAED;;;;;;OAMG;IACH,QAAQ,CAAC,SAAS,EAAE,IAAI,CAAC,KAAK,GAAG,IAAI,CAmBpC;IAED;;;OAGG;IACH,KAAK,IAAI,IAAI,CAMZ;IAED;;;;;;;;;;;OAWG;IACH,MAAM,CAAC,WAAW,EAAE,MAAM,GAAG,gBAAgB,CAsC5C;IAiBD;;;;;OAKG;IACH,IAAI,SAAS,IAAI,IAAI,CAAC,KAAK,CAE1B;IAED,+FAA+F;IAC/F,IAAI,QAAQ,IAAI,OAAO,CAEtB;IAED,uDAAuD;IACvD,IAAI,OAAO,IAAI,OAAO,CAErB;IAED;;;;;;OAMG;IACH,IAAI,MAAM,IAAI,MAAM,CAEnB;CACD"}
+\ No newline at end of file
++{"version":3,"file":"shared-ring-buffer.d.ts","sourceRoot":"","sources":["../../src/audio/shared-ring-buffer.ts"],"names":[],"mappings":"AAAA,OAAO,EAAE,IAAI,EAAE,MAAM,UAAU,CAAC;AAkDhC,MAAM,WAAW,oBAAoB;IACpC,QAAQ,EAAE,MAAM,CAAC;IACjB,QAAQ,EAAE,MAAM,CAAC;IACjB,IAAI,EAAE,MAAM,CAAC;IACb,OAAO,EAAE,iBAAiB,CAAC;IAC3B,OAAO,EAAE,iBAAiB,CAAC;IAC3B,KAAK,EAAE,iBAAiB,CAAC;IACzB,MAAM,EAAE,iBAAiB,CAAC;IAE1B,QAAQ,EAAE,OAAO,CAAC;CAClB;AAOD;;;;;GAKG;AACH,wBAAgB,qBAAqB,CACpC,QAAQ,EAAE,MAAM,EAChB,QAAQ,EAAE,MAAM,EAChB,IAAI,EAAE,MAAM,EACZ,QAAQ,UAAQ,GACd,oBAAoB,CAgBtB;AAkBD,qBAAa,gBAAgB;;IAC5B,QAAQ,CAAC,QAAQ,EAAE,MAAM,CAAC;IAC1B,QAAQ,CAAC,QAAQ,EAAE,MAAM,CAAC;IAC1B,QAAQ,CAAC,IAAI,EAAE,MAAM,CAAC;IACtB,QAAQ,CAAC,QAAQ,EAAE,OAAO,CAAC;IAC3B,QAAQ,CAAC,IAAI,EAAE,oBAAoB,CAAC;IAyBpC;;;;;;;OAOG;IACH,YAAY,IAAI,EAAE,oBAAoB,EAAE,QAAQ,CAAC,EAAE,gBAAgB,EAkBlE;IA6DD;;;OAGG;IACH,MAAM,CAAC,SAAS,EAAE,IAAI,CAAC,KAAK,EAAE,IAAI,EAAE,YAAY,EAAE,GAAG,IAAI,CAgFxD;IAYD;;;OAGG;IACH,IAAI,CAAC,MAAM,EAAE,YAAY,EAAE,EAAE,EAAE,CAAC,EAAE,IAAI,CAAC,KAAK,GAAG,MAAM,CA8DpD;IAED,oFAAoF;IACpF,WAAW,CAAC,SAAS,EAAE,IAAI,CAAC,KAAK,GAAG,MAAM,CAQzC;IAED,8EAA8E;IAC9E,MAAM,CAAC,MAAM,EAAE,YAAY,EAAE,EAAE,SAAS,EAAE,IAAI,CAAC,KAAK,GAAG,MAAM,CAE5D;IAED,wFAAwF;IACxF,IAAI,cAAc,IAAI,IAAI,CAAC,KAAK,CAU/B;IAED;;;;;;;OAOG;IACH,UAAU,CAAC,OAAO,EAAE,MAAM,GAAG,IAAI,CAchC;IAED;;;;;;OAMG;IACH,QAAQ,CAAC,SAAS,EAAE,IAAI,CAAC,KAAK,GAAG,IAAI,CAmBpC;IAED;;;OAGG;IACH,KAAK,IAAI,IAAI,CAMZ;IAED;;;;;;;;;;;OAWG;IACH,MAAM,CAAC,WAAW,EAAE,MAAM,GAAG,gBAAgB,CAuC5C;IAiBD;;;;;OAKG;IACH,IAAI,SAAS,IAAI,IAAI,CAAC,KAAK,CAE1B;IAED,+FAA+F;IAC/F,IAAI,QAAQ,IAAI,OAAO,CAEtB;IAED,uDAAuD;IACvD,IAAI,OAAO,IAAI,OAAO,CAErB;IAED;;;;;;OAMG;IACH,IAAI,MAAM,IAAI,MAAM,CAEnB;CACD"}
+\ No newline at end of file
+diff --git a/audio/source.d.ts b/audio/source.d.ts
+index 01fe9a1870f5528c144b8ad54c84d852871c2978..8df62fed67ed457c8f16819767a3f49b3b08ead5 100644
+--- a/audio/source.d.ts
++++ b/audio/source.d.ts
+@@ -18,6 +18,7 @@ export type SourceInput = {
+ };
+ type SourceOutput = {
+     catalog: Signal<Catalog.Audio | undefined>;
++    probed: Signal<boolean>;
+     available: Signal<Record<string, Catalog.AudioConfig>>;
+     track: Signal<string | undefined>;
+     config: Signal<Catalog.AudioConfig | undefined>;
+diff --git a/audio/source.d.ts.map b/audio/source.d.ts.map
+index 684668439ceae18e1f07f2a647d680262d119eef..ad1b58883461c05fbfd1fd32751e63561a468b96 100644
+--- a/audio/source.d.ts.map
++++ b/audio/source.d.ts.map
+@@ -1 +1 @@
+-{"version":3,"file":"source.d.ts","sourceRoot":"","sources":["../../src/audio/source.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,KAAK,OAAO,MAAM,mBAAmB,CAAC;AAClD,OAAO,KAAK,KAAK,GAAG,MAAM,UAAU,CAAC;AACrC,OAAO,EAAU,KAAK,MAAM,EAAU,KAAK,MAAM,EAAE,KAAK,SAAS,EAAa,MAAM,EAAE,MAAM,cAAc,CAAC;AAC3G,OAAO,KAAK,EAAE,SAAS,EAAE,MAAM,cAAc,CAAC;AAG9C,MAAM,MAAM,MAAM,GAAG;IAEpB,IAAI,CAAC,EAAE,MAAM,CAAC;CACd,CAAC;AAEF;;;;GAIG;AACH,MAAM,MAAM,SAAS,GAAG,CAAC,MAAM,EAAE,OAAO,CAAC,WAAW,KAAK,OAAO,CAAC,OAAO,CAAC,CAAC;AAE1E,MAAM,MAAM,WAAW,GAAG;IACzB,SAAS,EAAE,MAAM,CAAC,SAAS,GAAG,SAAS,CAAC,CAAC;IAGzC,MAAM,EAAE,MAAM,CAAC,MAAM,GAAG,SAAS,CAAC,CAAC;IAInC,SAAS,EAAE,MAAM,CAAC,SAAS,GAAG,SAAS,CAAC,CAAC;CACzC,CAAC;AAEF,KAAK,YAAY,GAAG;IACnB,OAAO,EAAE,MAAM,CAAC,OAAO,CAAC,KAAK,GAAG,SAAS,CAAC,CAAC;IAC3C,SAAS,EAAE,MAAM,CAAC,MAAM,CAAC,MAAM,EAAE,OAAO,CAAC,WAAW,CAAC,CAAC,CAAC;IACvD,KAAK,EAAE,MAAM,CAAC,MAAM,GAAG,SAAS,CAAC,CAAC;IAClC,MAAM,EAAE,MAAM,CAAC,OAAO,CAAC,WAAW,GAAG,SAAS,CAAC,CAAC;IAGhD,MAAM,EAAE,MAAM,CAAC,GAAG,CAAC,IAAI,CAAC,KAAK,GAAG,SAAS,CAAC,CAAC;CAC3C,CAAC;AAEF;;;GAGG;AACH,qBAAa,MAAM;;IAClB,QAAQ,CAAC,EAAE,EAAE,SAAS,CAAC,WAAW,CAAC,CAAC;IASpC,QAAQ,CAAC,GAAG,0BAAwB;IAIpC,YAAY,KAAK,CAAC,EAAE,MAAM,CAAC,WAAW,CAAC,EAUtC;IA4FD,KAAK,IAAI,IAAI,CAEZ;CACD"}
+\ No newline at end of file
++{"version":3,"file":"source.d.ts","sourceRoot":"","sources":["../../src/audio/source.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,KAAK,OAAO,MAAM,mBAAmB,CAAC;AAClD,OAAO,KAAK,KAAK,GAAG,MAAM,UAAU,CAAC;AACrC,OAAO,EAAU,KAAK,MAAM,EAAU,KAAK,MAAM,EAAE,KAAK,SAAS,EAAa,MAAM,EAAE,MAAM,cAAc,CAAC;AAC3G,OAAO,KAAK,EAAE,SAAS,EAAE,MAAM,cAAc,CAAC;AAG9C,MAAM,MAAM,MAAM,GAAG;IAEpB,IAAI,CAAC,EAAE,MAAM,CAAC;CACd,CAAC;AAEF;;;;GAIG;AACH,MAAM,MAAM,SAAS,GAAG,CAAC,MAAM,EAAE,OAAO,CAAC,WAAW,KAAK,OAAO,CAAC,OAAO,CAAC,CAAC;AAE1E,MAAM,MAAM,WAAW,GAAG;IACzB,SAAS,EAAE,MAAM,CAAC,SAAS,GAAG,SAAS,CAAC,CAAC;IAGzC,MAAM,EAAE,MAAM,CAAC,MAAM,GAAG,SAAS,CAAC,CAAC;IAInC,SAAS,EAAE,MAAM,CAAC,SAAS,GAAG,SAAS,CAAC,CAAC;CACzC,CAAC;AAEF,KAAK,YAAY,GAAG;IACnB,OAAO,EAAE,MAAM,CAAC,OAAO,CAAC,KAAK,GAAG,SAAS,CAAC,CAAC;IAC3C,MAAM,EAAE,MAAM,CAAC,OAAO,CAAC,CAAC;IACxB,SAAS,EAAE,MAAM,CAAC,MAAM,CAAC,MAAM,EAAE,OAAO,CAAC,WAAW,CAAC,CAAC,CAAC;IACvD,KAAK,EAAE,MAAM,CAAC,MAAM,GAAG,SAAS,CAAC,CAAC;IAClC,MAAM,EAAE,MAAM,CAAC,OAAO,CAAC,WAAW,GAAG,SAAS,CAAC,CAAC;IAGhD,MAAM,EAAE,MAAM,CAAC,GAAG,CAAC,IAAI,CAAC,KAAK,GAAG,SAAS,CAAC,CAAC;CAC3C,CAAC;AAEF;;;GAGG;AACH,qBAAa,MAAM;;IAClB,QAAQ,CAAC,EAAE,EAAE,SAAS,CAAC,WAAW,CAAC,CAAC;IAUpC,QAAQ,CAAC,GAAG,0BAAwB;IAIpC,YAAY,KAAK,CAAC,EAAE,MAAM,CAAC,WAAW,CAAC,EAUtC;IA8FD,KAAK,IAAI,IAAI,CAEZ;CACD"}
+\ No newline at end of file
+diff --git a/audio/terminal.d.ts.map b/audio/terminal.d.ts.map
+index ef0fe655ea50838b3b5f38e9cd880a2b9592a64a..52937d5f3d1b0ab4dedf3396808f6e9a8d55bd5d 100644
+--- a/audio/terminal.d.ts.map
++++ b/audio/terminal.d.ts.map
+@@ -1 +1 @@
+-{"version":3,"file":"terminal.d.ts","sourceRoot":"","sources":["../../src/audio/terminal.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EAAE,IAAI,EAAE,MAAM,UAAU,CAAC;AAErC,UAAU,UAAU;IACnB,QAAQ,CAAC,SAAS,EAAE,MAAM,CAAC;IAC3B,QAAQ,CAAC,UAAU,EAAE,MAAM,CAAC;IAC5B,QAAQ,CAAC,cAAc,EAAE,MAAM,CAAC;CAChC;AAED,UAAU,MAAM;IACf,QAAQ,CAAC,aAAa,EAAE,MAAM,CAAC;IAC/B,QAAQ,CAAC,KAAK,EAAE,MAAM,CAAC;IACvB,QAAQ,CAAC,GAAG,CAAC,EAAE,IAAI,CAAC,KAAK,CAAC;IAC1B,QAAQ,CAAC,KAAK,CAAC,EAAE;QAAE,QAAQ,CAAC,SAAS,EAAE,IAAI,CAAC,KAAK,CAAA;KAAE,CAAC;CACpD;AAED,wEAAwE;AACxE,MAAM,WAAW,WAAW;IAC3B,oDAAoD;IACpD,QAAQ,CAAC,SAAS,EAAE,IAAI,CAAC,KAAK,CAAC;IAC/B,6CAA6C;IAC7C,QAAQ,CAAC,WAAW,EAAE,MAAM,CAAC;IAC7B,iDAAiD;IACjD,QAAQ,CAAC,MAAM,EAAE,MAAM,CAAC;CACxB;AAED,0EAA0E;AAC1E,qBAAa,QAAQ;;IASpB,4DAA4D;IAC5D,IAAI,GAAG,IAAI,IAAI,CAAC,KAAK,GAAG,SAAS,CAEhC;IAED,oFAAoF;IACpF,KAAK,CAAC,OAAO,SAAI,GAAG,IAAI,CAKvB;IAED,oFAAoF;IACpF,MAAM,CAAC,IAAI,EAAE,MAAM,GAAG,OAAO,CAe5B;IAED,0EAA0E;IAC1E,IAAI,CAAC,MAAM,EAAE,UAAU,GAAG,WAAW,CAuBpC;CAMD"}
+\ No newline at end of file
++{"version":3,"file":"terminal.d.ts","sourceRoot":"","sources":["../../src/audio/terminal.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EAAE,IAAI,EAAE,MAAM,UAAU,CAAC;AAErC,UAAU,UAAU;IACnB,QAAQ,CAAC,SAAS,EAAE,MAAM,CAAC;IAC3B,QAAQ,CAAC,UAAU,EAAE,MAAM,CAAC;IAC5B,QAAQ,CAAC,cAAc,EAAE,MAAM,CAAC;CAChC;AAED,UAAU,MAAM;IACf,QAAQ,CAAC,aAAa,EAAE,MAAM,CAAC;IAC/B,QAAQ,CAAC,KAAK,EAAE,MAAM,CAAC;IACvB,QAAQ,CAAC,GAAG,CAAC,EAAE,IAAI,CAAC,KAAK,CAAC;IAC1B,QAAQ,CAAC,KAAK,CAAC,EAAE;QAAE,QAAQ,CAAC,SAAS,EAAE,IAAI,CAAC,KAAK,CAAA;KAAE,CAAC;CACpD;AAED,wEAAwE;AACxE,MAAM,WAAW,WAAW;IAC3B,oDAAoD;IACpD,QAAQ,CAAC,SAAS,EAAE,IAAI,CAAC,KAAK,CAAC;IAC/B,6CAA6C;IAC7C,QAAQ,CAAC,WAAW,EAAE,MAAM,CAAC;IAC7B,iDAAiD;IACjD,QAAQ,CAAC,MAAM,EAAE,MAAM,CAAC;CACxB;AAED,0EAA0E;AAC1E,qBAAa,QAAQ;;IAapB,4DAA4D;IAC5D,IAAI,GAAG,IAAI,IAAI,CAAC,KAAK,GAAG,SAAS,CAEhC;IAED,oFAAoF;IACpF,KAAK,CAAC,OAAO,SAAI,GAAG,IAAI,CAKvB;IAED,oFAAoF;IACpF,MAAM,CAAC,IAAI,EAAE,MAAM,GAAG,OAAO,CAe5B;IAED,0EAA0E;IAC1E,IAAI,CAAC,MAAM,EAAE,UAAU,GAAG,WAAW,CAwCpC;CAUD"}
+\ No newline at end of file
+diff --git a/element.js b/element.js
+index 4836286d5dbca53471e9bf08c55f824fc0a3be40..aac770261898783ba300475795a8963944d78d55 100644
+--- a/element.js
++++ b/element.js
+@@ -1,4 +1,4 @@
+-import { h as e, t } from "./player-B6mw85kT.js";
++import { g as e, t } from "./player-B6mw85kT.js";
+ import * as n from "@moq/net";
+ import { Time as r } from "@moq/net";
+ import { Effect as i, Signal as a } from "@moq/signals";
+@@ -283,5 +283,3 @@ var m = new FinalizationRegistry((e) => e.close()), h = class extends HTMLElemen
+ customElements.define("moq-watch", h);
+ //#endregion
+ export { h as default, f as parseCatalogFormat };
+-
+-//# sourceMappingURL=element.js.map
+\ No newline at end of file
+diff --git a/index.js b/index.js
+index 8d75856ec7aa3335eefb464d62e284b883c3c992..9eef3a3648f9af72081a5d563baa3a04df3f18a0 100644
+--- a/index.js
++++ b/index.js
+@@ -1,20 +1,21 @@
+-import { _ as e, a as t, c as n, d as r, f as i, g as a, h as o, i as s, l as c, m as l, n as u, o as d, p as f, r as p, s as m, t as h, u as g, v as _ } from "./player-B6mw85kT.js";
+-import * as v from "@moq/hang";
+-import * as y from "@moq/net";
+-import * as b from "@moq/signals";
++import { _ as e, a as t, c as n, d as r, f as i, g as a, h as o, i as s, l as c, m as l, n as u, o as d, p as f, r as p, s as m, t as h, u as g, v as _, y as v } from "./player-B6mw85kT.js";
++import * as y from "@moq/hang";
++import * as b from "@moq/net";
++import * as x from "@moq/signals";
+ //#region \0rolldown/runtime.js
+-var x = Object.defineProperty, S = (e, t) => {
++var S = Object.defineProperty, C = (e, t) => {
+ 	let n = {};
+-	for (var r in e) x(n, r, {
++	for (var r in e) S(n, r, {
+ 		get: e[r],
+ 		enumerable: !0
+ 	});
+-	return t || x(n, Symbol.toStringTag, { value: "Module" }), n;
+-}, C = /* @__PURE__ */ S({
+-	Decoder: () => _,
+-	Emitter: () => e,
+-	Source: () => a
+-}), w = /* @__PURE__ */ S({
++	return t || S(n, Symbol.toStringTag, { value: "Module" }), n;
++}, w = /* @__PURE__ */ C({
++	Decoder: () => v,
++	Emitter: () => _,
++	Mixer: () => l,
++	Source: () => e
++}), T = /* @__PURE__ */ C({
+ 	Renderer: () => m,
+ 	Source: () => t,
+ 	clearCue: () => n,
+@@ -23,12 +24,10 @@ var x = Object.defineProperty, S = (e, t) => {
+ 	renderable: () => d,
+ 	rollUp: () => r,
+ 	sanitizeCue: () => i
+-}), T = /* @__PURE__ */ S({
++}), E = /* @__PURE__ */ C({
+ 	Decoder: () => s,
+ 	Renderer: () => p,
+ 	Source: () => u
+ });
+ //#endregion
+-export { C as Audio, l as Broadcast, o as CATALOG_FORMATS, v as Hang, y as Net, h as Player, b as Signals, f as Sync, w as Text, T as Video };
+-
+-//# sourceMappingURL=index.js.map
+\ No newline at end of file
++export { w as Audio, o as Broadcast, a as CATALOG_FORMATS, y as Hang, b as Net, h as Player, x as Signals, f as Sync, T as Text, E as Video };
 diff --git a/player-B6mw85kT.js b/player-B6mw85kT.js
-index 7d76cf2..5b2caa0 100644
+index 7d76cf26c1f1507e8daddcd70a7adedab4dad277..a920b9ba3cea5f108002c9c1bfabc972d0dbaeba 100644
 --- a/player-B6mw85kT.js
 +++ b/player-B6mw85kT.js
-@@ -17,16 +17,16 @@ function g(e) {
+@@ -6,29 +6,29 @@ import * as u from "@moq/hang/container";
+ import * as d from "@moq/hang/util";
+ import * as f from "@moq/json";
+ import * as p from "@moq/msf";
+-import { CaptionsRenderer as ee, VTTCue as m, parseText as h } from "media-captions";
++import { CaptionsRenderer as m, VTTCue as h, parseText as g } from "media-captions";
+ //#region src/base64.ts
+-function g(e) {
++function _(e) {
+ 	let t = atob(e), n = new Uint8Array(t.length);
+ 	for (let e = 0; e < t.length; e++) n[e] = t.charCodeAt(e);
+ 	return n;
+ }
+ //#endregion
  //#region src/media.ts
- function _(e, t) {
+-function _(e, t) {
++function v(e, t) {
  	if (e.get(t.broadcast.closed) !== void 0) return;
 -	let n = t.broadcast.track(t.track).subscribe({
 -		priority: t.priority,
@@ -23,9 +425,464 @@ index 7d76cf2..5b2caa0 100644
 -	}), n;
 +	}), r;
  }
- async function v(e) {
+-async function v(e) {
++async function y(e) {
  	try {
-@@ -490,37 +490,43 @@ var N = class {
+ 		return await e.next();
+ 	} catch (e) {
+@@ -39,45 +39,46 @@ async function v(e) {
+ }
+ //#endregion
+ //#region src/audio/shared-ring-buffer.ts
+-var y = 0, b = 1, x = 2, S = 3, te = 4, ne = 4294967295n;
+-function C(e, t) {
++var b = 0, x = 1, S = 2, C = 3, ee = 4, te = 4294967295n;
++function w(e, t) {
+ 	return BigInt(e >>> 0) << 32n | BigInt(t >>> 0);
+ }
+-function w(e) {
++function T(e) {
+ 	return Number(e >> 32n) | 0;
+ }
+-function re(e) {
+-	return !!(w(e) & 1);
++function E(e) {
++	return !!(T(e) & 1);
+ }
+-function T(e) {
+-	return Number(e & ne) | 0;
++function D(e) {
++	return Number(e & te) | 0;
+ }
+-function ie(e) {
++function ne(e) {
+ 	return e <= 1 ? 1 : 1 << 32 - Math.clz32(e - 1);
+ }
+-function E(e, t, n, r = !1) {
++function O(e, t, n, r = !1) {
+ 	if (e <= 0) throw Error("invalid channels");
+ 	if (t <= 0 || t > 2 ** 30) throw Error("invalid capacity");
+ 	if (n <= 0) throw Error("invalid sample rate");
+-	t = ie(t);
+-	let i = new SharedArrayBuffer(e * t * Float32Array.BYTES_PER_ELEMENT), a = new SharedArrayBuffer(te * Int32Array.BYTES_PER_ELEMENT), o = new SharedArrayBuffer(BigInt64Array.BYTES_PER_ELEMENT), s = new Int32Array(a);
+-	return Atomics.store(s, x, 1), {
++	t = ne(t);
++	let i = new SharedArrayBuffer(e * t * Float32Array.BYTES_PER_ELEMENT), a = new SharedArrayBuffer(ee * Int32Array.BYTES_PER_ELEMENT), o = new SharedArrayBuffer(BigInt64Array.BYTES_PER_ELEMENT), s = new Int32Array(a);
++	return Atomics.store(s, S, 1), {
+ 		channels: e,
+ 		capacity: t,
+ 		rate: n,
+ 		samples: i,
+ 		control: a,
+ 		state: o,
++		anchor: new SharedArrayBuffer(8),
+ 		buffered: r
+ 	};
+ }
+-function D(e, t) {
++function k(e, t) {
+ 	return (e - t | 0) > 0 ? e : t;
+ }
+-function O(e, t) {
++function A(e, t) {
+ 	return e & t - 1;
+ }
+-var ae = class e {
++var re = class e {
+ 	channels;
+ 	capacity;
+ 	rate;
+@@ -86,145 +87,171 @@ var ae = class e {
+ 	#e;
+ 	#t;
+ 	#n;
+-	#r = !1;
+-	#i = 0;
++	#r;
++	#i = !1;
+ 	#a = 0;
+ 	#o = 0;
++	#s = 0;
++	#c;
+ 	constructor(e, t) {
+-		this.channels = e.channels, this.capacity = e.capacity, this.rate = e.rate, this.buffered = e.buffered, this.init = e, this.#e = new Int32Array(e.control), this.#t = new BigInt64Array(e.state), this.#n = [];
+-		for (let t = 0; t < this.channels; t++) this.#n.push(new Float32Array(e.samples, t * this.capacity * Float32Array.BYTES_PER_ELEMENT, this.capacity));
+-		t !== void 0 && this.#s(t);
++		this.channels = e.channels, this.capacity = e.capacity, this.rate = e.rate, this.buffered = e.buffered, this.init = e, this.#e = new Int32Array(e.control), this.#t = new BigInt64Array(e.state), this.#n = new BigInt64Array(e.anchor), this.#r = [];
++		for (let t = 0; t < this.channels; t++) this.#r.push(new Float32Array(e.samples, t * this.capacity * Float32Array.BYTES_PER_ELEMENT, this.capacity));
++		t !== void 0 && this.#l(t);
+ 	}
+-	#s(e) {
++	#l(e) {
+ 		if (e.channels !== this.channels || e.rate !== this.rate) return;
+-		let t = Atomics.load(e.#e, S), n = Atomics.load(e.#t, 0);
+-		for (;;) {
++		let t = Atomics.load(e.#e, C), n = Atomics.load(e.#t, 0);
++		for (Atomics.load(this.#e, C) === t && (this.#o = e.#p(D(n)), this.#s = D(n), this.#c = t);;) {
+ 			let e = Atomics.load(this.#t, 0);
+-			if (Atomics.load(this.#e, S) !== t || (T(n) - T(e) | 0) <= 0) return;
+-			let r = C(w(e), T(n));
++			if (Atomics.load(this.#e, C) !== t || (D(n) - D(e) | 0) <= 0) return;
++			let r = w(T(e), D(n));
+ 			if (Atomics.compareExchange(this.#t, 0, e, r) === e) return;
+ 		}
+ 	}
+-	#c(e) {
++	#u(e) {
+ 		for (;;) {
+ 			let t = Atomics.load(this.#t, 0);
+-			if ((e - T(t) | 0) <= 0) return;
+-			let n = C(w(t), e);
++			if ((e - D(t) | 0) <= 0) return;
++			let n = w(T(t), e);
+ 			if (Atomics.compareExchange(this.#t, 0, t, n) === t) return;
+ 		}
+ 	}
+-	#l(e) {
++	#d(e) {
+ 		for (;;) {
+-			let t = Atomics.load(this.#t, 0), n = C(w(t) + e | 0, T(t));
++			let t = Atomics.load(this.#t, 0), n = w(T(t) + e | 0, D(t));
+ 			if (Atomics.compareExchange(this.#t, 0, t, n) === t) return;
+ 		}
+ 	}
+ 	insert(e, t) {
+ 		if (t.length !== this.channels) throw Error("wrong number of channels");
+ 		let n = Math.round(r.Second.fromMicro(e) * this.rate), i = t[0].length, a = 0;
+-		if (!this.#r) {
+-			this.#i = n;
+-			let e = w(Atomics.load(this.#t, 0));
+-			Atomics.add(this.#e, S, 1), Atomics.store(this.#t, 0, C(e + 2 | 0, 0)), Atomics.store(this.#e, y, 0), this.#r = !0, this.#a = 0, this.#o = 0;
++		if (!this.#i) {
++			this.#a = n, Atomics.store(this.#n, 0, BigInt(n));
++			let e = T(Atomics.load(this.#t, 0));
++			Atomics.add(this.#e, C, 1), Atomics.store(this.#t, 0, w(e + 2 | 0, 0)), Atomics.store(this.#e, b, 0), this.#i = !0, this.#o = 0, this.#s = 0;
+ 		}
+-		n = n - this.#i | 0;
+-		let o = n + i | 0, s = T(Atomics.load(this.#t, 0)), c = s - n | 0;
++		n = n - this.#a | 0;
++		let o = n + i | 0, s = D(Atomics.load(this.#t, 0)), c = s - n | 0;
+ 		if (c > 0) {
+ 			if (c >= i) return;
+ 			a = c, n = n + c | 0;
+ 		}
+ 		let l = i - a;
+-		(o - s | 0) > this.capacity && this.#c(o - this.capacity | 0);
+-		let u = Atomics.load(this.#e, y), d = n - u | 0;
++		(o - s | 0) > this.capacity && this.#u(o - this.capacity | 0);
++		let u = Atomics.load(this.#e, b), d = n - u | 0;
+ 		if (d > 0) {
+ 			let e = Math.min(d, this.capacity);
+ 			for (let t = 0; t < this.channels; t++) {
+-				let n = this.#n[t];
+-				for (let t = 0; t < e; t++) n[O(u + t | 0, this.capacity)] = 0;
++				let n = this.#r[t];
++				for (let t = 0; t < e; t++) n[A(u + t | 0, this.capacity)] = 0;
+ 			}
+ 		}
+ 		for (let e = 0; e < this.channels; e++) {
+-			let r = t[e], i = this.#n[e];
+-			for (let e = 0; e < l; e++) i[O(n + e | 0, this.capacity)] = r[a + e];
++			let r = t[e], i = this.#r[e];
++			for (let e = 0; e < l; e++) i[A(n + e | 0, this.capacity)] = r[a + e];
+ 		}
+-		Atomics.store(this.#e, y, D(Atomics.load(this.#e, y), o)), this.#u();
+-	}
+-	#u() {
+-		let e = T(Atomics.load(this.#t, 0)), t = Atomics.load(this.#e, y), n = Atomics.load(this.#e, b);
+-		(t - e | 0) >= n && n > 0 && Atomics.store(this.#e, x, 0);
++		Atomics.store(this.#e, b, k(Atomics.load(this.#e, b), o)), this.#f();
+ 	}
+-	read(e) {
+-		let t = Atomics.load(this.#t, 0);
+-		if (Atomics.load(this.#e, x) === 1 || re(t)) return 0;
+-		let n = T(t), r = Atomics.load(this.#e, y), i = Atomics.load(this.#e, b), a = r - n | 0;
+-		if (!this.buffered && i > 0 && a > i) {
+-			let e = r - i | 0;
+-			(e - n | 0) > 0 && (n = e);
++	#f() {
++		let e = D(Atomics.load(this.#t, 0)), t = Atomics.load(this.#e, b), n = Atomics.load(this.#e, x);
++		(t - e | 0) >= n && n > 0 && Atomics.store(this.#e, S, 0);
++	}
++	read(e, t) {
++		let n = Atomics.load(this.#t, 0);
++		if (Atomics.load(this.#e, S) === 1 || E(n)) return 0;
++		let i = D(n), a = Atomics.load(this.#e, b), o = Atomics.load(this.#e, x), s = a - i | 0;
++		if (t !== void 0) {
++			let o = Number(Atomics.load(this.#n, 0)), s = Math.round(r.Second.fromMicro(t) * this.rate) - o | 0;
++			if ((s - i | 0) < 0 || (a - s | 0) < e[0].length || Atomics.load(this.#e, S) === 1 || Atomics.load(this.#t, 0) !== n) return 0;
++			i = s;
++		} else if (!this.buffered && o > 0 && s > o) {
++			let e = a - o | 0;
++			(e - i | 0) > 0 && (i = e);
+ 		}
+-		let o = r - n | 0, s = Math.min(o, e[0].length);
+-		if (s <= 0) return (n - T(t) | 0) > 0 && Atomics.compareExchange(this.#t, 0, t, C(w(t), n)), 0;
++		let c = a - i | 0, l = Math.min(c, e[0].length);
++		if (l <= 0) return (i - D(n) | 0) > 0 && Atomics.compareExchange(this.#t, 0, n, w(T(n), i)), 0;
+ 		for (let t = 0; t < this.channels; t++) {
+-			let r = this.#n[t], i = e[t];
+-			for (let e = 0; e < s; e++) i[e] = r[O(n + e | 0, this.capacity)];
++			let n = this.#r[t], r = e[t];
++			for (let e = 0; e < l; e++) r[e] = n[A(i + e | 0, this.capacity)];
+ 		}
+-		let c = C(w(t), n + s | 0);
+-		if (Atomics.compareExchange(this.#t, 0, t, c) !== t) {
+-			for (let t = 0; t < this.channels; t++) e[t].fill(0, 0, s);
++		let u = w(T(n), i + l | 0);
++		if (Atomics.compareExchange(this.#t, 0, n, u) !== n) {
++			for (let t = 0; t < this.channels; t++) e[t].fill(0, 0, l);
+ 			return 0;
+ 		}
+-		return s;
++		return l;
++	}
++	availableAt(e) {
++		let t = Atomics.load(this.#t, 0);
++		if (this.stalled || E(t)) return 0;
++		let n = Number(Atomics.load(this.#n, 0)), i = Math.round(r.Second.fromMicro(e) * this.rate) - n | 0;
++		if ((i - D(t) | 0) < 0) return 0;
++		let a = Atomics.load(this.#e, b) - i | 0;
++		return !this.stalled && Atomics.load(this.#t, 0) === t ? Math.max(0, a) : 0;
++	}
++	readAt(e, t) {
++		return this.read(e, t);
++	}
++	get mediaTimestamp() {
++		let e = Atomics.load(this.#e, C);
++		if (e !== this.#c) {
++			let t = D(Atomics.load(this.#t, 0));
++			this.#o = t >>> 0, this.#s = t, this.#c = e;
++		}
++		let t = Number(Atomics.load(this.#n, 0));
++		return r.Micro.fromSecond((t + this.#m()) / this.rate);
+ 	}
+ 	setLatency(e) {
+-		let t = Atomics.exchange(this.#e, b, e);
+-		t > 0 && e > t && (Atomics.store(this.#e, x, 1), this.#l(2)), this.#u();
++		let t = Atomics.exchange(this.#e, x, e);
++		t > 0 && e > t && (Atomics.store(this.#e, S, 1), this.#d(2)), this.#f();
+ 	}
+ 	truncate(e) {
+-		let t = Math.round(r.Second.fromMicro(e) * this.rate) - this.#i | 0;
+-		if (!((Atomics.load(this.#e, y) - t | 0) <= 0)) {
+-			for (this.#l(1);;) {
+-				let e = Atomics.load(this.#e, y), n = D(t, T(Atomics.load(this.#t, 0)));
+-				if ((e - n | 0) <= 0 || Atomics.compareExchange(this.#e, y, e, n) === e) break;
++		let t = Math.round(r.Second.fromMicro(e) * this.rate) - this.#a | 0;
++		if (!((Atomics.load(this.#e, b) - t | 0) <= 0)) {
++			for (this.#d(1);;) {
++				let e = Atomics.load(this.#e, b), n = k(t, D(Atomics.load(this.#t, 0)));
++				if ((e - n | 0) <= 0 || Atomics.compareExchange(this.#e, b, e, n) === e) break;
+ 			}
+-			this.#l(1);
++			this.#d(1);
+ 		}
+ 	}
+ 	reset() {
+-		this.#r = !1, Atomics.store(this.#e, x, 1);
+-		let e = Atomics.load(this.#e, y), t = Atomics.load(this.#t, 0);
+-		Atomics.store(this.#t, 0, C(w(t), e));
++		this.#i = !1, Atomics.store(this.#e, S, 1);
++		let e = Atomics.load(this.#e, b), t = Atomics.load(this.#t, 0);
++		Atomics.store(this.#t, 0, w(T(t), e));
+ 	}
+ 	resize(t) {
+-		let n = E(this.channels, t, this.rate, this.buffered), r = new e(n);
+-		r.#r = this.#r, r.#i = this.#i;
+-		let i = Atomics.load(this.#t, 0), a = T(i), o = Atomics.load(this.#e, y), s = Atomics.load(this.#e, b), c = Atomics.load(this.#e, x), l = o - a | 0, u = Math.max(0, Math.min(l, r.capacity)), d = o - u | 0;
++		let n = O(this.channels, t, this.rate, this.buffered), r = new e(n);
++		r.#i = this.#i, r.#a = this.#a, Atomics.store(r.#n, 0, BigInt(this.#a));
++		let i = Atomics.load(this.#t, 0), a = D(i), o = Atomics.load(this.#e, b), s = Atomics.load(this.#e, x), c = Atomics.load(this.#e, S), l = o - a | 0, u = Math.max(0, Math.min(l, r.capacity)), d = o - u | 0;
+ 		for (let e = 0; e < this.channels; e++) {
+-			let t = this.#n[e], n = r.#n[e];
++			let t = this.#r[e], n = r.#r[e];
+ 			for (let e = 0; e < u; e++) {
+ 				let i = d + e | 0;
+-				n[O(i, r.capacity)] = t[O(i, this.capacity)];
++				n[A(i, r.capacity)] = t[A(i, this.capacity)];
+ 			}
+ 		}
+-		return Atomics.store(r.#e, S, Atomics.load(this.#e, S)), Atomics.store(r.#t, 0, C(w(i), d)), Atomics.store(r.#e, y, o), Atomics.store(r.#e, b, s), Atomics.store(r.#e, x, c), r.#a = this.#d(a) + (d - a | 0), r.#o = d, r;
++		return Atomics.store(r.#e, C, Atomics.load(this.#e, C)), Atomics.store(r.#t, 0, w(T(i), d)), Atomics.store(r.#e, b, o), Atomics.store(r.#e, x, s), Atomics.store(r.#e, S, c), r.#o = this.#p(a) + (d - a | 0), r.#s = d, r;
+ 	}
+-	#d(e) {
+-		return this.#a += e - this.#o | 0, this.#o = e, this.#a;
++	#p(e) {
++		return this.#o += e - this.#s | 0, this.#s = e, this.#o;
+ 	}
+-	#f() {
+-		return this.#d(T(Atomics.load(this.#t, 0)));
++	#m() {
++		return this.#p(D(Atomics.load(this.#t, 0)));
+ 	}
+ 	get timestamp() {
+-		return r.Micro.fromSecond((this.#i + this.#f()) / this.rate);
++		return r.Micro.fromSecond((this.#a + this.#m()) / this.rate);
+ 	}
+ 	get anchored() {
+-		return this.#r;
++		return this.#i;
+ 	}
+ 	get stalled() {
+-		return Atomics.load(this.#e, x) === 1;
++		return Atomics.load(this.#e, S) === 1;
+ 	}
+ 	get length() {
+-		return Atomics.load(this.#e, y) - T(Atomics.load(this.#t, 0)) | 0;
++		return Atomics.load(this.#e, b) - D(Atomics.load(this.#t, 0)) | 0;
+ 	}
+-}, k = class {
++}, ie = class {
+ 	#e;
+ 	#t;
+ 	#n = [];
+@@ -276,16 +303,16 @@ var ae = class e {
+ 		return this.#a ??= e, this.#o = r === void 0 ? e : Math.max(r, e), !0;
+ 	}
+ };
+-function A(e, t) {
++function j(e, t) {
+ 	return r.Micro.fromSecond(e / t);
+ }
+-function oe() {
++function ae() {
+ 	return !(typeof SharedArrayBuffer > "u" || typeof crossOriginIsolated < "u" && !crossOriginIsolated);
+ }
+-function se(e, t, n, r, i = !1) {
+-	return oe() ? (console.log("[audio] using SharedArrayBuffer audio buffer"), new ce(e, t, n, r, i)) : (console.warn("[audio] SharedArrayBuffer unavailable, falling back to the higher latency postMessage audio buffer. Serve the page cross-origin isolated (Cross-Origin-Opener-Policy: same-origin, Cross-Origin-Embedder-Policy: require-corp) to avoid this."), new le(e, t, n, r, i));
++function oe(e, t, n, r, i = !1) {
++	return ae() ? (console.log("[audio] using SharedArrayBuffer audio buffer"), new se(e, t, n, r, i)) : (console.warn("[audio] SharedArrayBuffer unavailable, falling back to the higher latency postMessage audio buffer. Serve the page cross-origin isolated (Cross-Origin-Opener-Policy: same-origin, Cross-Origin-Embedder-Policy: require-corp) to avoid this."), new ce(e, t, n, r, i));
+ }
+-var ce = class {
++var se = class {
+ 	rate;
+ 	channels;
+ 	#e;
+@@ -299,9 +326,9 @@ var ce = class {
+ 	constructor(e, t, n, r, i) {
+ 		this.#e = e, this.channels = t, this.rate = n;
+ 		let a = Math.max(n, r * 2);
+-		this.#i = new k(i, A(r, n));
+-		let o = E(t, a, n, i);
+-		this.#t = new ae(o), this.#t.setLatency(r);
++		this.#i = new ie(i, j(r, n));
++		let o = O(t, a, n, i);
++		this.#t = new re(o), this.#t.setLatency(r);
+ 		let s = {
+ 			type: "init-shared",
+ 			...o
+@@ -317,7 +344,7 @@ var ce = class {
+ 		this.#t.insert(e, t);
+ 	}
+ 	setLatency(e) {
+-		if (this.#i.setHeadroom(A(e, this.rate)), this.#t.setLatency(e), this.#t.capacity < e * 1.5) {
++		if (this.#i.setHeadroom(j(e, this.rate)), this.#t.setLatency(e), this.#t.capacity < e * 1.5) {
+ 			let t = Math.max(this.rate, e * 2);
+ 			this.#t = this.#t.resize(t);
+ 			let n = {
+@@ -339,7 +366,7 @@ var ce = class {
+ 	close() {
+ 		this.#i.close(), this.#a.close();
+ 	}
+-}, le = class {
++}, ce = class {
+ 	rate;
+ 	channels;
+ 	#e;
+@@ -351,7 +378,7 @@ var ce = class {
+ 	#i = 0;
+ 	#a = new i();
+ 	constructor(e, t, n, i, a) {
+-		this.#e = e, this.channels = t, this.rate = n, this.#r = new k(a, A(i, n));
++		this.#e = e, this.channels = t, this.rate = n, this.#r = new ie(a, j(i, n));
+ 		let o = {
+ 			type: "init-post",
+ 			channels: t,
+@@ -373,7 +400,7 @@ var ce = class {
+ 		this.#e.port.postMessage(n, t.map((e) => e.buffer));
+ 	}
+ 	setLatency(e) {
+-		this.#r.setHeadroom(A(e, this.rate));
++		this.#r.setHeadroom(j(e, this.rate));
+ 		let t = {
+ 			type: "latency",
+ 			latency: r.Milli.fromSecond(e / this.rate)
+@@ -401,8 +428,8 @@ var ce = class {
+ 	close() {
+ 		this.#r.close(), this.#a.close();
+ 	}
+-}, ue = 128, de = 20, fe = 1024, pe = 1152, me = 576, he = 32e3;
+-function j(e) {
++}, le = 128, ue = 20, de = 1024, fe = 1152, pe = 576, me = 32e3;
++function M(e) {
+ 	return {
+ 		codec: e.codec,
+ 		container: e.container,
+@@ -411,27 +438,27 @@ function j(e) {
+ 		numberOfChannels: e.numberOfChannels
+ 	};
+ }
+-function ge(e) {
++function he(e) {
+ 	return {
+ 		broadcast: e.broadcast,
+-		decoder: j(e)
++		decoder: M(e)
+ 	};
+ }
+-function _e(e) {
+-	let t = (e.jitter || ve(e)) ?? 0, n = Math.ceil(ue / e.sampleRate * 1e3);
++function ge(e) {
++	let t = (e.jitter || _e(e)) ?? 0, n = Math.ceil(le / e.sampleRate * 1e3);
+ 	return r.Milli((e.delay ?? 0) + t + n);
+ }
+-function ve(e) {
+-	if (e.codec.startsWith("opus")) return de;
+-	if (e.codec.startsWith("mp4a")) return Math.ceil(fe / e.sampleRate * 1e3);
++function _e(e) {
++	if (e.codec.startsWith("opus")) return ue;
++	if (e.codec.startsWith("mp4a")) return Math.ceil(de / e.sampleRate * 1e3);
+ 	if (e.codec === "mp3") {
+-		let t = e.sampleRate >= he ? pe : me;
++		let t = e.sampleRate >= me ? fe : pe;
+ 		return Math.ceil(t / e.sampleRate * 1e3);
+ 	}
+ }
+ //#endregion
+ //#region src/audio/handover.ts
+-var ye = class {
++var ve = class {
+ 	#e = !1;
+ 	#t = !1;
+ 	opened() {
+@@ -441,13 +468,13 @@ var ye = class {
+ 		let e = this.#t;
+ 		return this.#t = !1, e;
+ 	}
+-}, be = 128;
+-function M(e, t) {
+-	return Math.max(be, Math.ceil(e * r.Second.fromMilli(t)));
++}, ye = 128;
++function N(e, t) {
++	return Math.max(ye, Math.ceil(e * r.Second.fromMilli(t)));
+ }
+ //#endregion
+ //#region src/audio/order.ts
+-var N = class {
++var P = class {
+ 	#e;
+ 	#t = [];
+ 	#n;
+@@ -483,46 +510,52 @@ var N = class {
+ 	reset() {
+ 		this.#i = void 0;
+ 	}
+-}, xe = new Blob(["Object.assign((value) => value, {\n	zero: 0,\n	fromMicro: (us) => us * 1e3,\n	fromMilli: (ms) => ms * 1e6,\n	fromSecond: (s) => s * 1e9,\n	toMicro: (ns) => ns / 1e3,\n	toMilli: (ns) => ns / 1e6,\n	toSecond: (ns) => ns / 1e9,\n	now: () => performance.now() * 1e6,\n	add: (a, b) => a + b,\n	sub: (a, b) => a - b,\n	mul: (a, b) => a * b,\n	div: (a, b) => a / b,\n	max: (a, b) => Math.max(a, b),\n	min: (a, b) => Math.min(a, b)\n});\n/** Constructors, conversions, and arithmetic for {@link Micro} values. */\nconst Micro = Object.assign((value) => value, {\n	zero: 0,\n	fromNano: (ns) => ns / 1e3,\n	fromMilli: (ms) => ms * 1e3,\n	fromSecond: (s) => s * 1e6,\n	toNano: (us) => us * 1e3,\n	toMilli: (us) => us / 1e3,\n	toSecond: (us) => us / 1e6,\n	now: () => performance.now() * 1e3,\n	add: (a, b) => a + b,\n	sub: (a, b) => a - b,\n	mul: (a, b) => a * b,\n	div: (a, b) => a / b,\n	max: (a, b) => Math.max(a, b),\n	min: (a, b) => Math.min(a, b)\n});\nObject.assign((value) => value, {\n	zero: 0,\n	fromNano: (ns) => ns / 1e6,\n	fromMicro: (us) => us / 1e3,\n	fromSecond: (s) => s * 1e3,\n	toNano: (ms) => ms * 1e6,\n	toMicro: (ms) => ms * 1e3,\n	toSecond: (ms) => ms / 1e3,\n	now: () => performance.now(),\n	add: (a, b) => a + b,\n	sub: (a, b) => a - b,\n	mul: (a, b) => a * b,\n	div: (a, b) => a / b,\n	max: (a, b) => Math.max(a, b),\n	min: (a, b) => Math.min(a, b)\n});\nObject.assign((unitsPerSecond) => {\n	if (!Number.isSafeInteger(unitsPerSecond) || unitsPerSecond <= 0) throw new RangeError(`invalid timescale: ${unitsPerSecond}`);\n	return unitsPerSecond;\n}, {\n	/** One unit per second. */\n	SECOND: 1,\n	/** 1,000 units per second. */\n	MILLI: 1e3,\n	/** 1,000,000 units per second. */\n	MICRO: 1e6,\n	/** 1,000,000,000 units per second. */\n	NANO: 1e9\n});\n/** Constructors, conversions, and arithmetic for {@link Second} values. */\nconst Second = Object.assign((value) => value, {\n	zero: 0,\n	fromNano: (ns) => ns / 1e9,\n	fromMicro: (us) => us / 1e6,\n	fromMilli: (ms) => ms / 1e3,\n	toNano: (s) => s * 1e9,\n	toMicro: (s) => s * 1e6,\n	toMilli: (s) => s * 1e3,\n	now: () => performance.now() / 1e3,\n	add: (a, b) => a + b,\n	sub: (a, b) => a - b,\n	mul: (a, b) => a * b,\n	div: (a, b) => a / b,\n	max: (a, b) => Math.max(a, b),\n	min: (a, b) => Math.min(a, b)\n});\n//#endregion\n//#region src/audio/ring-buffer.ts\nvar AudioRingBuffer = class {\n	#buffer;\n	#writeIndex = 0;\n	#readIndex = 0;\n	rate;\n	channels;\n	#stalled = true;\n	#buffered;\n	#latencySamples;\n	#anchored = false;\n	constructor(props) {\n		if (props.channels <= 0) throw new Error(\"invalid channels\");\n		if (props.rate <= 0) throw new Error(\"invalid sample rate\");\n		if (props.latency <= 0) throw new Error(\"invalid latency\");\n		this.#latencySamples = Math.ceil(props.rate * Second.fromMilli(props.latency));\n		if (this.#latencySamples === 0) throw new Error(\"empty buffer\");\n		this.rate = props.rate;\n		this.channels = props.channels;\n		this.#buffered = props.buffered ?? false;\n		const capacity = this.#capacityFor(this.#latencySamples);\n		this.#buffer = [];\n		for (let i = 0; i < this.channels; i++) this.#buffer[i] = new Float32Array(capacity);\n	}\n	#capacityFor(latencySamples) {\n		return this.#buffered ? latencySamples * 2 : latencySamples;\n	}\n	get stalled() {\n		return this.#stalled;\n	}\n	get timestamp() {\n		return Micro.fromSecond(this.#readIndex / this.rate);\n	}\n	/** Whether an insert has anchored the indices since creation or the last reset. */\n	get anchored() {\n		return this.#anchored;\n	}\n	get length() {\n		return this.#writeIndex - this.#readIndex;\n	}\n	get capacity() {\n		return this.#buffer[0]?.length;\n	}\n	resize(latency) {\n		const latencySamples = Math.ceil(this.rate * Second.fromMilli(latency));\n		if (latencySamples > this.#latencySamples) this.#stalled = true;\n		this.#latencySamples = latencySamples;\n		const newCapacity = this.#capacityFor(this.#latencySamples);\n		if (newCapacity !== this.capacity) this.#reallocate(newCapacity);\n		if (latencySamples > 0 && this.length >= latencySamples) this.#stalled = false;\n	}\n	#reallocate(newCapacity) {\n		if (newCapacity === 0) throw new Error(\"empty buffer\");\n		const newBuffer = [];\n		for (let i = 0; i < this.channels; i++) newBuffer[i] = new Float32Array(newCapacity);\n		const samplesToKeep = Math.min(this.length, newCapacity);\n		if (samplesToKeep > 0) {\n			const copyStart = this.#writeIndex - samplesToKeep;\n			for (let channel = 0; channel < this.channels; channel++) {\n				const src = this.#buffer[channel];\n				const dst = newBuffer[channel];\n				for (let i = 0; i < samplesToKeep; i++) {\n					const srcPos = (copyStart + i) % src.length;\n					const dstPos = (copyStart + i) % dst.length;\n					dst[dstPos] = src[srcPos];\n				}\n			}\n		}\n		this.#buffer = newBuffer;\n		this.#readIndex = this.#writeIndex - samplesToKeep;\n		if (samplesToKeep === 0) this.#stalled = true;\n	}\n	write(timestamp, data) {\n		if (data.length !== this.channels) throw new Error(\"wrong number of channels\");\n		let start = Math.round(Second.fromMicro(timestamp) * this.rate);\n		let samples = data[0].length;\n		if (!this.#anchored) {\n			this.#readIndex = start;\n			this.#writeIndex = start;\n			this.#anchored = true;\n		}\n		let offset = this.#readIndex - start;\n		if (offset > samples) return;\n		else if (offset > 0) {\n			samples -= offset;\n			start += offset;\n		} else offset = 0;\n		const end = start + samples;\n		const overflow = end - this.#readIndex - this.#buffer[0].length;\n		if (overflow >= 0) {\n			this.#stalled = false;\n			this.#readIndex += overflow;\n		}\n		if (start > this.#writeIndex) {\n			const gapSize = Math.min(start - this.#writeIndex, this.#buffer[0].length);\n			if (gapSize === 1) console.warn(\"floating point inaccuracy detected\");\n			for (let channel = 0; channel < this.channels; channel++) {\n				const dst = this.#buffer[channel];\n				for (let i = 0; i < gapSize; i++) {\n					const writePos = (this.#writeIndex + i) % dst.length;\n					dst[writePos] = 0;\n				}\n			}\n		}\n		for (let channel = 0; channel < this.channels; channel++) {\n			let src = data[channel];\n			src = src.subarray(src.length - samples);\n			const dst = this.#buffer[channel];\n			if (src.length !== samples) throw new Error(\"mismatching number of samples\");\n			for (let i = 0; i < samples; i++) {\n				const writePos = (start + i) % dst.length;\n				dst[writePos] = src[i];\n			}\n		}\n		if (end > this.#writeIndex) this.#writeIndex = end;\n		if (this.#buffered && this.length >= this.#latencySamples) this.#stalled = false;\n	}\n	/**\n	* Drop buffered samples at or after `timestamp`, keeping whatever is already due.\n	*\n	* A successor track overwrites the slots its own samples land on, but anything the previous\n	* track wrote beyond them would otherwise still play once the successor runs out.\n	*/\n	truncate(timestamp) {\n		const target = Math.round(Second.fromMicro(timestamp) * this.rate);\n		if (target >= this.#writeIndex) return;\n		this.#writeIndex = Math.max(target, this.#readIndex);\n	}\n	reset() {\n		this.#readIndex = 0;\n		this.#writeIndex = 0;\n		this.#stalled = true;\n		this.#anchored = false;\n	}\n	read(output) {\n		if (output.length !== this.channels) throw new Error(\"wrong number of channels\");\n		if (this.#stalled) return 0;\n		const samples = Math.min(this.#writeIndex - this.#readIndex, output[0].length);\n		if (samples === 0) return 0;\n		for (let channel = 0; channel < this.channels; channel++) {\n			const dst = output[channel];\n			const src = this.#buffer[channel];\n			if (dst.length !== output[0].length) throw new Error(\"mismatching number of samples\");\n			for (let i = 0; i < samples; i++) {\n				const readPos = (this.#readIndex + i) % src.length;\n				dst[i] = src[readPos];\n			}\n		}\n		this.#readIndex += samples;\n		return samples;\n	}\n};\n//#endregion\n//#region src/audio/shared-ring-buffer.ts\nconst WRITE = 0;\nconst LATENCY = 1;\nconst STALLED = 2;\nconst TIMELINE = 3;\nconst CONTROL_SLOTS = 4;\n/**\n* The playhead and its mutation epoch, packed into one 64-bit word: epoch in the high\n* half, read cursor in the low half.\n*\n* They have to move together. The reader samples the ring, copies, and only then publishes, and\n* the writer can rebase the timeline anywhere in between. Checking an epoch and then writing a\n* cursor leaves a window between the two no ordering closes, which is how a stale cursor ends up\n* on a fresh timeline: the playhead lands past WRITE, `read` returns nothing, and `insert` drops\n* everything as too old until WRITE catches up. Packed, the check *is* the write: the reader\n* compare-exchanges the whole word, so a rebase makes its publish fail rather than land.\n*/\nconst CURSOR_MASK = 4294967295n;\nfunction pack(epoch, read) {\n	return BigInt(epoch >>> 0) << 32n | BigInt(read >>> 0);\n}\n/**\n* The mutation epoch. Even while settled, odd while `truncate` retreats WRITE.\n*\n* WRITE lives in a different word, so a retreat cannot move it and the epoch together. Marking\n* the epoch on either side of the retreat is what covers the gap: a reader that snapshotted\n* before the mark finds the word moved and its exchange fails, one that snapshots between the\n* marks sees the odd epoch and renders silence, and one that snapshots after already reads the\n* retreated WRITE. So the writer steps by two on a re-anchor, keeping odd for the retreat alone.\n*/\nfunction epochOf(state) {\n	return Number(state >> 32n) | 0;\n}\n/** Whether a `truncate` is mid-retreat, so WRITE may still describe samples it is dropping. */\nfunction retreating(state) {\n	return (epochOf(state) & 1) !== 0;\n}\n/** The playhead half, back as an i32 so the modular comparisons elsewhere still hold. */\nfunction readOf(state) {\n	return Number(state & CURSOR_MASK) | 0;\n}\n/** Rounds up to a power of two, which is what makes `slot` wrap-invariant. */\nfunction ceilPow2(n) {\n	return n <= 1 ? 1 : 1 << 32 - Math.clz32(n - 1);\n}\n/**\n* Allocate the shared memory for a ring holding at least `capacity` samples per channel.\n*\n* The capacity is rounded up to a power of two so `slot` can mask instead of taking a\n* remainder; read `init.capacity` back rather than assuming the requested value.\n*/\nfunction allocSharedRingBuffer(channels, capacity, rate, buffered = false) {\n	if (channels <= 0) throw new Error(\"invalid channels\");\n	if (capacity <= 0 || capacity > 2 ** 30) throw new Error(\"invalid capacity\");\n	if (rate <= 0) throw new Error(\"invalid sample rate\");\n	capacity = ceilPow2(capacity);\n	const samples = new SharedArrayBuffer(channels * capacity * Float32Array.BYTES_PER_ELEMENT);\n	const control = new SharedArrayBuffer(CONTROL_SLOTS * Int32Array.BYTES_PER_ELEMENT);\n	const state = new SharedArrayBuffer(BigInt64Array.BYTES_PER_ELEMENT);\n	const ctrl = new Int32Array(control);\n	Atomics.store(ctrl, STALLED, 1);\n	return {\n		channels,\n		capacity,\n		rate,\n		samples,\n		control,\n		state,\n		buffered\n	};\n}\n/** Modular i32 max: returns a if a is ahead of b, else b. */\nfunction i32Max(a, b) {\n	return (a - b | 0) > 0 ? a : b;\n}\n/**\n* Maps a sample index to a [0, capacity) array slot.\n*\n* `capacity` is a power of two, so masking is exact for negative indexes and, unlike a\n* remainder, survives the i32 wrap: consecutive indexes stay consecutive slots across\n* 0x7fffffff -> 0x80000000, which is what keeps unread samples from aliasing there.\n*/\nfunction slot(idx, capacity) {\n	return idx & capacity - 1;\n}\nvar SharedRingBuffer = class SharedRingBuffer {\n	channels;\n	capacity;\n	rate;\n	buffered;\n	init;\n	#control;\n	#state;\n	#samples;\n	#anchored = false;\n	#anchor = 0;\n	#position = 0;\n	#lastRead = 0;\n	/**\n	* Wrap the shared memory described by `init`.\n	*\n	* Pass `previous` in the worklet when this ring replaces one already being read. `resize`\n	* snapshots the playhead on the main thread and hands the replacement over by message, so the\n	* reader keeps draining the old ring in the meantime. Carrying its cursor across means those\n	* samples are not played twice.\n	*/\n	constructor(init, previous) {\n		this.channels = init.channels;\n		this.capacity = init.capacity;\n		this.rate = init.rate;\n		this.buffered = init.buffered;\n		this.init = init;\n		this.#control = new Int32Array(init.control);\n		this.#state = new BigInt64Array(init.state);\n		this.#samples = [];\n		for (let i = 0; i < this.channels; i++) this.#samples.push(new Float32Array(init.samples, i * this.capacity * Float32Array.BYTES_PER_ELEMENT, this.capacity));\n		if (previous !== void 0) this.#handoff(previous);\n	}\n	/**\n	* Carry `source`'s playhead across, if the replacement is still the timeline it belongs to.\n	*\n	* Truncation changes the mutation epoch but preserves timeline identity. Sample state before\n	* identity: a re-anchor publishes identity first, then replaces state. Either the identity\n	* check rejects the old cursor, the exchange fails, or the re-anchor overwrites the carried\n	* cursor. A truncate only forces a retry, preserving audio consumed since the resize.\n	*/\n	#handoff(source) {\n		if (source.channels !== this.channels || source.rate !== this.rate) return;\n		const timeline = Atomics.load(source.#control, TIMELINE);\n		const from = Atomics.load(source.#state, 0);\n		for (;;) {\n			const state = Atomics.load(this.#state, 0);\n			if (Atomics.load(this.#control, TIMELINE) !== timeline) return;\n			if ((readOf(from) - readOf(state) | 0) <= 0) return;\n			const next = pack(epochOf(state), readOf(from));\n			if (Atomics.compareExchange(this.#state, 0, state, next) === state) return;\n		}\n	}\n	/**\n	* Move the playhead forward to `candidate`, staying on whatever timeline is current.\n	*\n	* Retries while the word changes under it, and never steps backwards. Used by the writer's\n	* overflow path; the reader publishes with its own exchange so it can tell a rebase apart\n	* from losing a race.\n	*/\n	#advance(candidate) {\n		for (;;) {\n			const state = Atomics.load(this.#state, 0);\n			if ((candidate - readOf(state) | 0) <= 0) return;\n			const next = pack(epochOf(state), candidate);\n			if (Atomics.compareExchange(this.#state, 0, state, next) === state) return;\n		}\n	}\n	/**\n	* Step the epoch by `by`, leaving the playhead wherever the reader has taken it.\n	*\n	* Retries while the word changes under it: only the epoch half is the writer's to move.\n	*/\n	#step(by) {\n		for (;;) {\n			const state = Atomics.load(this.#state, 0);\n			const next = pack(epochOf(state) + by | 0, readOf(state));\n			if (Atomics.compareExchange(this.#state, 0, state, next) === state) return;\n		}\n	}\n	/**\n	* Insert audio samples at the given timestamp.\n	* Main thread only. Handles out-of-order writes, gap filling, and overflow.\n	*/\n	insert(timestamp, data) {\n		if (data.length !== this.channels) throw new Error(\"wrong number of channels\");\n		let start = Math.round(Second.fromMicro(timestamp) * this.rate);\n		const originalLength = data[0].length;\n		let offset = 0;\n		if (!this.#anchored) {\n			this.#anchor = start;\n			const epoch = epochOf(Atomics.load(this.#state, 0));\n			Atomics.add(this.#control, TIMELINE, 1);\n			Atomics.store(this.#state, 0, pack(epoch + 2 | 0, 0));\n			Atomics.store(this.#control, WRITE, 0);\n			this.#anchored = true;\n			this.#position = 0;\n			this.#lastRead = 0;\n		}\n		start = start - this.#anchor | 0;\n		const end = start + originalLength | 0;\n		const read = readOf(Atomics.load(this.#state, 0));\n		const behind = read - start | 0;\n		if (behind > 0) {\n			if (behind >= originalLength) return;\n			offset = behind;\n			start = start + behind | 0;\n		}\n		const samples = originalLength - offset;\n		if ((end - read | 0) > this.capacity) this.#advance(end - this.capacity | 0);\n		const write = Atomics.load(this.#control, WRITE);\n		const gap = start - write | 0;\n		if (gap > 0) {\n			const gapSize = Math.min(gap, this.capacity);\n			for (let channel = 0; channel < this.channels; channel++) {\n				const dst = this.#samples[channel];\n				for (let i = 0; i < gapSize; i++) dst[slot(write + i | 0, this.capacity)] = 0;\n			}\n		}\n		for (let channel = 0; channel < this.channels; channel++) {\n			const src = data[channel];\n			const dst = this.#samples[channel];\n			for (let i = 0; i < samples; i++) dst[slot(start + i | 0, this.capacity)] = src[offset + i];\n		}\n		Atomics.store(this.#control, WRITE, i32Max(Atomics.load(this.#control, WRITE), end));\n		this.#resume();\n	}\n	#resume() {\n		const read = readOf(Atomics.load(this.#state, 0));\n		const write = Atomics.load(this.#control, WRITE);\n		const latency = Atomics.load(this.#control, LATENCY);\n		if ((write - read | 0) >= latency && latency > 0) Atomics.store(this.#control, STALLED, 0);\n	}\n	/**\n	* Read audio samples into the output buffers.\n	* AudioWorklet only. Returns the number of samples read.\n	*/\n	read(output) {\n		const state = Atomics.load(this.#state, 0);\n		if (Atomics.load(this.#control, STALLED) === 1) return 0;\n		if (retreating(state)) return 0;\n		let read = readOf(state);\n		const write = Atomics.load(this.#control, WRITE);\n		const latency = Atomics.load(this.#control, LATENCY);\n		const buffered = write - read | 0;\n		if (!this.buffered && latency > 0 && buffered > latency) {\n			const skipTo = write - latency | 0;\n			if ((skipTo - read | 0) > 0) read = skipTo;\n		}\n		const available = write - read | 0;\n		const count = Math.min(available, output[0].length);\n		if (count <= 0) {\n			if ((read - readOf(state) | 0) > 0) Atomics.compareExchange(this.#state, 0, state, pack(epochOf(state), read));\n			return 0;\n		}\n		for (let channel = 0; channel < this.channels; channel++) {\n			const src = this.#samples[channel];\n			const dst = output[channel];\n			for (let i = 0; i < count; i++) dst[i] = src[slot(read + i | 0, this.capacity)];\n		}\n		const next = pack(epochOf(state), read + count | 0);\n		if (Atomics.compareExchange(this.#state, 0, state, next) !== state) {\n			for (let channel = 0; channel < this.channels; channel++) output[channel].fill(0, 0, count);\n			return 0;\n		}\n		return count;\n	}\n	/**\n	* Update the target latency in samples. Main thread only.\n	*\n	* A deeper floor parks playback until it refills. Video holds the extra delay on its own, so\n	* audio that kept draining at the old depth would run ahead by the difference. Parking keeps\n	* what is buffered, so a rise costs only its own size in silence, and none if the buffer\n	* already covers the new floor.\n	*/\n	setLatency(samples) {\n		const previous = Atomics.exchange(this.#control, LATENCY, samples);\n		if (previous > 0 && samples > previous) {\n			Atomics.store(this.#control, STALLED, 1);\n			this.#step(2);\n		}\n		this.#resume();\n	}\n	/**\n	* Drop buffered samples at or after `timestamp`, keeping whatever is already due.\n	* Main thread only.\n	*\n	* A successor track overwrites the slots its own samples land on, but anything the previous\n	* track wrote beyond them would otherwise still play once the successor runs out.\n	*/\n	truncate(timestamp) {\n		const target = Math.round(Second.fromMicro(timestamp) * this.rate) - this.#anchor | 0;\n		if ((Atomics.load(this.#control, WRITE) - target | 0) <= 0) return;\n		this.#step(1);\n		for (;;) {\n			const write = Atomics.load(this.#control, WRITE);\n			const clamped = i32Max(target, readOf(Atomics.load(this.#state, 0)));\n			if ((write - clamped | 0) <= 0) break;\n			if (Atomics.compareExchange(this.#control, WRITE, write, clamped) === write) break;\n		}\n		this.#step(1);\n	}\n	/**\n	* Flush buffered samples and re-stall, ready to anchor the next utterance (buffered mode).\n	* Main thread only. The worklet reader sees STALLED and stops until the next insert.\n	*/\n	reset() {\n		this.#anchored = false;\n		Atomics.store(this.#control, STALLED, 1);\n		const write = Atomics.load(this.#control, WRITE);\n		const state = Atomics.load(this.#state, 0);\n		Atomics.store(this.#state, 0, pack(epochOf(state), write));\n	}\n	/**\n	* Allocate a new ring with `newCapacity` samples and copy the unread window\n	* [READ, WRITE) plus control state into it. Used when growing capacity so\n	* we don't drop buffered audio. If `newCapacity` is smaller than the unread\n	* span, the oldest samples are truncated.\n	*\n	* Main thread only. `resize()` reads from the source `SharedRingBuffer` and\n	* writes into a freshly allocated buffer from `allocSharedRingBuffer`, so it\n	* relies on the same invariant as `insert()`: no concurrent main-thread\n	* writers. The AudioWorklet reader is tolerated via the CAS discipline used\n	* by READ/WRITE elsewhere.\n	*/\n	resize(newCapacity) {\n		const init = allocSharedRingBuffer(this.channels, newCapacity, this.rate, this.buffered);\n		const dst = new SharedRingBuffer(init);\n		dst.#anchored = this.#anchored;\n		dst.#anchor = this.#anchor;\n		const state = Atomics.load(this.#state, 0);\n		const read = readOf(state);\n		const write = Atomics.load(this.#control, WRITE);\n		const latency = Atomics.load(this.#control, LATENCY);\n		const stalled = Atomics.load(this.#control, STALLED);\n		const available = write - read | 0;\n		const copyCount = Math.max(0, Math.min(available, dst.capacity));\n		const copyStart = write - copyCount | 0;\n		for (let channel = 0; channel < this.channels; channel++) {\n			const src = this.#samples[channel];\n			const out = dst.#samples[channel];\n			for (let i = 0; i < copyCount; i++) {\n				const idx = copyStart + i | 0;\n				out[slot(idx, dst.capacity)] = src[slot(idx, this.capacity)];\n			}\n		}\n		Atomics.store(dst.#control, TIMELINE, Atomics.load(this.#control, TIMELINE));\n		Atomics.store(dst.#state, 0, pack(epochOf(state), copyStart));\n		Atomics.store(dst.#control, WRITE, write);\n		Atomics.store(dst.#control, LATENCY, latency);\n		Atomics.store(dst.#control, STALLED, stalled);\n		dst.#position = this.#foldRead(read) + (copyStart - read | 0);\n		dst.#lastRead = copyStart;\n		return dst;\n	}\n	/**\n	* Fold an observed READ into `#position`, so the returned offset keeps counting up across\n	* the i32 wrap. Idempotent: folding the same value twice adds a zero delta.\n	*/\n	#foldRead(read) {\n		this.#position += read - this.#lastRead | 0;\n		this.#lastRead = read;\n		return this.#position;\n	}\n	/** `#foldRead` against the current READ. */\n	#unwrapRead() {\n		return this.#foldRead(readOf(Atomics.load(this.#state, 0)));\n	}\n	/**\n	* Current playback timestamp derived from READ position.\n	*\n	* Main thread only, and stateful: it advances the unwrapped read position, so it has to be\n	* polled rather than sampled once. See `#position`.\n	*/\n	get timestamp() {\n		return Micro.fromSecond((this.#anchor + this.#unwrapRead()) / this.rate);\n	}\n	/** Whether an insert has anchored the ring since it was created or reset. Main thread only. */\n	get anchored() {\n		return this.#anchored;\n	}\n	/** Whether the buffer is stalled (waiting to fill). */\n	get stalled() {\n		return Atomics.load(this.#control, STALLED) === 1;\n	}\n	/**\n	* Number of buffered samples (WRITE - READ).\n	*\n	* Non-atomic: WRITE and READ are loaded separately, so a concurrent\n	* writer/reader can make the two loads inconsistent. Intended for\n	* tests and diagnostics, not control-flow decisions.\n	*/\n	get length() {\n		return Atomics.load(this.#control, WRITE) - readOf(Atomics.load(this.#state, 0)) | 0;\n	}\n};\n//#endregion\n//#region src/audio/render-worklet.ts\nvar Render = class extends AudioWorkletProcessor {\n	#backend;\n	#underflow = 0;\n	#stateCounter = 0;\n	#epoch = 0;\n	constructor() {\n		super();\n		this.port.onmessage = (event) => {\n			const msg = event.data;\n			if (msg.type === \"init-shared\") {\n				console.log(\"[audio-worklet] init-shared: using SharedArrayBuffer path\");\n				const previous = this.#backend instanceof SharedRingBuffer ? this.#backend : void 0;\n				this.#backend = new SharedRingBuffer(msg, previous);\n				this.#underflow = 0;\n			} else if (msg.type === \"init-post\") {\n				console.log(\"[audio-worklet] init-post: using postMessage path\");\n				this.#backend = new AudioRingBuffer(msg);\n				this.#underflow = 0;\n			} else if (msg.type === \"data\") {\n				if (this.#backend instanceof AudioRingBuffer) this.#backend.write(msg.timestamp, msg.data);\n			} else if (msg.type === \"latency\") {\n				if (this.#backend instanceof AudioRingBuffer) this.#backend.resize(msg.latency);\n			} else if (msg.type === \"truncate\") {\n				if (this.#backend instanceof AudioRingBuffer) this.#backend.truncate(msg.timestamp);\n			} else if (msg.type === \"reset\") {\n				if (this.#backend instanceof AudioRingBuffer) this.#backend.reset();\n				this.#epoch = msg.epoch;\n			}\n		};\n	}\n	process(_inputs, outputs, _parameters) {\n		const output = outputs[0];\n		const backend = this.#backend;\n		const samplesRead = backend?.read(output) ?? 0;\n		if (samplesRead < output[0].length) this.#underflow += output[0].length - samplesRead;\n		else if (this.#underflow > 0 && backend) {\n			console.debug(`audio underflow: ${Math.round(1e3 * this.#underflow / backend.rate)}ms`);\n			this.#underflow = 0;\n		}\n		if (backend instanceof AudioRingBuffer) {\n			this.#stateCounter++;\n			if (this.#stateCounter >= 5) {\n				this.#stateCounter = 0;\n				const state = {\n					type: \"state\",\n					timestamp: backend.timestamp,\n					stalled: backend.stalled,\n					anchored: backend.anchored,\n					epoch: this.#epoch\n				};\n				this.port.postMessage(state);\n			}\n		}\n		return true;\n	}\n};\nregisterProcessor(\"render\", Render);\n//#endregion\n"], { type: "application/javascript" }), Se = URL.createObjectURL(xe), Ce = class {
++}, be = new Blob(["Object.assign((value) => value, {\n	zero: 0,\n	fromMicro: (us) => us * 1e3,\n	fromMilli: (ms) => ms * 1e6,\n	fromSecond: (s) => s * 1e9,\n	toMicro: (ns) => ns / 1e3,\n	toMilli: (ns) => ns / 1e6,\n	toSecond: (ns) => ns / 1e9,\n	now: () => performance.now() * 1e6,\n	add: (a, b) => a + b,\n	sub: (a, b) => a - b,\n	mul: (a, b) => a * b,\n	div: (a, b) => a / b,\n	max: (a, b) => Math.max(a, b),\n	min: (a, b) => Math.min(a, b)\n});\n/** Constructors, conversions, and arithmetic for {@link Micro} values. */\nconst Micro = Object.assign((value) => value, {\n	zero: 0,\n	fromNano: (ns) => ns / 1e3,\n	fromMilli: (ms) => ms * 1e3,\n	fromSecond: (s) => s * 1e6,\n	toNano: (us) => us * 1e3,\n	toMilli: (us) => us / 1e3,\n	toSecond: (us) => us / 1e6,\n	now: () => performance.now() * 1e3,\n	add: (a, b) => a + b,\n	sub: (a, b) => a - b,\n	mul: (a, b) => a * b,\n	div: (a, b) => a / b,\n	max: (a, b) => Math.max(a, b),\n	min: (a, b) => Math.min(a, b)\n});\nObject.assign((value) => value, {\n	zero: 0,\n	fromNano: (ns) => ns / 1e6,\n	fromMicro: (us) => us / 1e3,\n	fromSecond: (s) => s * 1e3,\n	toNano: (ms) => ms * 1e6,\n	toMicro: (ms) => ms * 1e3,\n	toSecond: (ms) => ms / 1e3,\n	now: () => performance.now(),\n	add: (a, b) => a + b,\n	sub: (a, b) => a - b,\n	mul: (a, b) => a * b,\n	div: (a, b) => a / b,\n	max: (a, b) => Math.max(a, b),\n	min: (a, b) => Math.min(a, b)\n});\nObject.assign((unitsPerSecond) => {\n	if (!Number.isSafeInteger(unitsPerSecond) || unitsPerSecond <= 0) throw new RangeError(`invalid timescale: ${unitsPerSecond}`);\n	return unitsPerSecond;\n}, {\n	/** One unit per second. */\n	SECOND: 1,\n	/** 1,000 units per second. */\n	MILLI: 1e3,\n	/** 1,000,000 units per second. */\n	MICRO: 1e6,\n	/** 1,000,000,000 units per second. */\n	NANO: 1e9\n});\n/** Constructors, conversions, and arithmetic for {@link Second} values. */\nconst Second = Object.assign((value) => value, {\n	zero: 0,\n	fromNano: (ns) => ns / 1e9,\n	fromMicro: (us) => us / 1e6,\n	fromMilli: (ms) => ms / 1e3,\n	toNano: (s) => s * 1e9,\n	toMicro: (s) => s * 1e6,\n	toMilli: (s) => s * 1e3,\n	now: () => performance.now() / 1e3,\n	add: (a, b) => a + b,\n	sub: (a, b) => a - b,\n	mul: (a, b) => a * b,\n	div: (a, b) => a / b,\n	max: (a, b) => Math.max(a, b),\n	min: (a, b) => Math.min(a, b)\n});\n//#endregion\n//#region src/audio/mix-buffer.ts\n/** Mixes additive inputs at one media cursor, with the full mix as an exclusive alternative. */\nvar MixBuffer = class {\n	inputs = /* @__PURE__ */ new Map();\n	#levels;\n	#desired = [[\"main\", 1]];\n	#activeInputs = [[\"main\", 1]];\n	/** Requested stem gains; undefined selects the complete main mix. */\n	set levels(value) {\n		this.#levels = value;\n		this.#desired = value ? Object.entries(value) : [[\"main\", 1]];\n	}\n	get levels() {\n		return this.#levels;\n	}\n	mode = \"main\";\n	timestamp = Micro.zero;\n	#active;\n	#anchored = false;\n	#scratch = /* @__PURE__ */ new Map();\n	read(output) {\n		if (this.levels === void 0 && this.#active === void 0) {\n			const main = this.inputs.get(\"main\");\n			const count = main?.read(output) ?? 0;\n			if (main && count > 0) {\n				this.timestamp = main.mediaTimestamp;\n				this.#anchored = true;\n			}\n			this.mode = \"main\";\n			return count;\n		}\n		if (!this.#anchored) {\n			const main = this.inputs.get(\"main\");\n			if (!main || main.availableAt(main.mediaTimestamp) < output[0].length) return 0;\n			this.timestamp = main.mediaTimestamp;\n			this.#anchored = true;\n		}\n		const desired = this.#desired;\n		if (this.#window(desired, output[0].length, output.length) !== void 0) {\n			this.#active = this.levels;\n			this.#activeInputs = desired;\n			this.mode = this.levels ? \"stems\" : \"main\";\n		} else this.mode = \"loading\";\n		const active = this.#activeInputs;\n		const target = this.#window(active, output[0].length, output.length);\n		if (target === void 0) return 0;\n		const frames = output[0].length;\n		for (const [name, gain] of active) {\n			const input = this.inputs.get(name);\n			if (!input) {\n				if (gain === 0) continue;\n				return 0;\n			}\n			if (gain === 0 && input.availableAt(target) < frames) continue;\n			let scratch = this.#scratch.get(name);\n			if (!scratch || scratch.length !== input.channels || scratch[0].length !== frames) {\n				scratch = Array.from({ length: input.channels }, () => new Float32Array(frames));\n				this.#scratch.set(name, scratch);\n			}\n			if (input.readAt(scratch, target) !== frames) {\n				for (const channel of output) channel.fill(0);\n				return 0;\n			}\n			for (let c = 0; c < output.length; c++) {\n				const source = scratch[Math.min(c, scratch.length - 1)];\n				for (let i = 0; i < frames; i++) output[c][i] += source[i] * gain;\n			}\n		}\n		const first = this.inputs.get(active[0][0]) ?? this.inputs.get(\"main\");\n		if (first) this.timestamp = Micro.add(target, Micro.fromSecond(frames / first.rate));\n		return frames;\n	}\n	get effectiveLevels() {\n		return this.#active;\n	}\n	remove(name) {\n		this.inputs.delete(name);\n		this.#scratch.delete(name);\n	}\n	#window(levels, frames, channels) {\n		for (const [name, gain] of levels) {\n			if (gain === 0) continue;\n			const input = this.inputs.get(name);\n			if (!input || input.channels > channels || input.availableAt(this.timestamp) < frames) return void 0;\n		}\n		return this.timestamp;\n	}\n};\n//#endregion\n//#region src/audio/ring-buffer.ts\nvar AudioRingBuffer = class {\n	#buffer;\n	#writeIndex = 0;\n	#readIndex = 0;\n	rate;\n	channels;\n	#stalled = true;\n	#buffered;\n	#latencySamples;\n	#anchored = false;\n	constructor(props) {\n		if (props.channels <= 0) throw new Error(\"invalid channels\");\n		if (props.rate <= 0) throw new Error(\"invalid sample rate\");\n		if (props.latency <= 0) throw new Error(\"invalid latency\");\n		this.#latencySamples = Math.ceil(props.rate * Second.fromMilli(props.latency));\n		if (this.#latencySamples === 0) throw new Error(\"empty buffer\");\n		this.rate = props.rate;\n		this.channels = props.channels;\n		this.#buffered = props.buffered ?? false;\n		const capacity = this.#capacityFor(this.#latencySamples);\n		this.#buffer = [];\n		for (let i = 0; i < this.channels; i++) this.#buffer[i] = new Float32Array(capacity);\n	}\n	#capacityFor(latencySamples) {\n		return this.#buffered ? latencySamples * 2 : latencySamples;\n	}\n	get stalled() {\n		return this.#stalled;\n	}\n	get timestamp() {\n		return Micro.fromSecond(this.#readIndex / this.rate);\n	}\n	/** Whether an insert has anchored the indices since creation or the last reset. */\n	get anchored() {\n		return this.#anchored;\n	}\n	get length() {\n		return this.#writeIndex - this.#readIndex;\n	}\n	get capacity() {\n		return this.#buffer[0]?.length;\n	}\n	resize(latency) {\n		const latencySamples = Math.ceil(this.rate * Second.fromMilli(latency));\n		if (latencySamples > this.#latencySamples) this.#stalled = true;\n		this.#latencySamples = latencySamples;\n		const newCapacity = this.#capacityFor(this.#latencySamples);\n		if (newCapacity !== this.capacity) this.#reallocate(newCapacity);\n		if (latencySamples > 0 && this.length >= latencySamples) this.#stalled = false;\n	}\n	#reallocate(newCapacity) {\n		if (newCapacity === 0) throw new Error(\"empty buffer\");\n		const newBuffer = [];\n		for (let i = 0; i < this.channels; i++) newBuffer[i] = new Float32Array(newCapacity);\n		const samplesToKeep = Math.min(this.length, newCapacity);\n		if (samplesToKeep > 0) {\n			const copyStart = this.#writeIndex - samplesToKeep;\n			for (let channel = 0; channel < this.channels; channel++) {\n				const src = this.#buffer[channel];\n				const dst = newBuffer[channel];\n				for (let i = 0; i < samplesToKeep; i++) {\n					const srcPos = (copyStart + i) % src.length;\n					const dstPos = (copyStart + i) % dst.length;\n					dst[dstPos] = src[srcPos];\n				}\n			}\n		}\n		this.#buffer = newBuffer;\n		this.#readIndex = this.#writeIndex - samplesToKeep;\n		if (samplesToKeep === 0) this.#stalled = true;\n	}\n	write(timestamp, data) {\n		if (data.length !== this.channels) throw new Error(\"wrong number of channels\");\n		let start = Math.round(Second.fromMicro(timestamp) * this.rate);\n		let samples = data[0].length;\n		if (!this.#anchored) {\n			this.#readIndex = start;\n			this.#writeIndex = start;\n			this.#anchored = true;\n		}\n		let offset = this.#readIndex - start;\n		if (offset > samples) return;\n		else if (offset > 0) {\n			samples -= offset;\n			start += offset;\n		} else offset = 0;\n		const end = start + samples;\n		const overflow = end - this.#readIndex - this.#buffer[0].length;\n		if (overflow >= 0) {\n			this.#stalled = false;\n			this.#readIndex += overflow;\n		}\n		if (start > this.#writeIndex) {\n			const gapSize = Math.min(start - this.#writeIndex, this.#buffer[0].length);\n			if (gapSize === 1) console.warn(\"floating point inaccuracy detected\");\n			for (let channel = 0; channel < this.channels; channel++) {\n				const dst = this.#buffer[channel];\n				for (let i = 0; i < gapSize; i++) {\n					const writePos = (this.#writeIndex + i) % dst.length;\n					dst[writePos] = 0;\n				}\n			}\n		}\n		for (let channel = 0; channel < this.channels; channel++) {\n			let src = data[channel];\n			src = src.subarray(src.length - samples);\n			const dst = this.#buffer[channel];\n			if (src.length !== samples) throw new Error(\"mismatching number of samples\");\n			for (let i = 0; i < samples; i++) {\n				const writePos = (start + i) % dst.length;\n				dst[writePos] = src[i];\n			}\n		}\n		if (end > this.#writeIndex) this.#writeIndex = end;\n		if (this.#buffered && this.length >= this.#latencySamples) this.#stalled = false;\n	}\n	/**\n	* Drop buffered samples at or after `timestamp`, keeping whatever is already due.\n	*\n	* A successor track overwrites the slots its own samples land on, but anything the previous\n	* track wrote beyond them would otherwise still play once the successor runs out.\n	*/\n	truncate(timestamp) {\n		const target = Math.round(Second.fromMicro(timestamp) * this.rate);\n		if (target >= this.#writeIndex) return;\n		this.#writeIndex = Math.max(target, this.#readIndex);\n	}\n	reset() {\n		this.#readIndex = 0;\n		this.#writeIndex = 0;\n		this.#stalled = true;\n		this.#anchored = false;\n	}\n	/** Samples available at an absolute media position without rewinding the cursor. */\n	availableAt(timestamp) {\n		const start = Math.round(Second.fromMicro(timestamp) * this.rate);\n		if (this.#stalled || !this.#anchored || start < this.#readIndex) return 0;\n		return Math.max(0, this.#writeIndex - start);\n	}\n	/** Read an exact media window, leaving independent buffer-depth skips to the mixer. */\n	readAt(output, timestamp) {\n		if (this.availableAt(timestamp) < output[0].length) return 0;\n		this.#readIndex = Math.round(Second.fromMicro(timestamp) * this.rate);\n		return this.read(output);\n	}\n	get mediaTimestamp() {\n		return this.timestamp;\n	}\n	read(output) {\n		if (output.length !== this.channels) throw new Error(\"wrong number of channels\");\n		if (this.#stalled) return 0;\n		const samples = Math.min(this.#writeIndex - this.#readIndex, output[0].length);\n		if (samples === 0) return 0;\n		for (let channel = 0; channel < this.channels; channel++) {\n			const dst = output[channel];\n			const src = this.#buffer[channel];\n			if (dst.length !== output[0].length) throw new Error(\"mismatching number of samples\");\n			for (let i = 0; i < samples; i++) {\n				const readPos = (this.#readIndex + i) % src.length;\n				dst[i] = src[readPos];\n			}\n		}\n		this.#readIndex += samples;\n		return samples;\n	}\n};\n//#endregion\n//#region src/audio/shared-ring-buffer.ts\nconst WRITE = 0;\nconst LATENCY = 1;\nconst STALLED = 2;\nconst TIMELINE = 3;\nconst CONTROL_SLOTS = 4;\n/**\n* The playhead and its mutation epoch, packed into one 64-bit word: epoch in the high\n* half, read cursor in the low half.\n*\n* They have to move together. The reader samples the ring, copies, and only then publishes, and\n* the writer can rebase the timeline anywhere in between. Checking an epoch and then writing a\n* cursor leaves a window between the two no ordering closes, which is how a stale cursor ends up\n* on a fresh timeline: the playhead lands past WRITE, `read` returns nothing, and `insert` drops\n* everything as too old until WRITE catches up. Packed, the check *is* the write: the reader\n* compare-exchanges the whole word, so a rebase makes its publish fail rather than land.\n*/\nconst CURSOR_MASK = 4294967295n;\nfunction pack(epoch, read) {\n	return BigInt(epoch >>> 0) << 32n | BigInt(read >>> 0);\n}\n/**\n* The mutation epoch. Even while settled, odd while `truncate` retreats WRITE.\n*\n* WRITE lives in a different word, so a retreat cannot move it and the epoch together. Marking\n* the epoch on either side of the retreat is what covers the gap: a reader that snapshotted\n* before the mark finds the word moved and its exchange fails, one that snapshots between the\n* marks sees the odd epoch and renders silence, and one that snapshots after already reads the\n* retreated WRITE. So the writer steps by two on a re-anchor, keeping odd for the retreat alone.\n*/\nfunction epochOf(state) {\n	return Number(state >> 32n) | 0;\n}\n/** Whether a `truncate` is mid-retreat, so WRITE may still describe samples it is dropping. */\nfunction retreating(state) {\n	return (epochOf(state) & 1) !== 0;\n}\n/** The playhead half, back as an i32 so the modular comparisons elsewhere still hold. */\nfunction readOf(state) {\n	return Number(state & CURSOR_MASK) | 0;\n}\n/** Rounds up to a power of two, which is what makes `slot` wrap-invariant. */\nfunction ceilPow2(n) {\n	return n <= 1 ? 1 : 1 << 32 - Math.clz32(n - 1);\n}\n/**\n* Allocate the shared memory for a ring holding at least `capacity` samples per channel.\n*\n* The capacity is rounded up to a power of two so `slot` can mask instead of taking a\n* remainder; read `init.capacity` back rather than assuming the requested value.\n*/\nfunction allocSharedRingBuffer(channels, capacity, rate, buffered = false) {\n	if (channels <= 0) throw new Error(\"invalid channels\");\n	if (capacity <= 0 || capacity > 2 ** 30) throw new Error(\"invalid capacity\");\n	if (rate <= 0) throw new Error(\"invalid sample rate\");\n	capacity = ceilPow2(capacity);\n	const samples = new SharedArrayBuffer(channels * capacity * Float32Array.BYTES_PER_ELEMENT);\n	const control = new SharedArrayBuffer(CONTROL_SLOTS * Int32Array.BYTES_PER_ELEMENT);\n	const state = new SharedArrayBuffer(BigInt64Array.BYTES_PER_ELEMENT);\n	const ctrl = new Int32Array(control);\n	Atomics.store(ctrl, STALLED, 1);\n	return {\n		channels,\n		capacity,\n		rate,\n		samples,\n		control,\n		state,\n		anchor: new SharedArrayBuffer(8),\n		buffered\n	};\n}\n/** Modular i32 max: returns a if a is ahead of b, else b. */\nfunction i32Max(a, b) {\n	return (a - b | 0) > 0 ? a : b;\n}\n/**\n* Maps a sample index to a [0, capacity) array slot.\n*\n* `capacity` is a power of two, so masking is exact for negative indexes and, unlike a\n* remainder, survives the i32 wrap: consecutive indexes stay consecutive slots across\n* 0x7fffffff -> 0x80000000, which is what keeps unread samples from aliasing there.\n*/\nfunction slot(idx, capacity) {\n	return idx & capacity - 1;\n}\nvar SharedRingBuffer = class SharedRingBuffer {\n	channels;\n	capacity;\n	rate;\n	buffered;\n	init;\n	#control;\n	#state;\n	#sharedAnchor;\n	#samples;\n	#anchored = false;\n	#anchor = 0;\n	#position = 0;\n	#lastRead = 0;\n	#observedTimeline;\n	/**\n	* Wrap the shared memory described by `init`.\n	*\n	* Pass `previous` in the worklet when this ring replaces one already being read. `resize`\n	* snapshots the playhead on the main thread and hands the replacement over by message, so the\n	* reader keeps draining the old ring in the meantime. Carrying its cursor across means those\n	* samples are not played twice.\n	*/\n	constructor(init, previous) {\n		this.channels = init.channels;\n		this.capacity = init.capacity;\n		this.rate = init.rate;\n		this.buffered = init.buffered;\n		this.init = init;\n		this.#control = new Int32Array(init.control);\n		this.#state = new BigInt64Array(init.state);\n		this.#sharedAnchor = new BigInt64Array(init.anchor);\n		this.#samples = [];\n		for (let i = 0; i < this.channels; i++) this.#samples.push(new Float32Array(init.samples, i * this.capacity * Float32Array.BYTES_PER_ELEMENT, this.capacity));\n		if (previous !== void 0) this.#handoff(previous);\n	}\n	/**\n	* Carry `source`'s playhead across, if the replacement is still the timeline it belongs to.\n	*\n	* Truncation changes the mutation epoch but preserves timeline identity. Sample state before\n	* identity: a re-anchor publishes identity first, then replaces state. Either the identity\n	* check rejects the old cursor, the exchange fails, or the re-anchor overwrites the carried\n	* cursor. A truncate only forces a retry, preserving audio consumed since the resize.\n	*/\n	#handoff(source) {\n		if (source.channels !== this.channels || source.rate !== this.rate) return;\n		const timeline = Atomics.load(source.#control, TIMELINE);\n		const from = Atomics.load(source.#state, 0);\n		if (Atomics.load(this.#control, TIMELINE) === timeline) {\n			this.#position = source.#foldRead(readOf(from));\n			this.#lastRead = readOf(from);\n			this.#observedTimeline = timeline;\n		}\n		for (;;) {\n			const state = Atomics.load(this.#state, 0);\n			if (Atomics.load(this.#control, TIMELINE) !== timeline) return;\n			if ((readOf(from) - readOf(state) | 0) <= 0) return;\n			const next = pack(epochOf(state), readOf(from));\n			if (Atomics.compareExchange(this.#state, 0, state, next) === state) return;\n		}\n	}\n	/**\n	* Move the playhead forward to `candidate`, staying on whatever timeline is current.\n	*\n	* Retries while the word changes under it, and never steps backwards. Used by the writer's\n	* overflow path; the reader publishes with its own exchange so it can tell a rebase apart\n	* from losing a race.\n	*/\n	#advance(candidate) {\n		for (;;) {\n			const state = Atomics.load(this.#state, 0);\n			if ((candidate - readOf(state) | 0) <= 0) return;\n			const next = pack(epochOf(state), candidate);\n			if (Atomics.compareExchange(this.#state, 0, state, next) === state) return;\n		}\n	}\n	/**\n	* Step the epoch by `by`, leaving the playhead wherever the reader has taken it.\n	*\n	* Retries while the word changes under it: only the epoch half is the writer's to move.\n	*/\n	#step(by) {\n		for (;;) {\n			const state = Atomics.load(this.#state, 0);\n			const next = pack(epochOf(state) + by | 0, readOf(state));\n			if (Atomics.compareExchange(this.#state, 0, state, next) === state) return;\n		}\n	}\n	/**\n	* Insert audio samples at the given timestamp.\n	* Main thread only. Handles out-of-order writes, gap filling, and overflow.\n	*/\n	insert(timestamp, data) {\n		if (data.length !== this.channels) throw new Error(\"wrong number of channels\");\n		let start = Math.round(Second.fromMicro(timestamp) * this.rate);\n		const originalLength = data[0].length;\n		let offset = 0;\n		if (!this.#anchored) {\n			this.#anchor = start;\n			Atomics.store(this.#sharedAnchor, 0, BigInt(start));\n			const epoch = epochOf(Atomics.load(this.#state, 0));\n			Atomics.add(this.#control, TIMELINE, 1);\n			Atomics.store(this.#state, 0, pack(epoch + 2 | 0, 0));\n			Atomics.store(this.#control, WRITE, 0);\n			this.#anchored = true;\n			this.#position = 0;\n			this.#lastRead = 0;\n		}\n		start = start - this.#anchor | 0;\n		const end = start + originalLength | 0;\n		const read = readOf(Atomics.load(this.#state, 0));\n		const behind = read - start | 0;\n		if (behind > 0) {\n			if (behind >= originalLength) return;\n			offset = behind;\n			start = start + behind | 0;\n		}\n		const samples = originalLength - offset;\n		if ((end - read | 0) > this.capacity) this.#advance(end - this.capacity | 0);\n		const write = Atomics.load(this.#control, WRITE);\n		const gap = start - write | 0;\n		if (gap > 0) {\n			const gapSize = Math.min(gap, this.capacity);\n			for (let channel = 0; channel < this.channels; channel++) {\n				const dst = this.#samples[channel];\n				for (let i = 0; i < gapSize; i++) dst[slot(write + i | 0, this.capacity)] = 0;\n			}\n		}\n		for (let channel = 0; channel < this.channels; channel++) {\n			const src = data[channel];\n			const dst = this.#samples[channel];\n			for (let i = 0; i < samples; i++) dst[slot(start + i | 0, this.capacity)] = src[offset + i];\n		}\n		Atomics.store(this.#control, WRITE, i32Max(Atomics.load(this.#control, WRITE), end));\n		this.#resume();\n	}\n	#resume() {\n		const read = readOf(Atomics.load(this.#state, 0));\n		const write = Atomics.load(this.#control, WRITE);\n		const latency = Atomics.load(this.#control, LATENCY);\n		if ((write - read | 0) >= latency && latency > 0) Atomics.store(this.#control, STALLED, 0);\n	}\n	/**\n	* Read audio samples into the output buffers.\n	* AudioWorklet only. Returns the number of samples read.\n	*/\n	read(output, at) {\n		const state = Atomics.load(this.#state, 0);\n		if (Atomics.load(this.#control, STALLED) === 1) return 0;\n		if (retreating(state)) return 0;\n		let read = readOf(state);\n		const write = Atomics.load(this.#control, WRITE);\n		const latency = Atomics.load(this.#control, LATENCY);\n		const buffered = write - read | 0;\n		if (at !== void 0) {\n			const anchor = Number(Atomics.load(this.#sharedAnchor, 0));\n			const target = Math.round(Second.fromMicro(at) * this.rate) - anchor | 0;\n			if ((target - read | 0) < 0 || (write - target | 0) < output[0].length) return 0;\n			if (Atomics.load(this.#control, STALLED) === 1 || Atomics.load(this.#state, 0) !== state) return 0;\n			read = target;\n		} else if (!this.buffered && latency > 0 && buffered > latency) {\n			const skipTo = write - latency | 0;\n			if ((skipTo - read | 0) > 0) read = skipTo;\n		}\n		const available = write - read | 0;\n		const count = Math.min(available, output[0].length);\n		if (count <= 0) {\n			if ((read - readOf(state) | 0) > 0) Atomics.compareExchange(this.#state, 0, state, pack(epochOf(state), read));\n			return 0;\n		}\n		for (let channel = 0; channel < this.channels; channel++) {\n			const src = this.#samples[channel];\n			const dst = output[channel];\n			for (let i = 0; i < count; i++) dst[i] = src[slot(read + i | 0, this.capacity)];\n		}\n		const next = pack(epochOf(state), read + count | 0);\n		if (Atomics.compareExchange(this.#state, 0, state, next) !== state) {\n			for (let channel = 0; channel < this.channels; channel++) output[channel].fill(0, 0, count);\n			return 0;\n		}\n		return count;\n	}\n	/** Samples available at an absolute media position without rewinding the cursor. */\n	availableAt(timestamp) {\n		const state = Atomics.load(this.#state, 0);\n		if (this.stalled || retreating(state)) return 0;\n		const anchor = Number(Atomics.load(this.#sharedAnchor, 0));\n		const start = Math.round(Second.fromMicro(timestamp) * this.rate) - anchor | 0;\n		if ((start - readOf(state) | 0) < 0) return 0;\n		const available = Atomics.load(this.#control, WRITE) - start | 0;\n		return !this.stalled && Atomics.load(this.#state, 0) === state ? Math.max(0, available) : 0;\n	}\n	/** Read an exact media window, retaining the normal reader's epoch checks. */\n	readAt(output, timestamp) {\n		return this.read(output, timestamp);\n	}\n	/** Absolute media cursor, also available to an independently wrapped worklet reader. */\n	get mediaTimestamp() {\n		const timeline = Atomics.load(this.#control, TIMELINE);\n		if (timeline !== this.#observedTimeline) {\n			const read = readOf(Atomics.load(this.#state, 0));\n			this.#position = read >>> 0;\n			this.#lastRead = read;\n			this.#observedTimeline = timeline;\n		}\n		const anchor = Number(Atomics.load(this.#sharedAnchor, 0));\n		return Micro.fromSecond((anchor + this.#unwrapRead()) / this.rate);\n	}\n	/**\n	* Update the target latency in samples. Main thread only.\n	*\n	* A deeper floor parks playback until it refills. Video holds the extra delay on its own, so\n	* audio that kept draining at the old depth would run ahead by the difference. Parking keeps\n	* what is buffered, so a rise costs only its own size in silence, and none if the buffer\n	* already covers the new floor.\n	*/\n	setLatency(samples) {\n		const previous = Atomics.exchange(this.#control, LATENCY, samples);\n		if (previous > 0 && samples > previous) {\n			Atomics.store(this.#control, STALLED, 1);\n			this.#step(2);\n		}\n		this.#resume();\n	}\n	/**\n	* Drop buffered samples at or after `timestamp`, keeping whatever is already due.\n	* Main thread only.\n	*\n	* A successor track overwrites the slots its own samples land on, but anything the previous\n	* track wrote beyond them would otherwise still play once the successor runs out.\n	*/\n	truncate(timestamp) {\n		const target = Math.round(Second.fromMicro(timestamp) * this.rate) - this.#anchor | 0;\n		if ((Atomics.load(this.#control, WRITE) - target | 0) <= 0) return;\n		this.#step(1);\n		for (;;) {\n			const write = Atomics.load(this.#control, WRITE);\n			const clamped = i32Max(target, readOf(Atomics.load(this.#state, 0)));\n			if ((write - clamped | 0) <= 0) break;\n			if (Atomics.compareExchange(this.#control, WRITE, write, clamped) === write) break;\n		}\n		this.#step(1);\n	}\n	/**\n	* Flush buffered samples and re-stall, ready to anchor the next utterance (buffered mode).\n	* Main thread only. The worklet reader sees STALLED and stops until the next insert.\n	*/\n	reset() {\n		this.#anchored = false;\n		Atomics.store(this.#control, STALLED, 1);\n		const write = Atomics.load(this.#control, WRITE);\n		const state = Atomics.load(this.#state, 0);\n		Atomics.store(this.#state, 0, pack(epochOf(state), write));\n	}\n	/**\n	* Allocate a new ring with `newCapacity` samples and copy the unread window\n	* [READ, WRITE) plus control state into it. Used when growing capacity so\n	* we don't drop buffered audio. If `newCapacity` is smaller than the unread\n	* span, the oldest samples are truncated.\n	*\n	* Main thread only. `resize()` reads from the source `SharedRingBuffer` and\n	* writes into a freshly allocated buffer from `allocSharedRingBuffer`, so it\n	* relies on the same invariant as `insert()`: no concurrent main-thread\n	* writers. The AudioWorklet reader is tolerated via the CAS discipline used\n	* by READ/WRITE elsewhere.\n	*/\n	resize(newCapacity) {\n		const init = allocSharedRingBuffer(this.channels, newCapacity, this.rate, this.buffered);\n		const dst = new SharedRingBuffer(init);\n		dst.#anchored = this.#anchored;\n		dst.#anchor = this.#anchor;\n		Atomics.store(dst.#sharedAnchor, 0, BigInt(this.#anchor));\n		const state = Atomics.load(this.#state, 0);\n		const read = readOf(state);\n		const write = Atomics.load(this.#control, WRITE);\n		const latency = Atomics.load(this.#control, LATENCY);\n		const stalled = Atomics.load(this.#control, STALLED);\n		const available = write - read | 0;\n		const copyCount = Math.max(0, Math.min(available, dst.capacity));\n		const copyStart = write - copyCount | 0;\n		for (let channel = 0; channel < this.channels; channel++) {\n			const src = this.#samples[channel];\n			const out = dst.#samples[channel];\n			for (let i = 0; i < copyCount; i++) {\n				const idx = copyStart + i | 0;\n				out[slot(idx, dst.capacity)] = src[slot(idx, this.capacity)];\n			}\n		}\n		Atomics.store(dst.#control, TIMELINE, Atomics.load(this.#control, TIMELINE));\n		Atomics.store(dst.#state, 0, pack(epochOf(state), copyStart));\n		Atomics.store(dst.#control, WRITE, write);\n		Atomics.store(dst.#control, LATENCY, latency);\n		Atomics.store(dst.#control, STALLED, stalled);\n		dst.#position = this.#foldRead(read) + (copyStart - read | 0);\n		dst.#lastRead = copyStart;\n		return dst;\n	}\n	/**\n	* Fold an observed READ into `#position`, so the returned offset keeps counting up across\n	* the i32 wrap. Idempotent: folding the same value twice adds a zero delta.\n	*/\n	#foldRead(read) {\n		this.#position += read - this.#lastRead | 0;\n		this.#lastRead = read;\n		return this.#position;\n	}\n	/** `#foldRead` against the current READ. */\n	#unwrapRead() {\n		return this.#foldRead(readOf(Atomics.load(this.#state, 0)));\n	}\n	/**\n	* Current playback timestamp derived from READ position.\n	*\n	* Main thread only, and stateful: it advances the unwrapped read position, so it has to be\n	* polled rather than sampled once. See `#position`.\n	*/\n	get timestamp() {\n		return Micro.fromSecond((this.#anchor + this.#unwrapRead()) / this.rate);\n	}\n	/** Whether an insert has anchored the ring since it was created or reset. Main thread only. */\n	get anchored() {\n		return this.#anchored;\n	}\n	/** Whether the buffer is stalled (waiting to fill). */\n	get stalled() {\n		return Atomics.load(this.#control, STALLED) === 1;\n	}\n	/**\n	* Number of buffered samples (WRITE - READ).\n	*\n	* Non-atomic: WRITE and READ are loaded separately, so a concurrent\n	* writer/reader can make the two loads inconsistent. Intended for\n	* tests and diagnostics, not control-flow decisions.\n	*/\n	get length() {\n		return Atomics.load(this.#control, WRITE) - readOf(Atomics.load(this.#state, 0)) | 0;\n	}\n};\n//#endregion\n//#region src/audio/mixer-worklet.ts\n/** The shared audio worklet that owns every selected input's playout cursor. */\nvar MixerRender = class extends AudioWorkletProcessor {\n	#mix = new MixBuffer();\n	#inputs = /* @__PURE__ */ new Map();\n	#ticks = 0;\n	#stateFrames = 0;\n	#lastMode;\n	#lastStalled;\n	#lastLevels;\n	constructor() {\n		super();\n		this.port.onmessage = ({ data }) => {\n			if (data.type === \"mix\") this.#mix.levels = data.levels;\n			if (data.type === \"detach\") {\n				if (this.#inputs.get(data.id)?.generation !== data.generation) return;\n				this.#inputs.get(data.id)?.port.close();\n				this.#inputs.delete(data.id);\n				this.#mix.remove(data.id);\n			}\n			if (data.type !== \"attach\") return;\n			const input = {\n				port: data.port,\n				epoch: 0,\n				generation: data.generation\n			};\n			this.#inputs.get(data.id)?.port.close();\n			this.#inputs.set(data.id, input);\n			input.port.onmessage = ({ data: message }) => {\n				const previous = this.#mix.inputs.get(data.id);\n				if (message.type === \"init-shared\") this.#mix.inputs.set(data.id, new SharedRingBuffer(message, previous instanceof SharedRingBuffer ? previous : void 0));\n				else if (message.type === \"init-post\") this.#mix.inputs.set(data.id, new AudioRingBuffer(message));\n				else if (previous instanceof AudioRingBuffer) {\n					if (message.type === \"data\") previous.write(message.timestamp, message.data);\n					else if (message.type === \"latency\") previous.resize(message.latency);\n					else if (message.type === \"truncate\") previous.truncate(message.timestamp);\n					else if (message.type === \"reset\") {\n						previous.reset();\n						input.epoch = message.epoch;\n					}\n				}\n			};\n		};\n	}\n	process(_inputs, outputs) {\n		const output = outputs[0];\n		const read = this.#mix.read(output);\n		if (++this.#ticks % 5 === 0) for (const [id, input] of this.#inputs) {\n			const ring = this.#mix.inputs.get(id);\n			if (!(ring instanceof AudioRingBuffer)) continue;\n			const state = {\n				type: \"state\",\n				timestamp: ring.timestamp,\n				stalled: ring.stalled,\n				anchored: ring.anchored,\n				epoch: input.epoch\n			};\n			input.port.postMessage(state);\n		}\n		const stalled = read < output[0].length;\n		this.#stateFrames += output[0].length;\n		if (this.#stateFrames >= sampleRate / 20 || this.#mix.mode !== this.#lastMode || stalled !== this.#lastStalled || this.#mix.effectiveLevels !== this.#lastLevels) {\n			this.#stateFrames = 0;\n			this.#lastMode = this.#mix.mode;\n			this.#lastStalled = stalled;\n			this.#lastLevels = this.#mix.effectiveLevels;\n			this.port.postMessage({\n				type: \"mix-state\",\n				mode: this.#mix.mode,\n				levels: this.#mix.effectiveLevels,\n				timestamp: this.#mix.timestamp,\n				stalled\n			});\n		}\n		return true;\n	}\n};\n//#endregion\n//#region src/audio/render-worklet.ts\nvar Render = class extends AudioWorkletProcessor {\n	#backend;\n	#underflow = 0;\n	#stateCounter = 0;\n	#epoch = 0;\n	constructor() {\n		super();\n		this.port.onmessage = (event) => {\n			const msg = event.data;\n			if (msg.type === \"init-shared\") {\n				console.log(\"[audio-worklet] init-shared: using SharedArrayBuffer path\");\n				const previous = this.#backend instanceof SharedRingBuffer ? this.#backend : void 0;\n				this.#backend = new SharedRingBuffer(msg, previous);\n				this.#underflow = 0;\n			} else if (msg.type === \"init-post\") {\n				console.log(\"[audio-worklet] init-post: using postMessage path\");\n				this.#backend = new AudioRingBuffer(msg);\n				this.#underflow = 0;\n			} else if (msg.type === \"data\") {\n				if (this.#backend instanceof AudioRingBuffer) this.#backend.write(msg.timestamp, msg.data);\n			} else if (msg.type === \"latency\") {\n				if (this.#backend instanceof AudioRingBuffer) this.#backend.resize(msg.latency);\n			} else if (msg.type === \"truncate\") {\n				if (this.#backend instanceof AudioRingBuffer) this.#backend.truncate(msg.timestamp);\n			} else if (msg.type === \"reset\") {\n				if (this.#backend instanceof AudioRingBuffer) this.#backend.reset();\n				this.#epoch = msg.epoch;\n			}\n		};\n	}\n	process(_inputs, outputs, _parameters) {\n		const output = outputs[0];\n		const backend = this.#backend;\n		const samplesRead = backend?.read(output) ?? 0;\n		if (samplesRead < output[0].length) this.#underflow += output[0].length - samplesRead;\n		else if (this.#underflow > 0 && backend) {\n			console.debug(`audio underflow: ${Math.round(1e3 * this.#underflow / backend.rate)}ms`);\n			this.#underflow = 0;\n		}\n		if (backend instanceof AudioRingBuffer) {\n			this.#stateCounter++;\n			if (this.#stateCounter >= 5) {\n				this.#stateCounter = 0;\n				const state = {\n					type: \"state\",\n					timestamp: backend.timestamp,\n					stalled: backend.stalled,\n					anchored: backend.anchored,\n					epoch: this.#epoch\n				};\n				this.port.postMessage(state);\n			}\n		}\n		return true;\n	}\n};\nregisterProcessor(\"render\", Render);\nregisterProcessor(\"mixer\", MixerRender);\n//#endregion\n"], { type: "application/javascript" }), F = URL.createObjectURL(be), xe = class {
+ 	#e = 0;
+ 	#t;
+ 	#n;
  	#r;
  	#i = 0;
  	#a;
@@ -76,9 +933,724 @@ index 7d76cf2..5b2caa0 100644
 +	#u() {
 +		this.#r = void 0, this.#a = void 0, this.#o = void 0, this.#s = void 0, this.#c = 0, this.#l = 0;
  	}
- }, we = class {
+-}, we = class {
++}, Se = class {
  	#e;
-@@ -1341,7 +1347,7 @@ function Y(e, t) {
+ 	constructor(e) {
+ 		this.#e = e;
+@@ -530,10 +563,11 @@ var N = class {
+ 	drop() {
+ 		return this.#e !== 0 && (this.#e--, !0);
+ 	}
+-}, Te = 3, P = class {
++}, Ce = 3, I = class {
+ 	in;
+ 	source;
+ 	sync;
++	renderer;
+ 	#e = {
+ 		context: new a(void 0),
+ 		root: new a(void 0),
+@@ -547,18 +581,18 @@ var N = class {
+ 	#t = new a([]);
+ 	#n;
+ 	#r = new a(void 0);
+-	#i = new Ce();
+-	#a = new ye();
++	#i = new xe();
++	#a = new ve();
+ 	#o = new i();
+ 	#s;
+ 	#c;
+ 	constructor(e) {
+-		this.in = { enabled: o(e?.enabled ?? !0) }, this.source = e.source, this.sync = e.sync, this.#o.cleanup(this.sync.register(this.source.out.jitter)), this.#s = this.#o.computed((e) => {
++		this.in = { enabled: o(e?.enabled ?? !0) }, this.source = e.source, this.sync = e.sync, this.renderer = e.renderer, this.#o.cleanup(this.sync.register(this.source.out.jitter)), this.#s = this.#o.computed((e) => {
+ 			let t = e.get(this.source.out.config);
+-			return t ? ge(t) : void 0;
++			return t ? he(t) : void 0;
+ 		}), this.#c = this.#o.computed((e) => {
+ 			let t = e.get(this.source.out.config);
+-			return t ? j(t) : void 0;
++			return t ? M(t) : void 0;
+ 		}), this.#o.run(this.#l.bind(this)), this.#o.run(this.#u.bind(this)), this.#o.run(this.#d.bind(this)), this.#o.run(this.#f.bind(this));
+ 	}
+ 	#l(e) {
+@@ -566,28 +600,39 @@ var N = class {
+ 		if (!t) return;
+ 		let n = e.get(this.#r) ?? t.sampleRate, i = t.numberOfChannels;
+ 		e.set(this.#e.sampleRate, n);
+-		let a = new AudioContext({
++		let a = this.renderer ? e.get(this.renderer.context) : new AudioContext({
+ 			latencyHint: "interactive",
+ 			sampleRate: n
+ 		});
+-		e.set(this.#e.context, a), e.cleanup(() => a.close()), e.spawn(async () => {
+-			if (!await e.race(a.audioWorklet.addModule(Se).then(() => !0))) return;
+-			let t = new AudioWorkletNode(a, "render", {
+-				channelCount: i,
+-				channelCountMode: "explicit",
+-				outputChannelCount: [i]
+-			});
+-			e.cleanup(() => t.disconnect());
+-			let o = this.sync.out.delay.peek(), s = M(n, o), c = this.sync.out.buffered.peek(), l = se(t, i, n, s, c);
++		!a || this.renderer && a.sampleRate !== n || (e.set(this.#e.context, a), this.renderer || e.cleanup(() => a.close()), e.spawn(async () => {
++			let t;
++			if (this.renderer) {
++				let n = e.get(this.renderer.root);
++				if (!n) return;
++				t = n;
++			} else {
++				if (!await e.race(a.audioWorklet.addModule(F).then(() => !0))) return;
++				t = new AudioWorkletNode(a, "render", {
++					channelCount: i,
++					channelCountMode: "explicit",
++					outputChannelCount: [i]
++				}), e.cleanup(() => t.disconnect());
++			}
++			let o = this.sync.out.delay.peek(), s = N(n, o), c = this.sync.out.buffered.peek(), l = this.renderer ? this.renderer.attach({
++				channels: i,
++				rate: n,
++				latencySamples: s,
++				buffered: c
++			}) : oe(t, i, n, s, c);
+ 			this.#n = l, e.cleanup(() => {
+ 				l.close(), this.#n = void 0;
+ 			}), e.run((e) => {
+ 				let t = r.Milli.fromMicro(e.get(l.timestamp));
+-				this.#e.timestamp.set(t), this.#b(t);
++				this.#e.timestamp.set(t), this.#x(t);
+ 			}), e.run((e) => {
+ 				this.#e.stalled.set(e.get(l.stalled));
+ 			}), e.set(this.#e.root, t);
+-		});
++		}));
+ 	}
+ 	#u(e) {
+ 		if (!e.get(this.in.enabled)) return;
+@@ -603,7 +648,7 @@ var N = class {
+ 		let t = this.#n;
+ 		if (!t) return;
+ 		let n = e.get(this.sync.out.delay);
+-		t.setLatency(M(t.rate, n));
++		t.setLatency(N(t.rate, n));
+ 	}
+ 	#f(e) {
+ 		if (!e.get(this.in.enabled) || e.get(this.sync.in.delay) === "instant") return;
+@@ -616,7 +661,7 @@ var N = class {
+ 		let i = r.decoder, a = t.relativeBroadcast(e, r.broadcast);
+ 		if (!a) return;
+ 		this.#a.opened();
+-		let o = _(e, {
++		let o = v(e, {
+ 			broadcast: a,
+ 			track: n,
+ 			priority: c.PRIORITY.audio,
+@@ -636,14 +681,14 @@ var N = class {
+ 			this.#e.buffered.update(() => u.mergeBufferedRanges(t, n));
+ 		}), e.spawn(async () => {
+ 			if (!await d.Libav.polyfill()) return;
+-			let t = new we(Te), i = new AudioDecoder({
++			let t = new Se(Ce), i = new AudioDecoder({
+ 				output: (e) => {
+ 					let n = this.#i.span(e);
+ 					if (t.drop()) {
+ 						e.close();
+ 						return;
+ 					}
+-					this.#_(e, n);
++					this.#v(e, n);
+ 				},
+ 				error: (e) => console.error("audio decoder error", e)
+ 			});
+@@ -659,15 +704,15 @@ var N = class {
+ 			i.configure(s);
+ 			let c = this.#h(), l;
+ 			for (;;) {
+-				let t = await v(o);
+-				if ((t === void 0 || t.end !== void 0 || t.discontinuity !== (l ?? t.discontinuity)) && !await this.#g(e, i, s, c, c.flush())) return;
++				let t = await y(o);
++				if ((t === void 0 || t.end !== void 0 || t.discontinuity !== (l ?? t.discontinuity)) && !await this.#_(e, i, s, c, c.flush())) return;
+ 				if (!t) break;
+ 				if (l = t.discontinuity, t.frame === void 0 || t.end !== void 0) {
+-					this.#x(t) && (i.reset(), i.configure(s), c.reset());
++					this.#S(t) && (i.reset(), i.configure(s), c.reset());
+ 					continue;
+ 				}
+ 				let { frame: n } = t, a = r.Milli.fromMicro(n.timestamp);
+-				if (this.sync.received(a, "audio"), this.#e.stats.update((e) => ({ bytesReceived: (e?.bytesReceived ?? 0) + n.payload.byteLength })), !await this.#g(e, i, s, c, c.push({
++				if (this.#g(a), this.#e.stats.update((e) => ({ bytesReceived: (e?.bytesReceived ?? 0) + n.payload.byteLength })), !await this.#_(e, i, s, c, c.push({
+ 					...t,
+ 					frame: n
+ 				}))) return;
+@@ -676,7 +721,7 @@ var N = class {
+ 	}
+ 	#m(e, t, n) {
+ 		if (n.container.kind !== "cmaf") return;
+-		let i = g(n.container.init), a = u.Cmaf.decodeInitSegment(i), o = n.description ? d.Hex.toBytes(n.description) : a.description, s = n.codec === "opus" && o ? d.Opus.preSkip(o) : 0;
++		let i = _(n.container.init), a = u.Cmaf.decodeInitSegment(i), o = n.description ? d.Hex.toBytes(n.description) : a.description, s = n.codec === "opus" && o ? d.Opus.preSkip(o) : 0;
+ 		this.#i.clear(s);
+ 		let c = n.codec === "opus" ? void 0 : n.description ? d.Hex.toBytes(n.description) : a.description, l = new u.Consumer(t, {
+ 			format: new u.Cmaf.Format(a),
+@@ -688,7 +733,7 @@ var N = class {
+ 		}), e.spawn(async () => {
+ 			if (!await d.Libav.polyfill()) return;
+ 			let t = new AudioDecoder({
+-				output: (e) => this.#_(e),
++				output: (e) => this.#v(e),
+ 				error: (e) => console.error("audio decoder error", e)
+ 			});
+ 			e.cleanup(() => {
+@@ -703,15 +748,15 @@ var N = class {
+ 			t.configure(i);
+ 			let a = this.#h(), o;
+ 			for (;;) {
+-				let n = await v(l);
+-				if ((n === void 0 || n.end !== void 0 || n.discontinuity !== (o ?? n.discontinuity)) && !await this.#g(e, t, i, a, a.flush())) return;
++				let n = await y(l);
++				if ((n === void 0 || n.end !== void 0 || n.discontinuity !== (o ?? n.discontinuity)) && !await this.#_(e, t, i, a, a.flush())) return;
+ 				if (!n) break;
+ 				if (o = n.discontinuity, n.frame === void 0) {
+-					this.#x(n) && (t.reset(), t.configure(i), a.reset());
++					this.#S(n) && (t.reset(), t.configure(i), a.reset());
+ 					continue;
+ 				}
+ 				let { frame: s } = n, c = r.Milli.fromMicro(s.timestamp);
+-				if (this.sync.received(c, "audio"), this.#e.stats.update((e) => ({ bytesReceived: (e?.bytesReceived ?? 0) + s.payload.byteLength })), !await this.#g(e, t, i, a, a.push({
++				if (this.#g(c), this.#e.stats.update((e) => ({ bytesReceived: (e?.bytesReceived ?? 0) + s.payload.byteLength })), !await this.#_(e, t, i, a, a.push({
+ 					...n,
+ 					frame: s
+ 				}))) return;
+@@ -719,14 +764,17 @@ var N = class {
+ 		});
+ 	}
+ 	#h() {
+-		return this.sync.out.buffered.peek() ? new N(() => ({
++		return this.sync.out.buffered.peek() ? new P(() => ({
+ 			floor: r.Micro.fromMilli(this.sync.out.delay.peek()),
+ 			maxDelay: r.Micro.fromMilli(this.sync.out.maxAge.peek())
+-		})) : new N(void 0);
++		})) : new P(void 0);
++	}
++	#g(e) {
++		this.renderer ? this.renderer.received(e) : this.sync.received(e, "audio");
+ 	}
+-	async #g(e, t, n, r, i) {
++	async #_(e, t, n, r, i) {
+ 		for (let a of i) {
+-			if (this.#x(a) && (t.reset(), t.configure(n), r.reset()), !r.admit(a)) continue;
++			if (this.#S(a) && (t.reset(), t.configure(n), r.reset()), !r.admit(a)) continue;
+ 			let { frame: i } = a;
+ 			if (await this.#n?.wait(i.timestamp, e.abort), t.state === "closed") return !1;
+ 			t.decode(new EncodedAudioChunk({
+@@ -737,7 +785,7 @@ var N = class {
+ 		}
+ 		return !0;
+ 	}
+-	#_(e, t = this.#i.span(e)) {
++	#v(e, t = this.#i.span(e)) {
+ 		let { timestamp: n, frameOffset: i, frames: a } = t, o = r.Milli.fromMicro(n);
+ 		if (a === 0) {
+ 			e.close();
+@@ -753,7 +801,7 @@ var N = class {
+ 			return;
+ 		}
+ 		let c = a / e.sampleRate * 1e6, l = r.Milli.fromMicro(c), u = r.Milli.add(o, l);
+-		this.#a.takeover() && (s.truncate(n), this.#y(o)), this.#v(o, u);
++		this.#a.takeover() && (s.truncate(n), this.#b(o)), this.#y(o, u);
+ 		let d = Math.min(e.numberOfChannels, s.channels), f = [];
+ 		for (let t = 0; t < d; t++) {
+ 			let n = new Float32Array(a);
+@@ -766,7 +814,7 @@ var N = class {
+ 		}
+ 		s.insert(n, f), e.close();
+ 	}
+-	#v(e, t) {
++	#y(e, t) {
+ 		e > t || this.#t.mutate((n) => {
+ 			for (let i of n) if (e <= i.end + 1 && t >= i.start) {
+ 				i.start = r.Milli.min(i.start, e), i.end = r.Milli.max(i.end, t);
+@@ -778,14 +826,14 @@ var N = class {
+ 			}), n.sort((e, t) => e.start - t.start);
+ 		});
+ 	}
+-	#y(e) {
++	#b(e) {
+ 		this.#t.mutate((t) => {
+ 			for (; t.length > 0 && t[t.length - 1].start >= e;) t.pop();
+ 			let n = t[t.length - 1];
+ 			n && n.end > e && (n.end = e);
+ 		});
+ 	}
+-	#b(e) {
++	#x(e) {
+ 		this.#t.mutate((t) => {
+ 			for (; t.length > 0;) {
+ 				if (t[0].end >= e) {
+@@ -799,15 +847,15 @@ var N = class {
+ 	reset() {
+ 		this.#n?.reset();
+ 	}
+-	#x(e) {
+-		return this.#i.update(e) ? (this.#n?.reset(), this.sync.reset(), !0) : !1;
++	#S(e) {
++		return this.#i.update(e) ? (this.#n?.reset(), this.renderer ? this.renderer.discontinuity() : this.sync.reset(), !0) : !1;
+ 	}
+ 	close() {
+ 		this.#o.close();
+ 	}
+-	static supported = Ee;
++	static supported = we;
+ };
+-async function Ee(e) {
++async function we(e) {
+ 	if (!c.containerSupported(e.container)) {
+ 		let t = e.container.kind === "unknown" ? e.container.raw.kind : e.container.kind;
+ 		return console.warn(`audio: ignoring rendition with unknown container: ${t}`), !1;
+@@ -817,7 +865,7 @@ async function Ee(e) {
+ 	if (e.codec !== "opus") {
+ 		if (e.description) t = d.Hex.toBytes(e.description);
+ 		else if (e.container.kind === "cmaf") try {
+-			t = u.Cmaf.decodeInitSegment(g(e.container.init)).description;
++			t = u.Cmaf.decodeInitSegment(_(e.container.init)).description;
+ 		} catch (t) {
+ 			return console.warn(`audio: malformed CMAF init segment for codec ${e.codec}`, t), !1;
+ 		}
+@@ -829,7 +877,7 @@ async function Ee(e) {
+ }
+ //#endregion
+ //#region src/audio/emitter.ts
+-var F = .001, I = .2, L = class {
++var L = .001, R = .2, z = class {
+ 	source;
+ 	in;
+ 	#e = { enabled: new a(!1) };
+@@ -856,16 +904,17 @@ var F = .001, I = .2, L = class {
+ 			if (!t) return;
+ 			e.cleanup(() => t.gain.cancelScheduledValues(t.context.currentTime));
+ 			let n = e.get(this.in.volume);
+-			n < F ? (t.gain.exponentialRampToValueAtTime(F, t.context.currentTime + I), t.gain.setValueAtTime(0, t.context.currentTime + I + .01)) : t.gain.exponentialRampToValueAtTime(n, t.context.currentTime + I);
++			n < L ? (t.gain.exponentialRampToValueAtTime(L, t.context.currentTime + R), t.gain.setValueAtTime(0, t.context.currentTime + R + .01)) : t.gain.exponentialRampToValueAtTime(n, t.context.currentTime + R);
+ 		});
+ 	}
+ 	close() {
+ 		this.#t.close();
+ 	}
+-}, R = class {
++}, B = class {
+ 	in;
+ 	#e = {
+ 		catalog: new a(void 0),
++		probed: new a(!1),
+ 		available: new a({}),
+ 		track: new a(void 0),
+ 		config: new a(void 0),
+@@ -887,6 +936,7 @@ var F = .001, I = .2, L = class {
+ 		n && e.set(this.#e.catalog, n);
+ 	}
+ 	#r(e) {
++		e.set(this.#e.probed, !1, !1);
+ 		let t = e.get(this.#e.catalog)?.renditions ?? {}, n = e.get(this.in.supported);
+ 		n && e.spawn(async () => {
+ 			let r = {};
+@@ -895,7 +945,7 @@ var F = .001, I = .2, L = class {
+ 				if (e.abort.aborted) return;
+ 				t && (r[i] = a);
+ 			}
+-			Object.keys(r).length === 0 && Object.keys(t).length > 0 && console.warn("no supported audio renditions found:", t), this.#e.available.set(r);
++			Object.keys(r).length === 0 && Object.keys(t).length > 0 && console.warn("no supported audio renditions found:", t), this.#e.available.set(r), this.#e.probed.set(!0);
+ 		});
+ 	}
+ 	#i(e) {
+@@ -907,7 +957,7 @@ var F = .001, I = .2, L = class {
+ 			config: t[n.name]
+ 		};
+ 		else if (r = this.#a(t), !r) return;
+-		e.set(this.#e.track, r.track), e.set(this.#e.config, r.config), e.set(this.#e.jitter, _e(r.config));
++		e.set(this.#e.track, r.track), e.set(this.#e.config, r.config), e.set(this.#e.jitter, ge(r.config));
+ 	}
+ 	#a(e) {
+ 		let t = Object.entries(e);
+@@ -929,20 +979,20 @@ var F = .001, I = .2, L = class {
+ 	close() {
+ 		this.#t.close();
+ 	}
+-}, De = 48e3, z = 2;
+-function Oe(e) {
++}, Te = 48e3, V = 2;
++function Ee(e) {
+ 	let t = "";
+ 	for (let n = 0; n < e.length; n++) t += e[n].toString(16).padStart(2, "0");
+ 	return t;
+ }
+-function B(e) {
++function H(e) {
+ 	let t;
+ 	try {
+-		t = e.initData ? g(e.initData) : void 0;
++		t = e.initData ? _(e.initData) : void 0;
+ 	} catch {
+ 		t = void 0;
+ 	}
+-	let n = t ? Oe(t) : void 0;
++	let n = t ? Ee(t) : void 0;
+ 	switch (e.packaging) {
+ 		case "cmaf": return !e.initData || !t ? void 0 : {
+ 			container: {
+@@ -962,12 +1012,12 @@ function B(e) {
+ 		default: return;
+ 	}
+ }
+-function V(e) {
++function U(e) {
+ 	if (!(e <= 0)) return l(Math.ceil(e));
+ }
+-function ke(e) {
++function De(e) {
+ 	if (!e.codec) return;
+-	let t = B(e);
++	let t = H(e);
+ 	if (!t) return;
+ 	let { container: n, description: r } = t;
+ 	return {
+@@ -980,36 +1030,36 @@ function ke(e) {
+ 		bitrate: e.bitrate == null ? void 0 : l(e.bitrate),
+ 		stalled: e.stalled,
+ 		jitter: e.jitter == null ? void 0 : l(e.jitter),
+-		delay: e.delay == null ? void 0 : V(e.delay)
++		delay: e.delay == null ? void 0 : U(e.delay)
+ 	};
+ }
+-function Ae(e) {
++function Oe(e) {
+ 	if (!e.codec) return;
+ 	let t = (() => {
+-		if (!e.channelConfig) return z;
++		if (!e.channelConfig) return V;
+ 		let t = Number.parseInt(e.channelConfig, 10);
+-		return Number.isFinite(t) ? t : z;
+-	})(), n = B(e);
++		return Number.isFinite(t) ? t : V;
++	})(), n = H(e);
+ 	if (!n) return;
+ 	let { container: r, description: i } = n;
+ 	return {
+ 		codec: e.codec,
+ 		container: r,
+ 		description: i,
+-		sampleRate: l(e.samplerate ?? De),
++		sampleRate: l(e.samplerate ?? Te),
+ 		numberOfChannels: l(t),
+ 		bitrate: e.bitrate == null ? void 0 : l(e.bitrate),
+ 		jitter: e.jitter == null ? void 0 : l(e.jitter),
+-		delay: e.delay == null ? void 0 : V(e.delay)
++		delay: e.delay == null ? void 0 : U(e.delay)
+ 	};
+ }
+-function je(e) {
++function ke(e) {
+ 	let t = {}, n = {};
+ 	for (let r of e.tracks) if (r.role === "video") {
+-		let e = ke(r);
++		let e = De(r);
+ 		e && (t[r.name] = e);
+ 	} else if (r.role === "audio") {
+-		let e = Ae(r);
++		let e = Oe(r);
+ 		e && (n[r.name] = e);
+ 	}
+ 	let r = {};
+@@ -1017,39 +1067,39 @@ function je(e) {
+ }
+ //#endregion
+ //#region src/broadcast.ts
+-function H(e, t) {
++function W(e, t) {
+ 	return Object.fromEntries(Object.entries(e).filter(([, e]) => t(e.broadcast)));
+ }
+-function Me(e, t) {
++function Ae(e, t) {
+ 	return {
+ 		...e,
+ 		video: e.video ? {
+ 			...e.video,
+-			renditions: H(e.video.renditions, t)
++			renditions: W(e.video.renditions, t)
+ 		} : void 0,
+ 		audio: e.audio ? {
+ 			...e.audio,
+-			renditions: H(e.audio.renditions, t)
++			renditions: W(e.audio.renditions, t)
+ 		} : void 0,
+ 		text: e.text ? {
+ 			...e.text,
+-			renditions: H(e.text.renditions, t)
++			renditions: W(e.text.renditions, t)
+ 		} : void 0,
+ 		json: e.json ? {
+ 			...e.json,
+-			tracks: H(e.json.tracks, t)
++			tracks: W(e.json.tracks, t)
+ 		} : void 0,
+ 		binary: e.binary ? {
+ 			...e.binary,
+-			tracks: H(e.binary.tracks, t)
++			tracks: W(e.binary.tracks, t)
+ 		} : void 0
+ 	};
+ }
+-var Ne = [
++var je = [
+ 	...c.FORMATS,
+ 	"hangz",
+ 	"manual"
+-], U = class {
++], G = class {
+ 	in;
+ 	#e = {
+ 		status: new a("offline"),
+@@ -1089,7 +1139,7 @@ var Ne = [
+ 	}
+ 	#o(e) {
+ 		let t = e.get(this.#r);
+-		e.set(this.#e.catalog, t ? Me(t, (t) => this.#d(e, t) !== void 0) : void 0);
++		e.set(this.#e.catalog, t ? Ae(t, (t) => this.#d(e, t) !== void 0) : void 0);
+ 	}
+ 	#s(e, t) {
+ 		this.#n.set(!0);
+@@ -1147,7 +1197,7 @@ var Ne = [
+ 			let e = s.ordered();
+ 			l = async () => {
+ 				let t = await p.fetch(e);
+-				return t ? je(t) : void 0;
++				return t ? ke(t) : void 0;
+ 			};
+ 		}
+ 		e.spawn(async () => {
+@@ -1189,12 +1239,177 @@ var Ne = [
+ 	close() {
+ 		this.#i.close();
+ 	}
+-}, Pe = r.Milli(20), W = r.Milli(100), G = class e {
++}, K = class {
++	in;
++	main;
++	#e = {
++		mode: new a("main"),
++		reason: new a(void 0),
++		timestamp: new a(void 0),
++		stalled: new a(!0),
++		stats: new a(void 0),
++		bitrate: new a(0),
++		levels: new a(void 0)
++	};
++	out = s(this.#e);
++	#t = new a(void 0);
++	#n = new a(void 0);
++	#r = new a(0);
++	#i = new a(!1);
++	#a = new a(void 0);
++	#o = new a([]);
++	#s = new i();
++	#c = 0;
++	#l = new a(0);
++	constructor(e) {
++		this.in = s({
++			enabled: o(e.enabled ?? !0),
++			stems: o(e.stems),
++			mix: o(e.mix)
++		}), this.main = new I({
++			source: e.source,
++			sync: e.sync,
++			enabled: this.#i,
++			renderer: this.#u("main")
++		}), this.#s.cleanup(() => this.main.close());
++		let t = this.#s.computed((t) => {
++			let n = t.get(e.source.out.config);
++			if (n) return {
++				sampleRate: t.get(this.main.out.sampleRate) ?? n.sampleRate,
++				channels: n.numberOfChannels,
++				name: t.get(e.broadcast.in.name),
++				origin: t.get(e.broadcast.in.origin)
++			};
++		});
++		this.#s.run((e) => {
++			let n = e.get(t);
++			if (!n) return;
++			let r = new AudioContext({
++				latencyHint: "interactive",
++				sampleRate: n.sampleRate
++			});
++			e.set(this.#t, r), e.cleanup(() => r.close());
++		}), this.#s.run((e) => {
++			let n = e.get(this.#t), i = e.get(t);
++			e.get(this.#r), !(!n || !i) && (e.set(this.#e.mode, "main", "main"), e.set(this.#e.stalled, !0, !0), e.set(this.#e.levels, void 0), e.set(this.#e.timestamp, void 0), e.spawn(async () => {
++				if (!await e.race(n.audioWorklet.addModule(F).then(() => !0))) return;
++				let t = new AudioWorkletNode(n, "mixer", { outputChannelCount: [i.channels] });
++				e.set(this.#n, t), e.cleanup(() => {
++					t.disconnect(), t.port.close();
++				}), e.event(t.port, "message", (e) => {
++					let t = e.data;
++					t.type === "mix-state" && (this.#e.mode.set(t.mode), this.#e.stalled.set(t.stalled), this.#e.timestamp.set(r.Milli.fromMicro(t.timestamp)), this.#e.levels.set(t.levels ? Object.fromEntries(Object.entries(t.levels).map(([e, t]) => [Number(e.slice(1)), t])) : void 0));
++				}), t.port.start();
++			}));
++		});
++		let n, i, a;
++		this.#s.run((t) => {
++			let r = t.get(e.broadcast.in.name), o = t.get(e.broadcast.in.origin), s = t.get(this.in.mix);
++			n !== void 0 && (r !== n || o !== i) && (a = s), n = r, i = o, this.#a.set(s === a ? void 0 : s);
++		});
++		let c = this.#s.computed((t) => {
++			let n = t.get(this.#a);
++			if (!n) return;
++			let r = t.get(this.in.stems) ?? [];
++			return r.length < 1 || r.length > 2 || Object.keys(n).length !== r.length || r.some((e) => !Number.isInteger(e.alternateGroup) || e.alternateGroup < 1 || e.alternateGroup > 65535 || !Number.isFinite(n[e.alternateGroup]) || n[e.alternateGroup] < 0 || n[e.alternateGroup] > 1) || new Set(r.map((e) => e.alternateGroup)).size !== r.length ? { reason: "unavailable" } : t.get(e.source.out.config)?.sampleRate !== 48e3 || (t.get(this.main.out.sampleRate) ?? 48e3) !== 48e3 ? { reason: "unsupported" } : { stems: r.map(({ alternateGroup: e, name: t }) => ({
++				alternateGroup: e,
++				name: t
++			})) };
++		}), l, u = this.#s.computed((e) => {
++			let t = e.get(c)?.stems, n = e.get(this.#e.mode);
++			if (t && (!l || n === "main" || JSON.stringify(t) === JSON.stringify(l)) && (l = t), t || n !== "main") return l;
++		});
++		this.#s.run((n) => {
++			let r = n.get(u);
++			if (!r) return;
++			let i = [];
++			for (let a of r) {
++				let r = new G({
++					origin: e.broadcast.in.origin,
++					enabled: this.in.enabled,
++					announced: e.broadcast.in.announced,
++					name: a.name
++				}), o = new B({
++					broadcast: r,
++					supported: n.computed((e) => {
++						let n = e.get(t)?.channels ?? 0;
++						return async (e) => e.sampleRate === 48e3 && e.numberOfChannels <= n && await I.supported(e);
++					})
++				}), s = new I({
++					source: o,
++					sync: e.sync,
++					enabled: this.in.enabled,
++					renderer: this.#u(`g${a.alternateGroup}`)
++				});
++				i.push({
++					group: a.alternateGroup,
++					decoder: s
++				}), n.cleanup(() => {
++					this.#l.update((e) => e + (s.out.stats.peek()?.bytesReceived ?? 0)), s.close(), o.close(), r.close();
++				});
++			}
++			n.set(this.#o, i, []);
++		}), this.#s.run((e) => {
++			let t = e.get(this.in.enabled), n = e.get(c), r = n?.stems, i = e.get(this.#o), a = e.get(u), o = !!r && JSON.stringify(r) !== JSON.stringify(a), s = i.some(({ group: t, decoder: n }) => {
++				if (!(this.#a.peek()?.[t] ?? 0)) return !1;
++				let r = e.get(n.out.sampleRate);
++				return r !== void 0 && r !== 48e3 || e.get(n.source.out.catalog) !== void 0 && e.get(n.source.out.probed) && Object.keys(e.get(n.source.out.available)).length === 0;
++			}), l = e.get(this.#a), d = e.get(this.#n), f = e.get(this.#e.mode), p = e.get(this.#e.stalled);
++			if (this.#i.set(t && (f !== "stems" || !r || p || s || o)), !d) return;
++			let m = r && l && !s && !o && !p ? Object.fromEntries(r.map((e) => [`g${e.alternateGroup}`, l[e.alternateGroup]])) : void 0;
++			d.port.postMessage({
++				type: "mix",
++				levels: m
++			}), this.#e.reason.set(l ? n?.reason ?? (s ? "unsupported" : f === "stems" && !p ? void 0 : "buffering") : f === "loading" ? "buffering" : void 0);
++		}), this.#s.run((e) => {
++			let t = e.get(this.in.enabled), n = [this.main, ...e.get(this.#o).map((e) => e.decoder)], r = 0, i = e.get(this.#l);
++			for (let a of n) i += e.get(a.out.stats)?.bytesReceived ?? 0, t && e.get(a.in.enabled) && (r += e.get(a.source.out.config)?.bitrate ?? 0);
++			this.#e.bitrate.set(r), this.#e.stats.set({ bytesReceived: i });
++		});
++	}
++	#u(e) {
++		return {
++			context: this.#t,
++			root: this.#n,
++			received: (t) => {
++				e === "main" && this.#e.levels.peek() === void 0 && this.main.sync.received(t, "audio");
++			},
++			discontinuity: () => {
++				e === "main" && this.#e.levels.peek() === void 0 && (this.main.sync.reset(), this.reset());
++			},
++			attach: ({ channels: t, rate: n, latencySamples: r, buffered: i }) => {
++				let a = this.#n.peek();
++				if (!a) throw Error("mixer renderer is not ready");
++				let o = new MessageChannel(), s = ++this.#c;
++				a.port.postMessage({
++					type: "attach",
++					id: e,
++					port: o.port2,
++					generation: s
++				}, [o.port2]);
++				let c = oe({ port: o.port1 }, t, n, r, i), l = c.close.bind(c);
++				return c.close = () => {
++					l(), o.port1.close(), a.port.postMessage({
++						type: "detach",
++						id: e,
++						generation: s
++					});
++				}, c;
++			}
++		};
++	}
++	reset() {
++		this.#r.update((e) => e + 1);
++	}
++	close() {
++		this.#s.close();
++	}
++}, Me = r.Milli(20), q = r.Milli(100), J = class e {
+ 	in;
+ 	#e = {
+ 		reference: new a(void 0),
+ 		delay: new a(r.Milli.zero),
+-		jitter: new a(W),
++		jitter: new a(q),
+ 		timestamp: new a(void 0),
+ 		buffered: new a(!1),
+ 		maxAge: new a(r.Milli.zero)
+@@ -1232,11 +1447,11 @@ var Ne = [
+ 		let n = e.get(this.in.probe)?.rtt;
+ 		if (n !== void 0) {
+ 			this.#n = this.#n === void 0 ? n : Math.min(this.#n, n);
+-			let e = r.Milli(Math.max(Pe, this.#n * 1.25));
++			let e = r.Milli(Math.max(Me, this.#n * 1.25));
+ 			this.#e.jitter.set(e);
+ 			return;
+ 		}
+-		this.#n = void 0, this.#e.jitter.set(W);
++		this.#n = void 0, this.#e.jitter.set(q);
+ 	}
+ 	#s(e) {
+ 		let t = e.get(this.in.delay);
+@@ -1316,16 +1531,16 @@ var Ne = [
+ 	close() {
+ 		this.#i.close();
+ 	}
+-}, Fe = ":where([part=captions]){--overlay-padding:1%;--cue-color:white;--cue-bg-color:#000c;--cue-font-size:calc(var(--overlay-height) / 100 * 5);--cue-line-height:calc(var(--cue-font-size) * 1.2);--cue-padding-x:calc(var(--cue-font-size) * .6);--cue-padding-y:calc(var(--cue-font-size) * .4);z-index:1;contain:content;margin:var(--overlay-padding);font-size:var(--cue-font-size);box-sizing:border-box;pointer-events:none;user-select:none;word-spacing:normal;word-break:break-word;font-family:sans-serif;position:absolute;inset:0}:where([part=captions]>[part=cue-display]){contain:content;top:var(--cue-top);left:var(--cue-left);right:var(--cue-right);bottom:var(--cue-bottom);width:var(--cue-width,auto);height:var(--cue-height,auto);box-sizing:border-box;transform:var(--cue-transform);text-align:var(--cue-text-align);writing-mode:var(--cue-writing-mode,unset);white-space:pre-line;direction:ltr;unicode-bidi:plaintext;min-width:min-content;min-height:min-content;position:absolute;overflow:visible}:where([data-dir=rtl] [part=cue-display]){direction:rtl}:where([part=captions] [part=cue]){padding:var(--cue-padding-y) var(--cue-padding-x);line-height:var(--cue-line-height);background-color:var(--cue-bg-color);box-sizing:border-box;color:var(--cue-color);box-shadow:var(--cue-box-shadow);white-space:var(--cue-white-space,pre-wrap);outline:var(--cue-outline);text-shadow:var(--cue-text-shadow);display:inline-block}:where([part=captions] [part=cue-display][data-vertical] [part=cue]){padding:var(--cue-padding-x) var(--cue-padding-y)}\n:where([part=captions] [part=region]){width:var(--region-width);height:var(--region-height);min-height:0;max-height:var(--region-height);writing-mode:horizontal-tb;top:calc(var(--region-top,var(--overlay-height) * var(--region-viewport-anchor-y) / 100 - var(--region-height) * var(--region-anchor-y) / 100));left:var(--region-left,calc(calc(var(--region-viewport-anchor-x) * 1%) - calc(var(--region-width) * var(--region-anchor-x) / 100)));right:var(--region-right);bottom:var(--region-bottom);overflow-wrap:break-word;box-sizing:border-box;flex-flow:column;justify-content:flex-start;display:inline-flex;position:absolute;overflow:hidden}:where([part=captions] [part=region][data-scroll=up]){justify-content:end}:where([part=captions] [part=region][data-active][data-scroll=up]){transition:top .433s}:where([part=captions] [part=region]>[part=cue-display]){width:auto;left:var(--cue-offset);height:var(--cue-height,auto);text-align:var(--cue-text-align);unicode-bidi:plaintext;margin-top:1px;position:relative}:where([part=captions] [part=region] [part=cue]){padding:calc(var(--cue-padding-y) / 2) var(--cue-padding-x);border-radius:0;position:relative}", Ie = r.Milli(3e4), Le = r.Milli(3e4), Re = r.Milli(1e3);
+-function K(e) {
++}, Ne = ":where([part=captions]){--overlay-padding:1%;--cue-color:white;--cue-bg-color:#000c;--cue-font-size:calc(var(--overlay-height) / 100 * 5);--cue-line-height:calc(var(--cue-font-size) * 1.2);--cue-padding-x:calc(var(--cue-font-size) * .6);--cue-padding-y:calc(var(--cue-font-size) * .4);z-index:1;contain:content;margin:var(--overlay-padding);font-size:var(--cue-font-size);box-sizing:border-box;pointer-events:none;user-select:none;word-spacing:normal;word-break:break-word;font-family:sans-serif;position:absolute;inset:0}:where([part=captions]>[part=cue-display]){contain:content;top:var(--cue-top);left:var(--cue-left);right:var(--cue-right);bottom:var(--cue-bottom);width:var(--cue-width,auto);height:var(--cue-height,auto);box-sizing:border-box;transform:var(--cue-transform);text-align:var(--cue-text-align);writing-mode:var(--cue-writing-mode,unset);white-space:pre-line;direction:ltr;unicode-bidi:plaintext;min-width:min-content;min-height:min-content;position:absolute;overflow:visible}:where([data-dir=rtl] [part=cue-display]){direction:rtl}:where([part=captions] [part=cue]){padding:var(--cue-padding-y) var(--cue-padding-x);line-height:var(--cue-line-height);background-color:var(--cue-bg-color);box-sizing:border-box;color:var(--cue-color);box-shadow:var(--cue-box-shadow);white-space:var(--cue-white-space,pre-wrap);outline:var(--cue-outline);text-shadow:var(--cue-text-shadow);display:inline-block}:where([part=captions] [part=cue-display][data-vertical] [part=cue]){padding:var(--cue-padding-x) var(--cue-padding-y)}\n:where([part=captions] [part=region]){width:var(--region-width);height:var(--region-height);min-height:0;max-height:var(--region-height);writing-mode:horizontal-tb;top:calc(var(--region-top,var(--overlay-height) * var(--region-viewport-anchor-y) / 100 - var(--region-height) * var(--region-anchor-y) / 100));left:var(--region-left,calc(calc(var(--region-viewport-anchor-x) * 1%) - calc(var(--region-width) * var(--region-anchor-x) / 100)));right:var(--region-right);bottom:var(--region-bottom);overflow-wrap:break-word;box-sizing:border-box;flex-flow:column;justify-content:flex-start;display:inline-flex;position:absolute;overflow:hidden}:where([part=captions] [part=region][data-scroll=up]){justify-content:end}:where([part=captions] [part=region][data-active][data-scroll=up]){transition:top .433s}:where([part=captions] [part=region]>[part=cue-display]){width:auto;left:var(--cue-offset);height:var(--cue-height,auto);text-align:var(--cue-text-align);unicode-bidi:plaintext;margin-top:1px;position:relative}:where([part=captions] [part=region] [part=cue]){padding:calc(var(--cue-padding-y) / 2) var(--cue-padding-x);border-radius:0;position:relative}", Pe = r.Milli(3e4), Fe = r.Milli(3e4), Ie = r.Milli(1e3);
++function Y(e) {
+ 	return e.replaceAll("&", "&amp;amp;").replaceAll("<", "&amp;lt;").replaceAll(">", "&amp;gt;").replaceAll("\"", "&amp;quot;");
+ }
+-function q(e, t) {
++function X(e, t) {
+ 	let n = e.length;
+ 	for (; n > 0 && e[n - 1].startTime > t.startTime;) n--;
+ 	e.splice(n, 0, t);
+ }
+-function J(e, t) {
++function Le(e, t) {
+ 	let { cues: n, clears: r } = e, i = 0;
+ 	for (let e of r) e >= t && (r[i++] = e);
+ 	r.length = i;
+@@ -1333,7 +1548,7 @@ function J(e, t) {
+ 	for (let e of n) e.endTime >= t && (n[a++] = e);
+ 	return a !== n.length && (n.length = a, !0);
+ }
+-function Y(e, t) {
++function Re(e, t) {
+ 	let { cues: n, clears: r } = e, i = n.indexOf(t), a = i > 0 ? n[i - 1] : void 0;
+ 	a && a.endTime > t.startTime && (a.endTime = t.startTime);
+ 	let o = n[i + 1];
+@@ -1341,7 +1556,7 @@ function Y(e, t) {
  	let s = r.find((e) => e > t.startTime);
  	s !== void 0 && t.endTime > s && (t.endTime = s);
  }
@@ -87,7 +1659,7 @@ index 7d76cf2..5b2caa0 100644
  	let { cues: n, clears: r } = e, i = r.length;
  	for (; i > 0 && r[i - 1] > t;) i--;
  	r[i] !== t && r.splice(i, 0, t);
-@@ -1353,7 +1359,7 @@ function X(e, t) {
+@@ -1353,7 +1568,7 @@ function X(e, t) {
  		}
  	}
  }
@@ -96,7 +1668,70 @@ index 7d76cf2..5b2caa0 100644
  	source;
  	sync;
  	in;
-@@ -1436,7 +1442,7 @@ var ze = class {
+@@ -1385,32 +1600,32 @@ var ze = class {
+ 			return;
+ 		}
+ 		let f = document.createElement("style");
+-		f.textContent = Fe, i.appendChild(f), e.cleanup(() => f.remove());
++		f.textContent = Ne, i.appendChild(f), e.cleanup(() => f.remove());
+ 		let p = document.createElement("div");
+ 		p.style.position = "absolute", p.style.inset = "0", p.style.pointerEvents = "none", i.appendChild(p), e.cleanup(() => p.remove());
+-		let m = new ee(p);
+-		e.cleanup(() => m.destroy());
+-		let h = _(e, {
++		let h = new m(p);
++		e.cleanup(() => h.destroy());
++		let g = v(e, {
+ 			broadcast: l,
+ 			track: a,
+ 			priority: c.PRIORITY.text,
+ 			maxAge: this.sync.out.maxAge
+ 		});
+-		if (!h) return;
+-		let g = {
++		if (!g) return;
++		let _ = {
+ 			cues: [],
+ 			regions: /* @__PURE__ */ new Map(),
+ 			clears: []
+-		}, v = () => m.changeTrack({
+-			cues: [...g.cues],
+-			regions: [...g.regions.values()]
+-		}), y = () => {
++		}, y = () => h.changeTrack({
++			cues: [..._.cues],
++			regions: [..._.regions.values()]
++		}), b = () => {
+ 			let t = this.sync.now();
+-			t !== void 0 && (m.currentTime = t / 1e3, J(g, (t - Ie) / 1e3) && v()), e.animate(y);
++			t !== void 0 && (h.currentTime = t / 1e3, Le(_, (t - Pe) / 1e3) && y()), e.animate(b);
+ 		};
+-		e.animate(y), e.spawn(async () => {
++		e.animate(b), e.spawn(async () => {
+ 			for (;;) {
+-				let n = await h.recvGroup().catch((e) => {
++				let n = await g.recvGroup().catch((e) => {
+ 					if (!(e instanceof t.Stream)) throw e;
+ 					console.debug("captions subscription ended", e);
+ 				});
+@@ -1420,14 +1635,14 @@ var ze = class {
+ 						for (;;) {
+ 							let e = await n.readFrame();
+ 							if (!e) break;
+-							for (let t of d.decode(e.payload)) await this.#r(o.format, t, g);
++							for (let t of d.decode(e.payload)) await this.#r(o.format, t, _);
+ 						}
+ 					} catch (e) {
+ 						if (!(e instanceof t.Stream)) throw e;
+ 					} finally {
+ 						n.close();
+ 					}
+-					v();
++					y();
+ 				});
+ 			}
+ 		});
+@@ -1436,34 +1651,34 @@ var ze = class {
  		let r = new TextDecoder().decode(t.payload), i = t.timestamp / 1e6;
  		if (e === "utf8") {
  			if (r.length === 0) {
@@ -104,8 +1739,28 @@ index 7d76cf2..5b2caa0 100644
 +				ze(n, i);
  				return;
  			}
- 			let e = new m(i, i + Le / 1e3, K(r));
-@@ -1459,11 +1465,11 @@ var ze = class {
+-			let e = new m(i, i + Le / 1e3, K(r));
+-			q(n.cues, e), Y(n, e);
++			let e = new h(i, i + Fe / 1e3, Y(r));
++			X(n.cues, e), Re(n, e);
+ 			return;
+ 		}
+ 		if (r.length === 0) return;
+ 		let a;
+ 		try {
+-			a = await h(r, { type: "vtt" });
++			a = await g(r, { type: "vtt" });
+ 		} catch (e) {
+ 			console.warn("captions: failed to parse VTT cue", e);
+ 			return;
+ 		}
+ 		let o = a.cues.at(0);
+-		!this.#t && o && Math.abs(o.startTime - i) > Re / 1e3 && (this.#t = !0, console.warn(`captions: cue timing is ${(o.startTime - i).toFixed(3)}s off its frame timestamp; the payload must carry absolute times on the media clock`));
++		!this.#t && o && Math.abs(o.startTime - i) > Ie / 1e3 && (this.#t = !0, console.warn(`captions: cue timing is ${(o.startTime - i).toFixed(3)}s off its frame timestamp; the payload must carry absolute times on the media clock`));
+ 		for (let e of a.regions) n.regions.set(e.id, e);
+-		for (let e of a.cues) e.text = K(e.text), q(n.cues, e);
++		for (let e of a.cues) e.text = Y(e.text), X(n.cues, e);
+ 	}
  	close() {
  		this.#e.close();
  	}
@@ -121,7 +1776,7 @@ index 7d76cf2..5b2caa0 100644
  	in;
  	#e = {
  		catalog: new a(void 0),
-@@ -1489,13 +1495,13 @@ var He = class {
+@@ -1489,13 +1704,13 @@ var He = class {
  			e.set(this.#e.track, void 0), e.set(this.#e.config, void 0);
  			return;
  		}
@@ -138,18 +1793,53 @@ index 7d76cf2..5b2caa0 100644
  	return {
  		broadcast: e.broadcast,
  		decoder: {
-@@ -1508,8 +1514,8 @@ function We(e) {
+@@ -1508,8 +1723,8 @@ function We(e) {
  		}
  	};
  }
 -function Ge(e) {
 -	return JSON.stringify(We(e).decoder);
-+function X(e) {
++function Z(e) {
 +	return JSON.stringify(Ge(e).decoder);
  }
  //#endregion
  //#region src/video/playhead.ts
-@@ -1628,8 +1634,11 @@ var et = r.Milli(500), Q = class {
+@@ -1540,18 +1755,18 @@ function Ze(e, t = 0) {
+ 		height: e.height
+ 	};
+ }
+-function Z(e) {
++function Q(e) {
+ 	return Object.is(e, -0) ? 0 : e;
+ }
+ function Qe(e, t) {
+ 	let [n, r, i, a, o, s] = e;
+ 	return [
+-		Z(-n),
+-		Z(r),
+-		Z(-i),
+-		Z(a),
+-		Z(t - o),
+-		Z(s)
++		Q(-n),
++		Q(r),
++		Q(-i),
++		Q(a),
++		Q(t - o),
++		Q(s)
+ 	];
+ }
+ function $e(e, t) {
+@@ -1603,7 +1818,7 @@ function $e(e, t) {
+ }
+ //#endregion
+ //#region src/video/decoder.ts
+-var et = r.Milli(500), Q = class {
++var et = r.Milli(500), $ = class {
+ 	in;
+ 	source;
+ 	sync;
+@@ -1628,8 +1843,11 @@ var et = r.Milli(500), Q = class {
  	}
  	constructor(e) {
  		this.in = { enabled: o(e?.enabled ?? !0) }, this.source = e.source, this.sync = e.sync, this.#i.cleanup(this.sync.register(this.out.jitter)), this.#r = this.#i.computed((e) => {
@@ -163,7 +1853,7 @@ index 7d76cf2..5b2caa0 100644
  		}), this.#i.run(this.#o.bind(this)), this.#i.run(this.#s.bind(this)), this.#i.run(this.#c.bind(this)), this.#i.run(this.#l.bind(this)), this.#i.run(this.#u.bind(this));
  	}
  	#o(e) {
-@@ -1647,40 +1656,44 @@ var et = r.Milli(500), Q = class {
+@@ -1647,40 +1865,44 @@ var et = r.Milli(500), Q = class {
  		let t = e.getAll([
  			this.in.enabled,
  			this.source.in.broadcast,
@@ -182,7 +1872,7 @@ index 7d76cf2..5b2caa0 100644
  		}
 -		let s = new tt({
 +		let s = this.#t.peek();
-+		if (s?.broadcast === o && s.track === a && X(s.config) === X(i.decoder)) {
++		if (s?.broadcast === o && s.track === a && Z(s.config) === Z(i.decoder)) {
 +			this.#n.set(void 0);
 +			return;
 +		}
@@ -218,7 +1908,7 @@ index 7d76cf2..5b2caa0 100644
  		});
  	}
  	#c(e) {
-@@ -1727,6 +1740,7 @@ var et = r.Milli(500), Q = class {
+@@ -1727,6 +1949,7 @@ var et = r.Milli(500), Q = class {
  	}
  	static supported = nt;
  }, tt = class {
@@ -226,8 +1916,12 @@ index 7d76cf2..5b2caa0 100644
  	sync;
  	broadcast;
  	track;
-@@ -1746,7 +1760,7 @@ var et = r.Milli(500), Q = class {
- 		let t = _(e, {
+@@ -1743,10 +1966,10 @@ var et = r.Milli(500), Q = class {
+ 		this.sync = e.sync, this.broadcast = e.broadcast, this.track = e.track, this.config = e.config, this.catalog = e.catalog, this.stats = e.stats, this.#n.run(this.#r.bind(this));
+ 	}
+ 	#r(e) {
+-		let t = _(e, {
++		let t = v(e, {
  			broadcast: this.broadcast,
  			track: this.track,
 -			priority: c.PRIORITY.video,
@@ -235,7 +1929,7 @@ index 7d76cf2..5b2caa0 100644
  			maxAge: this.sync.out.maxAge
  		});
  		if (!t) return;
-@@ -1755,7 +1769,7 @@ var et = r.Milli(500), Q = class {
+@@ -1755,7 +1978,7 @@ var et = r.Milli(500), Q = class {
  				try {
  					let n = this.#t, i = r.Milli.fromMicro(t.timestamp);
  					if (i < (this.timestamp.peek() ?? 0) || this.sync.out.reference.peek() === void 0 || (this.frame.peek() === void 0 && this.frame.set(t.clone()), !await e.race(this.sync.wait(i).then(() => !0))) || n !== this.#t || i < (this.timestamp.peek() ?? 0)) return;
@@ -244,7 +1938,7 @@ index 7d76cf2..5b2caa0 100644
  				} finally {
  					t.close();
  				}
-@@ -1766,9 +1780,20 @@ var et = r.Milli(500), Q = class {
+@@ -1766,9 +1989,20 @@ var et = r.Milli(500), Q = class {
  		});
  		e.cleanup(() => {
  			n.state !== "closed" && n.close();
@@ -267,7 +1961,7 @@ index 7d76cf2..5b2caa0 100644
  		let i = this.config.container.kind === "loc" ? new u.Loc.Format("video") : new u.Legacy.Format(this.config), a = new u.Consumer(t, {
  			format: i,
  			maxAge: this.sync.out.maxAge
-@@ -1786,29 +1811,29 @@ var et = r.Milli(500), Q = class {
+@@ -1786,32 +2020,32 @@ var et = r.Milli(500), Q = class {
  		});
  		let o, s;
  		e.spawn(async () => {
@@ -279,7 +1973,7 @@ index 7d76cf2..5b2caa0 100644
 -				if (!t) continue;
 -				let i = s !== void 0 && e.group < s;
 +			for (; !(n.decodeQueueSize > 0 && !await this.#i(e, n) || e.abort.aborted || n.state !== "configured");) {
-+				let t = await v(a);
++				let t = await y(a);
 +				if (!t || e.abort.aborted || n.state !== "configured") break;
 +				this.#s(t.discontinuity) && (o = void 0);
 +				let { frame: i } = t;
@@ -314,8 +2008,12 @@ index 7d76cf2..5b2caa0 100644
 +	#o(e, t, n) {
  		let i = this.config.container;
  		if (i.kind !== "cmaf") return;
- 		let a = g(i.init), o = u.Cmaf.decodeInitSegment(a), s = this.config.description ? d.Hex.toBytes(this.config.description) : o.description, c = new u.Consumer(t, {
-@@ -1828,31 +1853,30 @@ var et = r.Milli(500), Q = class {
+-		let a = g(i.init), o = u.Cmaf.decodeInitSegment(a), s = this.config.description ? d.Hex.toBytes(this.config.description) : o.description, c = new u.Consumer(t, {
++		let a = _(i.init), o = u.Cmaf.decodeInitSegment(a), s = this.config.description ? d.Hex.toBytes(this.config.description) : o.description, c = new u.Consumer(t, {
+ 			format: new u.Cmaf.Format(o),
+ 			maxAge: this.sync.out.maxAge
+ 		});
+@@ -1828,31 +2062,30 @@ var et = r.Milli(500), Q = class {
  		});
  		let l, f;
  		e.spawn(async () => {
@@ -327,7 +2025,7 @@ index 7d76cf2..5b2caa0 100644
 -				if (!t) continue;
 -				let i = f !== void 0 && e.group < f;
 +			for (; !(n.decodeQueueSize > 0 && !await this.#i(e, n) || e.abort.aborted || n.state !== "configured");) {
-+				let t = await v(c);
++				let t = await y(c);
 +				if (!t || e.abort.aborted || n.state !== "configured") break;
 +				this.#s(t.discontinuity) && (l = void 0);
 +				let { frame: i } = t;
@@ -364,7 +2062,7 @@ index 7d76cf2..5b2caa0 100644
  		e > t || this.#e.mutate((n) => {
  			for (let i of n) if (i.start <= t && i.end >= e) {
  				i.start = r.Milli.min(i.start, e), i.end = r.Milli.max(i.end, t);
-@@ -1864,7 +1888,7 @@ var et = r.Milli(500), Q = class {
+@@ -1864,7 +2097,7 @@ var et = r.Milli(500), Q = class {
  			}), n.sort((e, t) => e.start - t.start);
  		});
  	}
@@ -373,16 +2071,25 @@ index 7d76cf2..5b2caa0 100644
  		this.#e.mutate((t) => {
  			for (; t.length > 0;) {
  				if (t[0].end >= e) {
-@@ -1913,7 +1937,7 @@ async function nt(e) {
+@@ -1889,7 +2122,7 @@ async function nt(e) {
+ 	let t;
+ 	if (e.description) t = d.Hex.toBytes(e.description);
+ 	else if (e.container.kind === "cmaf") try {
+-		t = u.Cmaf.decodeInitSegment(g(e.container.init)).description;
++		t = u.Cmaf.decodeInitSegment(_(e.container.init)).description;
+ 	} catch (t) {
+ 		return console.warn(`video: malformed CMAF init segment for codec ${e.codec}`, t), !1;
+ 	}
+@@ -1913,7 +2146,7 @@ async function nt(e) {
  	}
  	return !1;
  }
 -Object.assign(nt, { [Ue]: Ge });
-+Object.assign(nt, { [We]: X });
++Object.assign(nt, { [We]: Z });
  //#endregion
  //#region src/video/renderer.ts
  var rt = .01, it = class {
-@@ -2009,15 +2033,12 @@ function at(e) {
+@@ -2009,15 +2242,12 @@ function at(e) {
  		let n = [], r = [];
  		for (let [i, a] of t) if (a.codedWidth && a.codedHeight) {
  			let t = a.codedWidth * a.codedHeight;
@@ -400,7 +2107,7 @@ index 7d76cf2..5b2caa0 100644
  	};
  }
  function ot(e, t) {
-@@ -2025,29 +2046,23 @@ function ot(e, t) {
+@@ -2025,29 +2255,23 @@ function ot(e, t) {
  		let r = [], i = [];
  		for (let [a, o] of n) {
  			if (!o.codedWidth || !o.codedHeight) continue;
@@ -436,7 +2143,16 @@ index 7d76cf2..5b2caa0 100644
  	};
  }
  function ct(e) {
-@@ -2111,7 +2126,7 @@ var $ = class {
+@@ -2070,7 +2294,7 @@ function lt(e) {
+ 	let r = st(0)(n), i = r.length === 1 ? r[0] : ot(0, 0)(n)[0];
+ 	return { [i]: e[i] };
+ }
+-var $ = class {
++var ut = class {
+ 	in;
+ 	#e = {
+ 		catalog: new a(void 0),
+@@ -2111,7 +2335,7 @@ var $ = class {
  		e.spawn(async () => {
  			let i = {};
  			for (let [a, o] of Object.entries(n)) {
@@ -445,7 +2161,7 @@ index 7d76cf2..5b2caa0 100644
  				if (c?.key === s) l = c.supported;
  				else {
  					let i = !1;
-@@ -2142,7 +2157,7 @@ var $ = class {
+@@ -2142,7 +2366,7 @@ var $ = class {
  		let r = lt(t);
  		if (Object.keys(r).length === 0) return;
  		let i = n;
@@ -454,7 +2170,7 @@ index 7d76cf2..5b2caa0 100644
  			let t = e.get(this.in.probe)?.estimatedRecvRate;
  			if (t != null) {
  				let e = Math.round(t * .8);
-@@ -2162,9 +2177,9 @@ var $ = class {
+@@ -2162,21 +2386,22 @@ var $ = class {
  		if (n.length === 0) return;
  		if (n.length === 1) return n[0][0];
  		let r = [];
@@ -467,33 +2183,54 @@ index 7d76cf2..5b2caa0 100644
  		console.warn("conflicting rendition filters, no rendition satisfies all criteria");
  	}
  	close() {
-@@ -2204,18 +2219,28 @@ var $ = class {
+ 		this.#t.close();
+ 	}
+-}, ut = class {
++}, dt = class {
+ 	in;
+ 	broadcast;
+ 	sync;
+ 	text;
+ 	video;
+ 	audio;
++	mixer;
+ 	renderer;
+ 	emitter;
+ 	textRenderer;
+@@ -2202,37 +2427,56 @@ var $ = class {
+ 			delay: o(e.delay ?? "auto"),
+ 			buffer: o(e.buffer ?? r.Milli.zero),
  			target: o(e.target),
- 			captions: o(e.captions)
- 		}), this.broadcast = new U(this.in), this.#r.cleanup(() => this.broadcast.close());
+-			captions: o(e.captions)
+-		}), this.broadcast = new U(this.in), this.#r.cleanup(() => this.broadcast.close());
 -		let t = new $({
-+		let t = new R({
-+			broadcast: this.broadcast,
-+			supported: P.supported
++			captions: o(e.captions),
++			audioStems: o(e.audioStems),
++			audioMix: o(e.audioMix)
++		}), this.broadcast = new G(this.in), this.#r.cleanup(() => this.broadcast.close());
++		let t = new B({
+ 			broadcast: this.broadcast,
+-			target: this.in.target,
+-			supported: Q.supported,
+-			probe: this.in.probe
+-		}), i = new R({
++			supported: I.supported
 +		}), i = this.#r.computed((e) => {
 +			let n = e.get(this.in.target);
 +			if (n?.name || n?.bitrate != null) return n;
 +			let r = e.get(this.in.probe)?.estimatedRecvRate;
 +			if (r == null) return n;
-+			let i = e.get(this.#t) ? e.get(t.out.config)?.bitrate : void 0;
++			let i = e.get(this.#t) ? this.mixer ? e.get(this.mixer.out.bitrate) : e.get(t.out.config)?.bitrate : void 0;
 +			return {
 +				...n,
 +				bitrate: Math.max(0, Math.round(r * .8) - (i ?? 0))
 +			};
-+		}), a = new $({
++		}), a = new ut({
  			broadcast: this.broadcast,
--			target: this.in.target,
-+			target: i,
- 			supported: Q.supported,
- 			probe: this.in.probe
--		}), i = new R({
--			broadcast: this.broadcast,
 -			supported: P.supported
++			target: i,
++			supported: $.supported,
++			probe: this.in.probe
  		});
  		this.#r.cleanup(() => {
 -			t.close(), i.close();
@@ -502,22 +2239,40 @@ index 7d76cf2..5b2caa0 100644
 +		}), this.text = new Ue({
  			broadcast: this.broadcast,
  			target: this.in.captions
- 		}), this.#r.cleanup(() => this.text.close()), this.sync = new G({
-@@ -2223,11 +2248,11 @@ var $ = class {
+-		}), this.#r.cleanup(() => this.text.close()), this.sync = new G({
++		}), this.#r.cleanup(() => this.text.close()), this.sync = new J({
+ 			delay: this.in.delay,
  			buffer: this.in.buffer,
  			probe: this.in.probe
- 		}), this.#r.cleanup(() => this.sync.close()), this.video = new Q({
+-		}), this.#r.cleanup(() => this.sync.close()), this.video = new Q({
 -			source: t,
++		}), this.#r.cleanup(() => this.sync.close()), this.video = new $({
 +			source: a,
  			sync: this.sync,
  			enabled: this.#e
- 		}), this.audio = new P({
+-		}), this.audio = new P({
 -			source: i,
++		}), e.audioStems === void 0 ? this.audio = new I({
 +			source: t,
  			sync: this.sync,
  			enabled: this.#t
- 		}), this.#r.cleanup(() => {
-@@ -2243,7 +2268,7 @@ var $ = class {
+-		}), this.#r.cleanup(() => {
+-			this.video.close(), this.audio.close();
+-		}), this.emitter = new L({
++		}) : (this.mixer = new K({
++			source: t,
++			sync: this.sync,
++			broadcast: this.broadcast,
++			enabled: this.#t,
++			stems: this.in.audioStems,
++			mix: this.in.audioMix
++		}), this.audio = this.mixer.main), this.#r.cleanup(() => {
++			this.video.close(), this.mixer ? this.mixer.close() : this.audio.close();
++		}), this.emitter = new z({
+ 			source: this.audio,
+ 			volume: this.in.volume,
+ 			muted: this.in.muted,
+@@ -2243,7 +2487,7 @@ var $ = class {
  			visible: this.in.visible
  		}), this.#r.cleanup(() => {
  			this.emitter.close(), this.renderer.close();
@@ -526,7 +2281,15 @@ index 7d76cf2..5b2caa0 100644
  			source: this.text,
  			sync: this.sync,
  			container: this.in.container,
-@@ -2265,6 +2290,4 @@ var $ = class {
+@@ -2258,13 +2502,11 @@ var $ = class {
+ 		});
+ 	}
+ 	reset() {
+-		this.sync.reset(), this.audio.reset();
++		this.sync.reset(), this.mixer ? this.mixer.reset() : this.audio.reset();
+ 	}
+ 	close() {
+ 		this.#r.close();
  	}
  };
  //#endregion
@@ -534,4 +2297,87 @@ index 7d76cf2..5b2caa0 100644
 -
 -//# sourceMappingURL=player-B6mw85kT.js.map
 \ No newline at end of file
-+export { L as _, Ue as a, ze as c, Y as d, K as f, R as g, Ne as h, Q as i, q as l, U as m, $ as n, He as o, G as p, it as r, Be as s, ut as t, J as u, P as v };
++export { B as _, Ue as a, ze as c, Re as d, Y as f, je as g, G as h, $ as i, X as l, K as m, ut as n, He as o, J as p, it as r, Be as s, dt as t, Le as u, z as v, I as y };
+diff --git a/player.d.ts b/player.d.ts
+index 8f8b9fb546460bef40438b17557f5a9f61f2c4b9..482f3a9ae425538cab362fdc2d2dad55b0654682 100644
+--- a/player.d.ts
++++ b/player.d.ts
+@@ -43,6 +43,10 @@ export type PlayerInput = {
+     target: Getter<Video.Target | undefined>;
+     /** Selected caption track, or undefined for off. */
+     captions: Getter<string | undefined>;
++    /** Optional additive audio broadcasts; main and VOD alternatives must not be included. */
++    audioStems: Getter<Audio.Stem[] | undefined>;
++    /** Per-stem gains, or undefined for the complete main mix. */
++    audioMix: Getter<Audio.Mix | undefined>;
+ };
+ /** Constructor options for {@link Player}; omitted controls use the element defaults. */
+ export type PlayerProps = Inputs<PlayerInput>;
+@@ -61,6 +65,8 @@ export declare class Player {
+     readonly video: Video.Decoder;
+     /** Audio decoder; `audio.source` selects its rendition. */
+     readonly audio: Audio.Decoder;
++    /** Shared audio renderer when additive stem support is configured. */
++    readonly mixer: Audio.Mixer | undefined;
+     /** Canvas video output. */
+     readonly renderer: Video.Renderer;
+     /** Speaker audio output. */
+diff --git a/player.d.ts.map b/player.d.ts.map
+index ec870721bf62f5557bb02c0b54c7e908066d29c3..e6f83393659b7915d1f361c168695367b68b90d6 100644
+--- a/player.d.ts.map
++++ b/player.d.ts.map
+@@ -1 +1 @@
+-{"version":3,"file":"player.d.ts","sourceRoot":"","sources":["../src/player.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,KAAK,OAAO,MAAM,mBAAmB,CAAC;AAClD,OAAO,KAAK,KAAK,GAAG,MAAM,UAAU,CAAC;AACrC,OAAO,EAAQ,IAAI,EAAE,MAAM,UAAU,CAAC;AACtC,OAAO,EAAU,KAAK,MAAM,EAAU,KAAK,MAAM,EAAE,KAAK,SAAS,EAAqB,MAAM,cAAc,CAAC;AAC3G,OAAO,KAAK,KAAK,MAAM,SAAS,CAAC;AACjC,OAAO,EAAE,SAAS,EAAE,KAAK,aAAa,EAAE,MAAM,aAAa,CAAC;AAC5D,OAAO,EAAE,KAAK,KAAK,EAAE,IAAI,EAAE,MAAM,QAAQ,CAAC;AAC1C,OAAO,KAAK,IAAI,MAAM,QAAQ,CAAC;AAC/B,OAAO,KAAK,KAAK,MAAM,SAAS,CAAC;AAEjC,yDAAyD;AACzD,MAAM,MAAM,WAAW,GAAG;IACzB,0CAA0C;IAC1C,MAAM,EAAE,MAAM,CAAC,GAAG,CAAC,MAAM,CAAC,KAAK,GAAG,SAAS,CAAC,CAAC;IAC7C,6CAA6C;IAC7C,IAAI,EAAE,MAAM,CAAC,GAAG,CAAC,IAAI,CAAC,KAAK,CAAC,CAAC;IAC7B,0CAA0C;IAC1C,OAAO,EAAE,MAAM,CAAC,OAAO,CAAC,CAAC;IACzB,4DAA4D;IAC5D,SAAS,EAAE,MAAM,CAAC,OAAO,CAAC,CAAC;IAC3B,mEAAmE;IACnE,aAAa,EAAE,MAAM,CAAC,aAAa,GAAG,SAAS,CAAC,CAAC;IACjD,oDAAoD;IACpD,OAAO,EAAE,MAAM,CAAC,OAAO,CAAC,IAAI,GAAG,SAAS,CAAC,CAAC;IAC1C,+DAA+D;IAC/D,KAAK,EAAE,MAAM,CAAC,GAAG,CAAC,UAAU,CAAC,KAAK,GAAG,SAAS,CAAC,CAAC;IAChD,kCAAkC;IAClC,MAAM,EAAE,MAAM,CAAC,iBAAiB,GAAG,SAAS,CAAC,CAAC;IAC9C,yCAAyC;IACzC,SAAS,EAAE,MAAM,CAAC,WAAW,GAAG,SAAS,CAAC,CAAC;IAC3C,gCAAgC;IAChC,MAAM,EAAE,MAAM,CAAC,OAAO,CAAC,CAAC;IACxB,uCAAuC;IACvC,MAAM,EAAE,MAAM,CAAC,MAAM,CAAC,CAAC;IACvB,2CAA2C;IAC3C,KAAK,EAAE,MAAM,CAAC,OAAO,CAAC,CAAC;IACvB,oDAAoD;IACpD,OAAO,EAAE,MAAM,CAAC,KAAK,CAAC,OAAO,CAAC,CAAC;IAC/B,4CAA4C;IAC5C,KAAK,EAAE,MAAM,CAAC,KAAK,CAAC,CAAC;IACrB,oDAAoD;IACpD,MAAM,EAAE,MAAM,CAAC,IAAI,CAAC,KAAK,CAAC,CAAC;IAC3B,iDAAiD;IACjD,MAAM,EAAE,MAAM,CAAC,KAAK,CAAC,MAAM,GAAG,SAAS,CAAC,CAAC;IACzC,oDAAoD;IACpD,QAAQ,EAAE,MAAM,CAAC,MAAM,GAAG,SAAS,CAAC,CAAC;CACrC,CAAC;AAEF,yFAAyF;AACzF,MAAM,MAAM,WAAW,GAAG,MAAM,CAAC,WAAW,CAAC,CAAC;AAE9C,mFAAmF;AACnF,qBAAa,MAAM;;IAClB,sFAAsF;IACtF,QAAQ,CAAC,EAAE,EAAE,SAAS,CAAC,WAAW,CAAC,CAAC;IACpC,oDAAoD;IACpD,QAAQ,CAAC,SAAS,EAAE,SAAS,CAAC;IAC9B,8CAA8C;IAC9C,QAAQ,CAAC,IAAI,EAAE,IAAI,CAAC;IACpB,kCAAkC;IAClC,QAAQ,CAAC,IAAI,EAAE,IAAI,CAAC,MAAM,CAAC;IAC3B,2DAA2D;IAC3D,QAAQ,CAAC,KAAK,EAAE,KAAK,CAAC,OAAO,CAAC;IAC9B,2DAA2D;IAC3D,QAAQ,CAAC,KAAK,EAAE,KAAK,CAAC,OAAO,CAAC;IAC9B,2BAA2B;IAC3B,QAAQ,CAAC,QAAQ,EAAE,KAAK,CAAC,QAAQ,CAAC;IAClC,4BAA4B;IAC5B,QAAQ,CAAC,OAAO,EAAE,KAAK,CAAC,OAAO,CAAC;IAChC,8BAA8B;IAC9B,QAAQ,CAAC,YAAY,EAAE,IAAI,CAAC,QAAQ,CAAC;IAOrC,YAAY,KAAK,GAAE,WAAgB,EA6FlC;IAED,yDAAyD;IACzD,KAAK,IAAI,IAAI,CAGZ;IAED,qDAAqD;IACrD,KAAK,IAAI,IAAI,CAEZ;CACD"}
+\ No newline at end of file
++{"version":3,"file":"player.d.ts","sourceRoot":"","sources":["../src/player.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,KAAK,OAAO,MAAM,mBAAmB,CAAC;AAClD,OAAO,KAAK,KAAK,GAAG,MAAM,UAAU,CAAC;AACrC,OAAO,EAAQ,IAAI,EAAE,MAAM,UAAU,CAAC;AACtC,OAAO,EAAU,KAAK,MAAM,EAAU,KAAK,MAAM,EAAE,KAAK,SAAS,EAAqB,MAAM,cAAc,CAAC;AAC3G,OAAO,KAAK,KAAK,MAAM,SAAS,CAAC;AACjC,OAAO,EAAE,SAAS,EAAE,KAAK,aAAa,EAAE,MAAM,aAAa,CAAC;AAC5D,OAAO,EAAE,KAAK,KAAK,EAAE,IAAI,EAAE,MAAM,QAAQ,CAAC;AAC1C,OAAO,KAAK,IAAI,MAAM,QAAQ,CAAC;AAC/B,OAAO,KAAK,KAAK,MAAM,SAAS,CAAC;AAEjC,yDAAyD;AACzD,MAAM,MAAM,WAAW,GAAG;IACzB,0CAA0C;IAC1C,MAAM,EAAE,MAAM,CAAC,GAAG,CAAC,MAAM,CAAC,KAAK,GAAG,SAAS,CAAC,CAAC;IAC7C,6CAA6C;IAC7C,IAAI,EAAE,MAAM,CAAC,GAAG,CAAC,IAAI,CAAC,KAAK,CAAC,CAAC;IAC7B,0CAA0C;IAC1C,OAAO,EAAE,MAAM,CAAC,OAAO,CAAC,CAAC;IACzB,4DAA4D;IAC5D,SAAS,EAAE,MAAM,CAAC,OAAO,CAAC,CAAC;IAC3B,mEAAmE;IACnE,aAAa,EAAE,MAAM,CAAC,aAAa,GAAG,SAAS,CAAC,CAAC;IACjD,oDAAoD;IACpD,OAAO,EAAE,MAAM,CAAC,OAAO,CAAC,IAAI,GAAG,SAAS,CAAC,CAAC;IAC1C,+DAA+D;IAC/D,KAAK,EAAE,MAAM,CAAC,GAAG,CAAC,UAAU,CAAC,KAAK,GAAG,SAAS,CAAC,CAAC;IAChD,kCAAkC;IAClC,MAAM,EAAE,MAAM,CAAC,iBAAiB,GAAG,SAAS,CAAC,CAAC;IAC9C,yCAAyC;IACzC,SAAS,EAAE,MAAM,CAAC,WAAW,GAAG,SAAS,CAAC,CAAC;IAC3C,gCAAgC;IAChC,MAAM,EAAE,MAAM,CAAC,OAAO,CAAC,CAAC;IACxB,uCAAuC;IACvC,MAAM,EAAE,MAAM,CAAC,MAAM,CAAC,CAAC;IACvB,2CAA2C;IAC3C,KAAK,EAAE,MAAM,CAAC,OAAO,CAAC,CAAC;IACvB,oDAAoD;IACpD,OAAO,EAAE,MAAM,CAAC,KAAK,CAAC,OAAO,CAAC,CAAC;IAC/B,4CAA4C;IAC5C,KAAK,EAAE,MAAM,CAAC,KAAK,CAAC,CAAC;IACrB,oDAAoD;IACpD,MAAM,EAAE,MAAM,CAAC,IAAI,CAAC,KAAK,CAAC,CAAC;IAC3B,iDAAiD;IACjD,MAAM,EAAE,MAAM,CAAC,KAAK,CAAC,MAAM,GAAG,SAAS,CAAC,CAAC;IACzC,oDAAoD;IACpD,QAAQ,EAAE,MAAM,CAAC,MAAM,GAAG,SAAS,CAAC,CAAC;IACrC,0FAA0F;IAC1F,UAAU,EAAE,MAAM,CAAC,KAAK,CAAC,IAAI,EAAE,GAAG,SAAS,CAAC,CAAC;IAC7C,8DAA8D;IAC9D,QAAQ,EAAE,MAAM,CAAC,KAAK,CAAC,GAAG,GAAG,SAAS,CAAC,CAAC;CACxC,CAAC;AAEF,yFAAyF;AACzF,MAAM,MAAM,WAAW,GAAG,MAAM,CAAC,WAAW,CAAC,CAAC;AAE9C,mFAAmF;AACnF,qBAAa,MAAM;;IAClB,sFAAsF;IACtF,QAAQ,CAAC,EAAE,EAAE,SAAS,CAAC,WAAW,CAAC,CAAC;IACpC,oDAAoD;IACpD,QAAQ,CAAC,SAAS,EAAE,SAAS,CAAC;IAC9B,8CAA8C;IAC9C,QAAQ,CAAC,IAAI,EAAE,IAAI,CAAC;IACpB,kCAAkC;IAClC,QAAQ,CAAC,IAAI,EAAE,IAAI,CAAC,MAAM,CAAC;IAC3B,2DAA2D;IAC3D,QAAQ,CAAC,KAAK,EAAE,KAAK,CAAC,OAAO,CAAC;IAC9B,2DAA2D;IAC3D,QAAQ,CAAC,KAAK,EAAE,KAAK,CAAC,OAAO,CAAC;IAC9B,sEAAsE;IACtE,QAAQ,CAAC,KAAK,EAAE,KAAK,CAAC,KAAK,GAAG,SAAS,CAAC;IACxC,2BAA2B;IAC3B,QAAQ,CAAC,QAAQ,EAAE,KAAK,CAAC,QAAQ,CAAC;IAClC,4BAA4B;IAC5B,QAAQ,CAAC,OAAO,EAAE,KAAK,CAAC,OAAO,CAAC;IAChC,8BAA8B;IAC9B,QAAQ,CAAC,YAAY,EAAE,IAAI,CAAC,QAAQ,CAAC;IAOrC,YAAY,KAAK,GAAE,WAAgB,EAyHlC;IAED,yDAAyD;IACzD,KAAK,IAAI,IAAI,CAIZ;IAED,qDAAqD;IACrD,KAAK,IAAI,IAAI,CAEZ;CACD"}
+\ No newline at end of file
+diff --git a/support/element.js b/support/element.js
+index c7c9f755abdca051094beae36838be4641338978..5e2fed6f861f2b7a0c2a11175b6a43cce47dec57 100644
+--- a/support/element.js
++++ b/support/element.js
+@@ -119,5 +119,3 @@ var i = navigator.userAgent.toLowerCase().includes("firefox"), a = ["show", "det
+ customElements.define("moq-watch-support", o);
+ //#endregion
+ export { o as default };
+-
+-//# sourceMappingURL=element.js.map
+\ No newline at end of file
+diff --git a/support/index.js b/support/index.js
+index 00890740168f2934e380c0bc388c8dc8dbdf0ee3..4b4f90930aaa8743e008162cb17f6905eca9093b 100644
+--- a/support/index.js
++++ b/support/index.js
+@@ -53,5 +53,3 @@ async function a() {
+ }
+ //#endregion
+ export { a as isSupported };
+-
+-//# sourceMappingURL=index.js.map
+\ No newline at end of file
+diff --git a/ui/element.js b/ui/element.js
+index 332e28eb5299959ac238e14d9c92c996fba782c7..27710421acd37f668b7ea101eff1d80d301f257a 100644
+--- a/ui/element.js
++++ b/ui/element.js
+@@ -789,5 +789,3 @@ var $ = class extends HTMLElement {
+ customElements.define("moq-watch-ui", $);
+ //#endregion
+ export { $ as default };
+-
+-//# sourceMappingURL=element.js.map
+\ No newline at end of file
+diff --git a/video/decoder.d.ts.map b/video/decoder.d.ts.map
+index 77f3cffbaf6218fe1a5e6483def8d3a0da30c7a2..126550d110d102ec9ddbcf367a6d99d66a1cad25 100644
+--- a/video/decoder.d.ts.map
++++ b/video/decoder.d.ts.map
+@@ -1 +1 @@
+-{"version":3,"file":"decoder.d.ts","sourceRoot":"","sources":["../../src/video/decoder.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,OAAO,MAAM,mBAAmB,CAAC;AAC7C,OAAO,KAAK,SAAS,MAAM,qBAAqB,CAAC;AAGjD,OAAO,EAAE,IAAI,EAAE,MAAM,UAAU,CAAC;AAChC,OAAO,EAGN,KAAK,MAAM,EAEX,KAAK,MAAM,EACX,KAAK,SAAS,EAEd,MAAM,EACN,MAAM,cAAc,CAAC;AAItB,OAAO,KAAK,EAAE,IAAI,EAAE,MAAM,SAAS,CAAC;AAUpC,OAAO,KAAK,EAAE,MAAM,EAAE,MAAM,UAAU,CAAC;AAKvC,MAAM,MAAM,YAAY,GAAG;IAC1B,gHAAgH;IAChH,OAAO,EAAE,MAAM,CAAC,OAAO,CAAC,CAAC;CACzB,CAAC;AAEF,kDAAkD;AAClD,MAAM,MAAM,YAAY,GAAG,MAAM,CAAC,YAAY,CAAC,GAAG;IACjD,kDAAkD;IAClD,MAAM,EAAE,MAAM,CAAC;IACf,6BAA6B;IAC7B,IAAI,EAAE,IAAI,CAAC;CACX,CAAC;AAEF,6DAA6D;AAC7D,MAAM,WAAW,KAAK;IACrB,gCAAgC;IAChC,UAAU,EAAE,MAAM,CAAC;IAEnB,wCAAwC;IACxC,aAAa,EAAE,MAAM,CAAC;CACtB;AAED,KAAK,aAAa,GAAG;IAEpB,KAAK,EAAE,MAAM,CAAC,UAAU,GAAG,SAAS,CAAC,CAAC;IAGtC,SAAS,EAAE,MAAM,CAAC,IAAI,CAAC,KAAK,GAAG,SAAS,CAAC,CAAC;IAG1C,OAAO,EAAE,MAAM,CAAC;QAAE,KAAK,EAAE,MAAM,CAAC;QAAC,MAAM,EAAE,MAAM,CAAA;KAAE,GAAG,SAAS,CAAC,CAAC;IAE/D,OAAO,EAAE,MAAM,CAAC,OAAO,CAAC,CAAC;IACzB,KAAK,EAAE,MAAM,CAAC,KAAK,GAAG,SAAS,CAAC,CAAC;IAGjC,MAAM,EAAE,MAAM,CAAC,IAAI,CAAC,KAAK,GAAG,SAAS,CAAC,CAAC;IAGvC,QAAQ,EAAE,MAAM,CAAC,SAAS,CAAC,cAAc,CAAC,CAAC;CAC3C,CAAC;AAEF,2FAA2F;AAC3F,qBAAa,OAAO;;IACnB,QAAQ,CAAC,EAAE,EAAE,SAAS,CAAC,YAAY,CAAC,CAAC;IACrC,QAAQ,CAAC,MAAM,EAAE,MAAM,CAAC;IACxB,QAAQ,CAAC,IAAI,EAAE,IAAI,CAAC;IAWpB,QAAQ,CAAC,GAAG,2BAAwB;IAoBpC,YAAY,KAAK,EAAE,YAAY,EAkB9B;IA8ID,KAAK,SAIJ;IAGD,MAAM,CAAC,SAAS,mBAAa;CAC7B;AAsVD,iBAAe,SAAS,CAAC,MAAM,EAAE,OAAO,CAAC,WAAW,GAAG,OAAO,CAAC,OAAO,CAAC,CAoDtE"}
+\ No newline at end of file
++{"version":3,"file":"decoder.d.ts","sourceRoot":"","sources":["../../src/video/decoder.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,OAAO,MAAM,mBAAmB,CAAC;AAC7C,OAAO,KAAK,SAAS,MAAM,qBAAqB,CAAC;AAGjD,OAAO,EAAE,IAAI,EAAE,MAAM,UAAU,CAAC;AAChC,OAAO,EAGN,KAAK,MAAM,EAEX,KAAK,MAAM,EACX,KAAK,SAAS,EAEd,MAAM,EACN,MAAM,cAAc,CAAC;AAItB,OAAO,KAAK,EAAE,IAAI,EAAE,MAAM,SAAS,CAAC;AAUpC,OAAO,KAAK,EAAE,MAAM,EAAE,MAAM,UAAU,CAAC;AAKvC,MAAM,MAAM,YAAY,GAAG;IAC1B,gHAAgH;IAChH,OAAO,EAAE,MAAM,CAAC,OAAO,CAAC,CAAC;CACzB,CAAC;AAEF,kDAAkD;AAClD,MAAM,MAAM,YAAY,GAAG,MAAM,CAAC,YAAY,CAAC,GAAG;IACjD,kDAAkD;IAClD,MAAM,EAAE,MAAM,CAAC;IACf,6BAA6B;IAC7B,IAAI,EAAE,IAAI,CAAC;CACX,CAAC;AAEF,6DAA6D;AAC7D,MAAM,WAAW,KAAK;IACrB,gCAAgC;IAChC,UAAU,EAAE,MAAM,CAAC;IAEnB,wCAAwC;IACxC,aAAa,EAAE,MAAM,CAAC;CACtB;AAED,KAAK,aAAa,GAAG;IAEpB,KAAK,EAAE,MAAM,CAAC,UAAU,GAAG,SAAS,CAAC,CAAC;IAGtC,SAAS,EAAE,MAAM,CAAC,IAAI,CAAC,KAAK,GAAG,SAAS,CAAC,CAAC;IAG1C,OAAO,EAAE,MAAM,CAAC;QAAE,KAAK,EAAE,MAAM,CAAC;QAAC,MAAM,EAAE,MAAM,CAAA;KAAE,GAAG,SAAS,CAAC,CAAC;IAE/D,OAAO,EAAE,MAAM,CAAC,OAAO,CAAC,CAAC;IACzB,KAAK,EAAE,MAAM,CAAC,KAAK,GAAG,SAAS,CAAC,CAAC;IAGjC,MAAM,EAAE,MAAM,CAAC,IAAI,CAAC,KAAK,GAAG,SAAS,CAAC,CAAC;IAGvC,QAAQ,EAAE,MAAM,CAAC,SAAS,CAAC,cAAc,CAAC,CAAC;CAC3C,CAAC;AAEF,2FAA2F;AAC3F,qBAAa,OAAO;;IACnB,QAAQ,CAAC,EAAE,EAAE,SAAS,CAAC,YAAY,CAAC,CAAC;IACrC,QAAQ,CAAC,MAAM,EAAE,MAAM,CAAC;IACxB,QAAQ,CAAC,IAAI,EAAE,IAAI,CAAC;IAWpB,QAAQ,CAAC,GAAG,2BAAwB;IAoBpC,YAAY,KAAK,EAAE,YAAY,EAmB9B;IAqJD,KAAK,SAIJ;IAGD,MAAM,CAAC,SAAS,mBAAa;CAC7B;AA4WD,iBAAe,SAAS,CAAC,MAAM,EAAE,OAAO,CAAC,WAAW,GAAG,OAAO,CAAC,OAAO,CAAC,CAoDtE"}
+\ No newline at end of file
+diff --git a/video/source.d.ts.map b/video/source.d.ts.map
+index b23996ce547bcd504f4fa82ba13ed75d9a85c503..6b101fff635fa05cc027a9d938fcb74411bb81a6 100644
+--- a/video/source.d.ts.map
++++ b/video/source.d.ts.map
+@@ -1 +1 @@
+-{"version":3,"file":"source.d.ts","sourceRoot":"","sources":["../../src/video/source.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,KAAK,OAAO,MAAM,mBAAmB,CAAC;AAClD,OAAO,KAAK,KAAK,GAAG,MAAM,UAAU,CAAC;AACrC,OAAO,EAAU,KAAK,MAAM,EAAU,KAAK,MAAM,EAAE,KAAK,SAAS,EAAa,MAAM,EAAE,MAAM,cAAc,CAAC;AAC3G,OAAO,KAAK,EAAE,SAAS,EAAE,MAAM,cAAc,CAAC;AAG9C;;;;GAIG;AACH,MAAM,MAAM,SAAS,GAAG,CAAC,MAAM,EAAE,OAAO,CAAC,WAAW,KAAK,OAAO,CAAC,OAAO,CAAC,CAAC;AAM1E,sEAAsE;AACtE,MAAM,MAAM,WAAW,GAAG,aAAa,CAAC;AAExC,MAAM,MAAM,MAAM,GAAG;IAEpB,IAAI,CAAC,EAAE,MAAM,CAAC;IAGd,MAAM,CAAC,EAAE,MAAM,CAAC;IAGhB,KAAK,CAAC,EAAE,MAAM,CAAC;IAGf,MAAM,CAAC,EAAE,MAAM,CAAC;IAGhB,OAAO,CAAC,EAAE,MAAM,CAAC;CACjB,CAAC;AAEF,MAAM,MAAM,WAAW,GAAG;IACzB,SAAS,EAAE,MAAM,CAAC,SAAS,GAAG,SAAS,CAAC,CAAC;IACzC,MAAM,EAAE,MAAM,CAAC,MAAM,GAAG,SAAS,CAAC,CAAC;IAInC,SAAS,EAAE,MAAM,CAAC,SAAS,GAAG,SAAS,CAAC,CAAC;IAKzC,KAAK,EAAE,MAAM,CAAC,GAAG,CAAC,UAAU,CAAC,KAAK,GAAG,SAAS,CAAC,CAAC;CAChD,CAAC;AAEF,KAAK,YAAY,GAAG;IACnB,OAAO,EAAE,MAAM,CAAC,OAAO,CAAC,KAAK,GAAG,SAAS,CAAC,CAAC;IAC3C,SAAS,EAAE,MAAM,CAAC,MAAM,CAAC,MAAM,EAAE,OAAO,CAAC,WAAW,CAAC,CAAC,CAAC;IAGvD,KAAK,EAAE,MAAM,CAAC,WAAW,GAAG,SAAS,CAAC,CAAC;IAGvC,KAAK,EAAE,MAAM,CAAC,MAAM,GAAG,SAAS,CAAC,CAAC;IAClC,MAAM,EAAE,MAAM,CAAC,OAAO,CAAC,WAAW,GAAG,SAAS,CAAC,CAAC;CAChD,CAAC;AAsKF;;;GAGG;AACH,qBAAa,MAAM;;IAClB,QAAQ,CAAC,EAAE,EAAE,SAAS,CAAC,WAAW,CAAC,CAAC;IASpC,QAAQ,CAAC,GAAG,0BAAwB;IAKpC,YAAY,KAAK,CAAC,EAAE,MAAM,CAAC,WAAW,CAAC,EAWtC;IAiKD,KAAK,IAAI,IAAI,CAEZ;CACD"}
+\ No newline at end of file
++{"version":3,"file":"source.d.ts","sourceRoot":"","sources":["../../src/video/source.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,KAAK,OAAO,MAAM,mBAAmB,CAAC;AAClD,OAAO,KAAK,KAAK,GAAG,MAAM,UAAU,CAAC;AACrC,OAAO,EAAU,KAAK,MAAM,EAAU,KAAK,MAAM,EAAE,KAAK,SAAS,EAAa,MAAM,EAAE,MAAM,cAAc,CAAC;AAC3G,OAAO,KAAK,EAAE,SAAS,EAAE,MAAM,cAAc,CAAC;AAG9C;;;;GAIG;AACH,MAAM,MAAM,SAAS,GAAG,CAAC,MAAM,EAAE,OAAO,CAAC,WAAW,KAAK,OAAO,CAAC,OAAO,CAAC,CAAC;AAM1E,sEAAsE;AACtE,MAAM,MAAM,WAAW,GAAG,aAAa,CAAC;AAExC,MAAM,MAAM,MAAM,GAAG;IAEpB,IAAI,CAAC,EAAE,MAAM,CAAC;IAGd,MAAM,CAAC,EAAE,MAAM,CAAC;IAGhB,KAAK,CAAC,EAAE,MAAM,CAAC;IAGf,MAAM,CAAC,EAAE,MAAM,CAAC;IAGhB,OAAO,CAAC,EAAE,MAAM,CAAC;CACjB,CAAC;AAEF,MAAM,MAAM,WAAW,GAAG;IACzB,SAAS,EAAE,MAAM,CAAC,SAAS,GAAG,SAAS,CAAC,CAAC;IACzC,MAAM,EAAE,MAAM,CAAC,MAAM,GAAG,SAAS,CAAC,CAAC;IAInC,SAAS,EAAE,MAAM,CAAC,SAAS,GAAG,SAAS,CAAC,CAAC;IAKzC,KAAK,EAAE,MAAM,CAAC,GAAG,CAAC,UAAU,CAAC,KAAK,GAAG,SAAS,CAAC,CAAC;CAChD,CAAC;AAEF,KAAK,YAAY,GAAG;IACnB,OAAO,EAAE,MAAM,CAAC,OAAO,CAAC,KAAK,GAAG,SAAS,CAAC,CAAC;IAC3C,SAAS,EAAE,MAAM,CAAC,MAAM,CAAC,MAAM,EAAE,OAAO,CAAC,WAAW,CAAC,CAAC,CAAC;IAGvD,KAAK,EAAE,MAAM,CAAC,WAAW,GAAG,SAAS,CAAC,CAAC;IAGvC,KAAK,EAAE,MAAM,CAAC,MAAM,GAAG,SAAS,CAAC,CAAC;IAClC,MAAM,EAAE,MAAM,CAAC,OAAO,CAAC,WAAW,GAAG,SAAS,CAAC,CAAC;CAChD,CAAC;AA4JF;;;GAGG;AACH,qBAAa,MAAM;;IAClB,QAAQ,CAAC,EAAE,EAAE,SAAS,CAAC,WAAW,CAAC,CAAC;IASpC,QAAQ,CAAC,GAAG,0BAAwB;IAKpC,YAAY,KAAK,CAAC,EAAE,MAAM,CAAC,WAAW,CAAC,EAWtC;IAuJD,KAAK,IAAI,IAAI,CAEZ;CACD"}

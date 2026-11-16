@@ -34,7 +34,14 @@ type PacketizedSample struct {
 	Duration time.Duration
 }
 
+type PacketizedStem struct {
+	Group  uint32
+	Offset time.Duration // first sample relative to this packet's main audio
+	Audio  []PacketizedSample
+}
+
 type PacketizedSegment struct {
+	Stems    []PacketizedStem
 	Video    []PacketizedSample
 	Audio    []PacketizedSample
 	Duration time.Duration
@@ -120,6 +127,20 @@ func (b *Bus) UnsubscribeSegment(ctx context.Context, user string, rendition str
 	} else {
 		b.segChans[key] = chs
 	}
+}
+
+// LatestSegment returns the newest full media segment in the current session.
+// Audio continuations extend that segment and do not replace its track layout.
+func (b *Bus) LatestSegment(user, rendition string) *Seg {
+	b.segBufMutex.RLock()
+	defer b.segBufMutex.RUnlock()
+	segments := b.segBuf[segChanKey(user, rendition)]
+	for i := len(segments) - 1; i >= 0; i-- {
+		if !segments[i].AudioOnly {
+			return segments[i]
+		}
+	}
+	return nil
 }
 
 // HasSegments reports whether user's rendition has published a segment in

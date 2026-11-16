@@ -51,8 +51,9 @@ type WebsocketReplicator struct {
 	MoqTLS *moq.TLSFiles
 }
 
-func NewWebsocketReplicator(bus *bus.Bus, mod model.Model, mm *media.MediaManager, state *statedb.StatefulDB, moqCert *moq.SelfSignedCert) *WebsocketReplicator {
+func NewWebsocketReplicator(cli *config.CLI, bus *bus.Bus, mod model.Model, mm *media.MediaManager, state *statedb.StatefulDB, moqCert *moq.SelfSignedCert) *WebsocketReplicator {
 	return &WebsocketReplicator{
+		cli:        cli,
 		bus:        bus,
 		mod:        mod,
 		state:      state,
@@ -114,8 +115,7 @@ func (r *WebsocketReplicator) latestFor(streamer string) (latestOrigin, bool) {
 	return l, ok
 }
 
-func (r *WebsocketReplicator) Start(ctx context.Context, cli *config.CLI) error {
-	r.cli = cli
+func (r *WebsocketReplicator) Start(ctx context.Context, _ *config.CLI) error {
 	_ = r.getMyWebsocketURL() // panic check
 	_ = r.getMyMoqURL()       // panic check
 	r.group, ctx = errgroup.WithContext(ctx)
@@ -125,7 +125,7 @@ func (r *WebsocketReplicator) Start(ctx context.Context, cli *config.CLI) error 
 			return nil
 		})
 	}
-	if cli.MoqAddr != "" || cli.MoqRelayURL != "" {
+	if r.cli.MoqAddr != "" || r.cli.MoqRelayURL != "" {
 		r.group.Go(func() error {
 			return r.serveMoQ(ctx)
 		})
@@ -379,7 +379,12 @@ func (r *WebsocketReplicator) openMoq(ctx context.Context, origin *placestream.B
 // feedRenditions folds a rendition addendum the origin minted into this
 // node's live window and playback bus, once its signatures check out.
 func (r *WebsocketReplicator) feedRenditions(ctx context.Context, streamer string, addendum []byte) error {
-	return r.mm.ReceiveRenditions(ctx, streamer, addendum)
+	err := r.mm.ReceiveRenditions(ctx, streamer, addendum)
+	if errors.Is(err, media.ErrUntrustedTranscoder) {
+		log.Debug(ctx, "dropping renditions from an untrusted transcoder", "streamer", streamer, "error", err)
+		return nil
+	}
+	return err
 }
 
 const sourceAddendaLimit = 8

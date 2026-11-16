@@ -28,6 +28,14 @@ beforeAll(() => {
 
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal(
+    "MediaStream",
+    class {
+      getAudioTracks() {
+        return [];
+      }
+    },
+  );
   vi.stubGlobal("matchMedia", (media: string) => ({
     media,
     matches: false,

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  getMoqAudioStems,
   getMoqPlaybackFloor,
   getMoqPlaybackSource,
   supportsMoqPlayback,
@@ -8,6 +9,41 @@ import {
 const SOURCE =
   "https://node.example/xrpc/place.stream.playback.getLivePlaylist?streamer=alice.example";
 const FINGERPRINT = "ab".repeat(32);
+
+describe("MoQ optional stem descriptors", () => {
+  it("uses bounded group identities and supplies a label when absent", () => {
+    expect(
+      getMoqAudioStems({
+        streamplace: {
+          audioStems: [
+            { alternateGroup: 7 },
+            { alternateGroup: 2, label: "Music" },
+          ],
+        },
+      }),
+    ).toEqual([
+      { alternateGroup: 2, label: "Music" },
+      { alternateGroup: 7, label: "Track 7" },
+    ]);
+    expect(getMoqAudioStems({})).toEqual([]);
+  });
+  it.each([
+    null,
+    {},
+    [{ alternateGroup: 0 }],
+    [{ alternateGroup: 1.5 }],
+    [{ alternateGroup: 65536 }],
+    [{ alternateGroup: 1 }, { alternateGroup: 1 }],
+    [{ alternateGroup: 1 }, { alternateGroup: 2 }, { alternateGroup: 3 }],
+    [{ alternateGroup: 1, label: {} }],
+    [{ alternateGroup: 1, label: "a".repeat(257) }],
+  ])(
+    "ignores malformed optional metadata without preventing main playback",
+    (audioStems) => {
+      expect(getMoqAudioStems({ streamplace: { audioStems } })).toEqual([]);
+    },
+  );
+});
 
 afterEach(() => vi.unstubAllGlobals());
 

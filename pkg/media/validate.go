@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"reflect"
@@ -11,7 +12,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/abema/go-mp4"
 	"github.com/bluesky-social/indigo/atproto/atcrypto"
+	"github.com/bluesky-social/indigo/atproto/syntax"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -176,6 +179,15 @@ func (mm *MediaManager) validateSource(ctx context.Context, buf []byte, local bo
 	pub := valid.Pub
 	if streamer != "" && meta.Creator != streamer {
 		return nil, nil, fmt.Errorf("segment signed by %s, not %s", meta.Creator, streamer)
+	}
+	if strings.HasPrefix(meta.Creator, constants.DID_KEY_PREFIX) && meta.Creator != pub.DIDKey() {
+		return nil, nil, fmt.Errorf("creator %s does not match signing certificate %s", meta.Creator, pub.DIDKey())
+	}
+
+	if !local {
+		if err := mm.trustSegmentTracks(ctx, valid, meta.Creator); err != nil {
+			return nil, nil, err
+		}
 	}
 
 	if valid.Manifest.Label == nil {
@@ -428,7 +440,7 @@ func (mm *MediaManager) applyContentFilters(ctx context.Context, meta *SegmentMe
 
 	// Check distribution policy (if enabled)
 	if mm.cli.ContentFilters.DistributionPolicy.Enabled && meta.DistributionPolicy != nil {
-		if meta.DistributionPolicy.DeleteAfterSeconds != nil {
+		if meta.DistributionPolicy.DeleteAfterSeconds != nil && *meta.DistributionPolicy.DeleteAfterSeconds != constants.IndefiniteArchival {
 			expiresAt := meta.StartTime.Time().Add(time.Duration(*meta.DistributionPolicy.DeleteAfterSeconds) * time.Second)
 			if time.Now().After(expiresAt) {
 				reason := fmt.Sprintf("distribution policy expired: segment expires at %s", expiresAt)
@@ -465,6 +477,7 @@ type ValidationResult struct {
 	Manifest         *c2patypes.Manifest
 	Cert             string
 	trackSigningKeys map[uint32]string
+	verifiedSegments []segmentValidation
 }
 
 func ValidateMP4Media(ctx context.Context, buf []byte) (*ValidationResult, error) {
@@ -495,6 +508,9 @@ func ValidateMP4Media(ctx context.Context, buf []byte) (*ValidationResult, error
 	if err != nil {
 		return nil, err
 	}
+	if err := readAudioTrackMetadata(playable, mediaData); err != nil {
+		return nil, fmt.Errorf("read signed audio metadata: %w", err)
+	}
 	validationResult.MediaData = mediaData
 	validationResult.Playable = playable
 	for _, video := range mediaData.Video {
@@ -504,6 +520,44 @@ func ValidateMP4Media(ctx context.Context, buf []byte) (*ValidationResult, error
 		audio.SigningKey = validationResult.trackSigningKeys[audio.TrackID]
 	}
 	return validationResult, nil
+}
+
+// Wrap synthesizes these headers from the signed catalog. Reuse that result
+// rather than opening another WASM module to rediscover the same metadata.
+func readAudioTrackMetadata(playable []byte, data *localdb.SegmentMediaData) error {
+	reader := bytes.NewReader(playable)
+	tracks, err := mp4.ExtractBox(reader, nil, mp4.BoxPath{mp4.BoxTypeMoov(), mp4.BoxTypeTrak()})
+	if err != nil {
+		return err
+	}
+	for _, track := range tracks {
+		headers, err := mp4.ExtractBoxWithPayload(reader, track, mp4.BoxPath{mp4.BoxTypeTkhd()})
+		if err != nil {
+			return err
+		}
+		if len(headers) != 1 {
+			return fmt.Errorf("track must have one header")
+		}
+		header := headers[0].Payload.(*mp4.Tkhd)
+		for _, audio := range data.Audio {
+			if audio.TrackID != header.TrackID {
+				continue
+			}
+			audio.AlternateGroup = uint32(uint16(header.AlternateGroup))
+			names, err := mp4.ExtractBox(reader, track, mp4.BoxPath{mp4.BoxTypeUdta(), mp4.StrToBoxType("name")})
+			if err != nil {
+				return err
+			}
+			if len(names) > 1 {
+				return fmt.Errorf("audio track has multiple labels")
+			}
+			if len(names) == 1 {
+				name := names[0]
+				audio.Label = string(playable[name.Offset+name.HeaderSize : name.Offset+name.Size])
+			}
+		}
+	}
+	return nil
 }
 
 func ValidateMP4MediaData(ctx context.Context, buf []byte) (*localdb.SegmentMediaData, error) {
@@ -612,11 +666,7 @@ func metadataFromVerifiedSegments(ctx context.Context, segments []segmentValidat
 		if err != nil {
 			return nil, fmt.Errorf("track %d segment metadata: %w", segment.TrackID, err)
 		}
-		if meta.Published != other.Published || meta.Creator != other.Creator ||
-			!reflect.DeepEqual(meta.ContentWarnings, other.ContentWarnings) ||
-			!reflect.DeepEqual(meta.ContentRights, other.ContentRights) ||
-			!reflect.DeepEqual(meta.DistributionPolicy, other.DistributionPolicy) ||
-			!reflect.DeepEqual(meta.MetadataConfiguration, other.MetadataConfiguration) {
+		if meta.Published != other.Published || meta.Creator != other.Creator || !sameContentPolicy(meta, other) {
 			meta.Published = false
 		}
 	}
@@ -628,7 +678,15 @@ func metadataFromVerifiedSegments(ctx context.Context, segments []segmentValidat
 		Manifest:         &primary.Manifest,
 		Cert:             primary.Cert,
 		trackSigningKeys: trackKeys,
+		verifiedSegments: segments,
 	}, nil
+}
+
+func sameContentPolicy(left, right *SegmentMetadata) bool {
+	return reflect.DeepEqual(left.ContentWarnings, right.ContentWarnings) &&
+		reflect.DeepEqual(left.ContentRights, right.ContentRights) &&
+		reflect.DeepEqual(left.DistributionPolicy, right.DistributionPolicy) &&
+		reflect.DeepEqual(left.MetadataConfiguration, right.MetadataConfiguration)
 }
 
 func parseVerifiedSegments(out []byte) ([]segmentValidation, error) {
@@ -679,4 +737,114 @@ func audioPublicationRestricted(segments []segmentValidation) (bool, error) {
 		}
 	}
 	return restricted, nil
+}
+
+// ErrUntrustedTranscoder identifies valid media signed by an unauthorized transcoder.
+var ErrUntrustedTranscoder = errors.New("untrusted transcoder")
+
+// trustSegmentTracks refuses a segment carrying a track neither signed by the
+// streamer nor a transcode from a trusted transcoder.
+func (mm *MediaManager) trustSegmentTracks(ctx context.Context, valid *ValidationResult, streamer string) error {
+	for _, key := range valid.trackSigningKeys {
+		if key == valid.Pub.DIDKey() {
+			continue
+		}
+		if err := mm.trustTranscoder(ctx, key, streamer); err != nil {
+			return fmt.Errorf("segment track: %w", err)
+		}
+	}
+	for _, asset := range valid.verifiedSegments {
+		if valid.trackSigningKeys[asset.TrackID] == valid.Pub.DIDKey() {
+			continue
+		}
+		for _, video := range valid.MediaData.Video {
+			if video.TrackID == asset.TrackID {
+				if err := checkRenditionIngredient(asset, valid); err != nil {
+					return err
+				}
+				break
+			}
+		}
+	}
+	return nil
+}
+
+func checkRenditionIngredient(asset segmentValidation, source *ValidationResult) error {
+	if len(asset.Manifest.Ingredients) == 0 {
+		return fmt.Errorf("rendition track %d has no source ingredient", asset.TrackID)
+	}
+	for _, ingredient := range asset.Manifest.Ingredients {
+		found := false
+		if ingredient.ActiveManifest != nil {
+			for _, original := range source.verifiedSegments {
+				if source.trackSigningKeys[original.TrackID] == source.Pub.DIDKey() && original.Manifest.Label != nil && *original.Manifest.Label == *ingredient.ActiveManifest {
+					found = true
+					break
+				}
+			}
+		}
+		if !found {
+			return fmt.Errorf("rendition track %d source ingredient does not belong to the admitted source", asset.TrackID)
+		}
+	}
+	return nil
+}
+
+// trustTranscoder reports whether key may transcode streamer's stream: the
+// streamer, this node's station, or one of --trusted-transcoders.
+func (mm *MediaManager) trustTranscoder(ctx context.Context, key, streamer string) error {
+	if key == streamer && strings.HasPrefix(streamer, constants.DID_KEY_PREFIX) {
+		return nil
+	}
+	// This node's own station: the key it signs its own transcodes with.
+	if cert, _, err := mm.transcodeSigner(); err == nil {
+		pub, err := signers.ParseES256KCert(cert)
+		if err != nil {
+			return fmt.Errorf("own station key: %w", err)
+		}
+		if pub.DIDKey() == key {
+			return nil
+		}
+	}
+	// The streamer, one of whose signing keys signs its source segments.
+	if mm.model != nil && !strings.HasPrefix(streamer, constants.DID_KEY_PREFIX) {
+		if mm.atsync != nil {
+			if _, err := mm.atsync.SyncBlueskyRepoCached(ctx, streamer); err != nil {
+				return err
+			}
+		}
+		signingKey, err := mm.model.GetSigningKey(ctx, key, streamer)
+		if err != nil {
+			return err
+		}
+		if signingKey != nil {
+			return nil
+		}
+	}
+	var unresolved []string
+	for _, trusted := range mm.cli.TrustedTranscoders {
+		if strings.HasPrefix(trusted, constants.DID_KEY_PREFIX) {
+			if trusted == key {
+				return nil
+			}
+			continue
+		}
+		if mm.atsync == nil {
+			continue
+		}
+		ident, err := mm.atsync.IdentityDirectory().LookupDID(ctx, syntax.DID(trusted))
+		if err == nil {
+			var pub atcrypto.PublicKey
+			if pub, err = ident.PublicKey(); err == nil && pub.DIDKey() == key {
+				return nil
+			}
+		}
+		if err != nil {
+			unresolved = append(unresolved, fmt.Sprintf("%s (%s)", trusted, err))
+		}
+	}
+	if len(unresolved) > 0 {
+		return fmt.Errorf("%w: signed by %s, trusted neither by %s nor by this node, whose trusted transcoders %s could not be resolved", ErrUntrustedTranscoder, key, streamer, strings.Join(unresolved, ", "))
+	}
+	return fmt.Errorf("%w: signed by %s, a transcoder trusted neither by %s nor by this node", ErrUntrustedTranscoder, key, streamer)
 }

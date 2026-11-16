@@ -46,8 +46,12 @@ if [ -d "$BUILDDIR" ]; then
 fi
 
 e2e_harness_start() {
-  if [ "${E2E_LATENCY:-}" = 1 ] && [ "${E2E_ERTMP:-}" = 1 ]; then
-    echo "choose one external publisher: E2E_LATENCY or E2E_ERTMP"
+  local publishers=0
+  for enabled in "${E2E_LATENCY:-}" "${E2E_ERTMP:-}" "${E2E_AUDIO_STEMS:-}"; do
+    if [ "$enabled" = 1 ]; then publishers=$((publishers + 1)); fi
+  done
+  if (( publishers > 1 )); then
+    echo "choose one external publisher: E2E_LATENCY, E2E_ERTMP or E2E_AUDIO_STEMS"
     exit 1
   fi
   if [ ! -x "$BUILDDIR/streamplace" ]; then
@@ -75,7 +79,7 @@ e2e_harness_start() {
   E2E_HTTPS_PDS_HOSTNAME="${E2E_HTTPS_PDS_HOSTNAME-localhost-pds.streamplace.network}"
   E2E_HTTPS_STATION_HOSTNAME="${E2E_HTTPS_STATION_HOSTNAME-localhost-station.streamplace.team}"
   local args=(e2e)
-  if [ "${E2E_LATENCY:-}" = 1 ] || [ "${E2E_ERTMP:-}" = 1 ]; then
+  if [ "${E2E_LATENCY:-}" = 1 ] || [ "${E2E_ERTMP:-}" = 1 ] || [ "${E2E_AUDIO_STEMS:-}" = 1 ]; then
     args+=(--external-stream)
   fi
   if [ "${E2E_UNAPPROVED_STREAM:-}" = 1 ]; then
@@ -104,6 +108,7 @@ e2e_harness_start() {
   export E2E_FIXTURE_MP4 PDS_HTTP_URL
   export E2E_UNAPPROVED_STREAM SERVER_INTERNAL_URL
   export E2E_STREAM_KEY
+  export E2E_PEER_MOQ_URL
   export E2E_RTMP_URL
   # Every node's log, for specs that check how something happened.
   export E2E_LOGFILE
@@ -114,6 +119,14 @@ e2e_harness_start() {
       setsid go run ./test/ertmp >&2 &
     else
       go run ./test/ertmp >&2 &
+    fi
+    E2E_PUBLISHER_PID=$!
+  fi
+  if [ "${E2E_AUDIO_STEMS:-}" = 1 ]; then
+    if command -v setsid >/dev/null 2>&1; then
+      setsid go run ./test/audio-stems >&2 &
+    else
+      go run ./test/audio-stems >&2 &
     fi
     E2E_PUBLISHER_PID=$!
   fi

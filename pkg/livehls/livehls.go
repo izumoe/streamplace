@@ -74,6 +74,7 @@ type Track struct {
 	Height     uint32
 	Channels   uint32
 	SampleRate uint32
+	Group      uint32
 
 	Segments []Segment
 
@@ -418,24 +419,74 @@ func (w *Writer) SegmentData(trackID string, seq uint64) []byte {
 	return nil
 }
 
+// HasAudioStems reports retained live Opus groups above the full mix's group.
+func (w *Writer) HasAudioStems() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.finished {
+		return false
+	}
+	w.evictExpired(w.now())
+	var main, highestOpus uint32
+	found := false
+	for _, track := range w.tracks {
+		if track.Type != "audio" || len(track.Segments) == 0 {
+			continue
+		}
+		if !found || track.Group < main {
+			main, found = track.Group, true
+		}
+		if track.Codec == "opus" && track.Group > highestOpus {
+			highestOpus = track.Group
+		}
+	}
+	return found && highestOpus > main
+}
+
 // PrimaryAudioTrackID returns the track ID of the primary audio track,
 // preferring AAC (broadest HLS support) over other codecs. Returns ""
 // if no audio track exists. The selection mirrors MasterPlaylist's logic.
 func (w *Writer) PrimaryAudioTrackID() string {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	primaryAudio := ""
+	return w.primaryAudio()
+}
+
+// mainAudioTracks lists the full mix's audio tracks (the lowest Group), in
+// order. Caller holds w.mu.
+func (w *Writer) mainAudioTracks() []string {
+	var main []string
+	var group uint32
 	for _, tid := range w.order {
-		if t := w.tracks[tid]; t != nil && t.Type == "audio" {
-			if primaryAudio == "" {
-				primaryAudio = tid
-			}
-			if strings.HasPrefix(t.Codec, "mp4a") {
-				return tid
-			}
+		t := w.tracks[tid]
+		if t == nil || t.Type != "audio" {
+			continue
+		}
+		switch {
+		case len(main) == 0 || t.Group < group:
+			main, group = []string{tid}, t.Group
+		case t.Group == group:
+			main = append(main, tid)
 		}
 	}
-	return primaryAudio
+	return main
+}
+
+// primaryAudio picks the default audio rendition from the full mix: AAC
+// (broadest HLS support — Safari has no Opus), else the first track. A
+// segment may carry both after codec completion. "" without audio. Caller
+// holds w.mu.
+func (w *Writer) primaryAudio() string {
+	main := w.mainAudioTracks()
+	for _, tid := range main {
+		if strings.HasPrefix(w.tracks[tid].Codec, "mp4a") {
+			return tid
+		}
+	}
+	if len(main) > 0 {
+		return main[0]
+	}
+	return ""
 }
 
 // MediaPlaylist renders the live HLS media playlist for trackID. initURL is
@@ -495,28 +546,11 @@ func (w *Writer) MasterPlaylist(trackURL func(trackID string) string) string {
 	var b strings.Builder
 	b.WriteString("#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-INDEPENDENT-SEGMENTS\n")
 
-	// Pick the primary audio rendition: prefer AAC (broadest HLS support —
-	// Safari has no Opus) so it's the default; any other codec (Opus) stays a
-	// selectable alternate. A segment may carry both after codec completion.
-	primaryAudio := ""
-	for _, tid := range w.order {
-		if t := w.tracks[tid]; t.Type == "audio" {
-			if primaryAudio == "" {
-				primaryAudio = tid
-			}
-			if strings.HasPrefix(t.Codec, "mp4a") {
-				primaryAudio = tid
-				break
-			}
-		}
-	}
+	primaryAudio := w.primaryAudio()
 	var audioCodec string
 	haveAudio := primaryAudio != ""
-	for _, tid := range w.order {
+	for _, tid := range w.mainAudioTracks() {
 		t := w.tracks[tid]
-		if t.Type != "audio" {
-			continue
-		}
 		def := "NO"
 		if tid == primaryAudio {
 			def = "YES"
@@ -578,6 +612,7 @@ func (w *Writer) applyCatalog(cat *muxl.MuxlCatalog) {
 			t.Timescale = c.Timescale()
 			t.Channels = c.NumberOfChannels
 			t.SampleRate = c.SampleRate
+			t.Group = c.AlternateGroup
 		}
 	}
 }

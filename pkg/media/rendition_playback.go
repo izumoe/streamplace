@@ -24,7 +24,7 @@ type sourceAudio struct {
 	tfdt        uint64 // the source video track's first decode time
 	timescale   uint32
 	needsH264   bool
-	opus        []byte // canonical Opus, nil when the source has no compatible audio
+	opus        []byte // main Opus and bounded stems; nil without a compatible full mix
 }
 
 // rememberSourceAudio keeps the replicated source's identity and video clock,
@@ -41,14 +41,24 @@ func (mm *MediaManager) rememberSourceAudio(did, sourceLabel string, events []*m
 	}
 	videoID = strconv.FormatUint(uint64(video.TrackID()), 10)
 	_, compatible := primaryVideoTrack(cat, 0, "avc1")
-	if cat.Audio != nil {
-		for _, a := range cat.Audio.Renditions {
-			if isOpusCodec(a.Codec) {
-				opusID = strconv.FormatUint(uint64(a.TrackID()), 10)
-				break
+	for _, a := range mainAudioTracks(audioTracks(cat)) {
+		if isOpusCodec(a.Codec) {
+			opusID = strconv.FormatUint(uint64(a.TrackID()), 10)
+			break
+		}
+	}
+	var opus []byte
+	if len(tracks[opusID]) > 0 {
+		opus = tracks[opusID]
+		stems := stemOpusTracks(audioTracks(cat))
+		if len(stems) > 0 {
+			opus = bytes.Clone(opus)
+			for _, stem := range stems {
+				opus = append(opus, tracks[strconv.FormatUint(uint64(stem.TrackID()), 10)]...)
 			}
 		}
 	}
+
 	if len(tracks[videoID]) == 0 {
 		return
 	}
@@ -71,14 +81,14 @@ func (mm *MediaManager) rememberSourceAudio(did, sourceLabel string, events []*m
 	for i := range list {
 		if list[i].tfdt == tfdt && list[i].timescale == video.Timescale() {
 			list[i].sourceLabel = sourceLabel
-			list[i].opus = tracks[opusID]
+			list[i].opus = opus
 			list[i].needsH264 = !compatible
 			replaced = true
 			break
 		}
 	}
 	if !replaced {
-		list = append(list, sourceAudio{sourceLabel: sourceLabel, tfdt: tfdt, timescale: video.Timescale(), needsH264: !compatible, opus: tracks[opusID]})
+		list = append(list, sourceAudio{sourceLabel: sourceLabel, tfdt: tfdt, timescale: video.Timescale(), needsH264: !compatible, opus: opus})
 	}
 	if len(list) > sourceAudioKeep {
 		drop := len(list) - sourceAudioKeep
@@ -106,6 +116,10 @@ func (mm *MediaManager) sourceAudioAt(did string, tfdt uint64, timescale uint32)
 // Opus audio, including an independently received EOS continuation. HLS and
 // packetized playback share one publication turn and source visibility.
 func (mm *MediaManager) PublishRenditionsForPlayback(ctx context.Context, did string, addendum []byte, published bool) error {
+	return mm.publishRenditionsForPlayback(ctx, did, addendum, published, nil)
+}
+
+func (mm *MediaManager) publishRenditionsForPlayback(ctx context.Context, did string, addendum []byte, published bool, verified []segmentValidation) error {
 	if err := mm.CheckPublisherContext(ctx); err != nil {
 		return err
 	}
@@ -130,6 +144,52 @@ func (mm *MediaManager) PublishRenditionsForPlayback(ctx context.Context, did st
 		_, _, source, err := mm.renditionPublication(did, events, published)
 		if err != nil {
 			return err
+		}
+		if len(verified) > 0 {
+			var data []byte
+			mm.segBuffersMut.Lock()
+			if buffer := mm.segBuffers[did]; buffer != nil {
+				for _, buffered := range buffer.segs {
+					if buffered.sourceLabel == source.sourceLabel {
+						data = buffered.Data
+						break
+					}
+				}
+			}
+			mm.segBuffersMut.Unlock()
+			if len(data) == 0 {
+				return ErrAudioSourceMissing
+			}
+			admitted, err := ValidateMP4MediaC2PA(ctx, data)
+			if err != nil {
+				return err
+			}
+			for _, asset := range verified {
+				// Supplied rungs are originals, not transcodes. Their signer and
+				// signed policy must authorize publication under the admitted stream.
+				if len(asset.Manifest.Ingredients) == 0 && asset.Cert == admitted.Cert {
+					original, err := ParseSegmentAssertions(ctx, &asset.Manifest)
+					if err != nil {
+						return err
+					}
+					if original.Creator != admitted.Meta.Creator {
+						return fmt.Errorf("rendition creator does not match admitted source")
+					}
+					if mm.cli.ContentFilters != nil {
+						if err := mm.applyContentFilters(ctx, original); err != nil {
+							return err
+						}
+					}
+					if !sameContentPolicy(original, admitted.Meta) {
+						return fmt.Errorf("rendition source policy does not match admitted source")
+					}
+					published = published && original.Published
+					continue
+				}
+				if err := checkRenditionIngredient(asset, admitted); err != nil {
+					return err
+				}
+			}
 		}
 		if err := mm.waitSourceHLS(ctx, did, source.sourceLabel); err != nil {
 			return err
@@ -186,12 +246,10 @@ func (mm *MediaManager) PublishRenditionsForPlayback(ctx context.Context, did st
 			continue // HLS can carry video without the Opus-dependent WebRTC path
 		}
 		name := RenditionName(config.CodedWidth, config.CodedHeight)
-		var flat bytes.Buffer
-		if err := muxl.RunMuxlWrap(ctx, bytes.NewReader(append(append([]byte{}, video...), audio.opus...)), "flat", &flat); err != nil {
-			log.Warn(ctx, "rendition playback: could not present rendition", "streamer", did, "rendition", name, "error", err)
-			continue
-		}
-		seg := &bus.Seg{Filepath: audio.sourceLabel, Data: flat.Bytes(), Published: published}
+		canonical := make([]byte, 0, len(video)+len(audio.opus))
+		canonical = append(canonical, video...)
+		canonical = append(canonical, audio.opus...)
+		seg := &bus.Seg{Filepath: audio.sourceLabel, Muxl: canonical, Published: published}
 		packet, err := Packetize(ctx, mm.cli, seg, 0)
 		if err != nil {
 			log.Warn(ctx, "rendition playback: could not packetize rendition", "streamer", did, "rendition", name, "error", err)

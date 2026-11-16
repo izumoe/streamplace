@@ -21,12 +21,14 @@ func TestWebPushNotifierBlast(t *testing.T) {
 	// Spin up a fake push service that records what it receives.
 	var (
 		gotPaths  []string
+		gotTTLs   []string
 		gotBodies [][]byte
 		status    int
 	)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/push/", func(w http.ResponseWriter, r *http.Request) {
 		gotPaths = append(gotPaths, r.URL.Path)
+		gotTTLs = append(gotTTLs, r.Header.Get("TTL"))
 		body, _ := io.ReadAll(r.Body)
 		gotBodies = append(gotBodies, body)
 		if status != 0 {
@@ -80,6 +82,7 @@ func TestWebPushNotifierBlast(t *testing.T) {
 	// The body is encrypted (RFC 8291), so it won't be our plaintext JSON —
 	// just confirm something non-empty was sent.
 	require.NotEmpty(t, gotBodies[0])
+	require.Equal(t, []string{"300"}, gotTTLs, "live alerts expire before they become stale")
 
 	// Now make the endpoint return 410 Gone and confirm we get an
 	// ExpiredSubscriptionError.

@@ -1,5 +1,36 @@
+import type { AudioStem } from "./audio-stems";
+
 export const STALL_TIMEOUT_MS = 10_000;
 const PLAYBACK_SCHEDULING_RESERVE_MS = 200;
+
+export function getMoqAudioStems(
+  catalog: Record<string, unknown>,
+): AudioStem[] {
+  const section = catalog.streamplace;
+  if (typeof section !== "object" || section === null) return [];
+  const descriptors = (section as Record<string, unknown>).audioStems;
+  if (!Array.isArray(descriptors) || descriptors.length > 2) return [];
+  const stems: AudioStem[] = [];
+  for (const descriptor of descriptors) {
+    if (typeof descriptor !== "object" || descriptor === null) return [];
+    const { alternateGroup, label } = descriptor;
+    if (
+      typeof alternateGroup !== "number" ||
+      !Number.isInteger(alternateGroup) ||
+      alternateGroup <= 0 ||
+      alternateGroup > 65535 ||
+      stems.some((stem) => stem.alternateGroup === alternateGroup)
+    )
+      return [];
+    if (
+      label !== undefined &&
+      (typeof label !== "string" || label.length > 256)
+    )
+      return [];
+    stems.push({ alternateGroup, label: label || `Track ${alternateGroup}` });
+  }
+  return stems.sort((a, b) => a.alternateGroup - b.alternateGroup);
+}
 
 export function getMoqBatchDuration(catalog: Record<string, unknown>) {
   const timing = catalog.streamplace;

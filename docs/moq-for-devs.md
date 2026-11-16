@@ -69,6 +69,24 @@ reassembles the signed segments, verifies them and checks that their creator is
 the requested streamer. Signature, streamer identity and distribution checks
 also apply before the origin serves source playback.
 
+Replicated codec completions and renditions must be signed by the streamer,
+this receiving node, or a configured trusted transcoder. The default external
+transcoder is `did:web:stream.place`. `SP_TRUSTED_TRANSCODERS` (or
+`--trusted-transcoders`) replaces that list with comma-separated station DIDs or
+`did:key` values. An explicitly empty value disables external transcoder trust;
+it still permits the streamer and this node's own key.
+
+A self-hosted origin that signs derivatives with its node key, including WHIP
+codec completion, must be explicitly trusted by its peers. Otherwise a completed
+source is rejected, while optional untrusted rendition addenda are dropped.
+This setting authorizes derivative signers, not streamers or distribution policy.
+Derived video ingredients must also belong to the admitted source. Independently
+carried original rungs must share the source certificate, signed creator and
+content policy; their own signed visibility and enabled expiry filters apply.
+Original rungs do not carry a shared session identifier, so these checks do not
+provide exact reconnect replay prevention for originals using the same still
+authorized key. Derivatives retain the precise ingredient check.
+
 The browser player decodes the media without independently verifying MUXL
 signatures. It relies on the serving node's verification. The catalog itself is
 unsigned and serves as a track directory; receiving nodes verify the media

@@ -5,11 +5,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
 	"strconv"
 	"time"
 
 	"stream.place/streamplace/pkg/bus"
+	"stream.place/streamplace/pkg/crypto/signers"
 	"stream.place/streamplace/pkg/localdb"
 	"stream.place/streamplace/pkg/muxl"
 )
@@ -25,10 +25,19 @@ func (mm *MediaManager) ReceiveRenditions(ctx context.Context, did string, data 
 	if err != nil {
 		return err
 	}
+	for _, segment := range segments {
+		pub, err := signers.ParseES256KCert([]byte(segment.Cert))
+		if err != nil {
+			return err
+		}
+		if err := mm.trustTranscoder(ctx, pub.DIDKey(), did); err != nil {
+			return fmt.Errorf("rendition track %d: %w", segment.TrackID, err)
+		}
+	}
 	if tail {
 		return mm.receiveAudioAddendum(ctx, did, data, segments)
 	}
-	return mm.PublishRenditionsForPlayback(context.WithoutCancel(ctx), did, data, true)
+	return mm.publishRenditionsForPlayback(context.WithoutCancel(ctx), did, data, true, segments)
 }
 
 func verifiedRenditions(ctx context.Context, data []byte) ([]segmentValidation, bool, error) {
@@ -159,7 +168,7 @@ func (mm *MediaManager) receiveAudioAddendum(ctx context.Context, did string, da
 		if contributor != nil && (source.Local != contributor.Local || source.publisherGeneration != contributor.publisherGeneration) {
 			return fmt.Errorf("audio ingredients cross publisher admissions")
 		}
-		if policy != nil && (!reflect.DeepEqual(policy.ContentWarnings, valid.Meta.ContentWarnings) || !reflect.DeepEqual(policy.ContentRights, valid.Meta.ContentRights) || !reflect.DeepEqual(policy.DistributionPolicy, valid.Meta.DistributionPolicy) || !reflect.DeepEqual(policy.MetadataConfiguration, valid.Meta.MetadataConfiguration)) {
+		if policy != nil && !sameContentPolicy(policy, valid.Meta) {
 			published = false
 		}
 		contributor, policy = source, valid.Meta

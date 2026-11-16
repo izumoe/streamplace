@@ -1,6 +1,7 @@
 import {
   expect,
   test,
+  type APIRequestContext,
   type Locator,
   type Page,
   type TestInfo,
@@ -291,10 +292,19 @@ test("Enhanced RTMP keeps same-height H264 tracks distinct and decodes supported
   expect(pageErrors).toEqual([]);
 });
 
-test("MoQ plays real video and audio, pauses, and releases resources on transport switch", async ({
-  page,
-  request,
-}, testInfo) => {
+async function checkMoqPlayback(
+  { page, request }: { page: Page; request: APIRequestContext },
+  testInfo: TestInfo,
+  audioPath: "shared" | "postMessage",
+) {
+  if (audioPath === "postMessage") {
+    await page.addInitScript(() => {
+      Object.defineProperty(window, "SharedArrayBuffer", {
+        configurable: true,
+        value: undefined,
+      });
+    });
+  }
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
   const network = await page.context().newCDPSession(page);
@@ -400,8 +410,10 @@ test("MoQ plays real video and audio, pauses, and releases resources on transpor
   await player.locator('button[title="Unmute"]').click();
   await expectAudioPlaying(page, testInfo);
 
-  // The harness publisher keeps running while only the receiver's thread stalls.
-  const audioDuringStall = await page.evaluate(async () => {
+  // The worklet can only play PCM already decoded before the main thread stops.
+  // Leave 25 ms above the 200 ms stall for cursor-report and render-quantum lag.
+  const requiredHeadroomMs = 225;
+  const audioDuringStall = await page.evaluate(async (requiredHeadroomMs) => {
     const audible = () =>
       window.moqAudioAnalysers!.some((analyser) => {
         const samples = new Float32Array(analyser.fftSize);
@@ -422,6 +434,7 @@ test("MoQ plays real video and audio, pauses, and releases resources on transpor
       write: Atomics.load(shared.control, 0),
       stalled: Atomics.load(shared.control, 2) !== 0,
       timeline: Atomics.load(shared.control, 3),
+      latencyMs: (Atomics.load(shared.control, 1) / shared.rate) * 1000,
     });
     do {
       buffer = window.moqAudioBuffers!.find((output) => {
@@ -445,10 +458,15 @@ test("MoQ plays real video and audio, pauses, and releases resources on transpor
           ? (buffer.end! - buffer.positions.at(-1)!.timestamp) / 1000
           : undefined;
       }
-      if (headroomMs !== undefined && headroomMs <= 150) break;
+      if (headroomMs !== undefined && headroomMs >= requiredHeadroomMs) break;
       await new Promise((resolve) => setTimeout(resolve, 5));
     } while (performance.now() < deadline);
     if (!buffer) throw new Error("No active native MoQ audio buffer");
+    if (headroomMs === undefined || headroomMs < requiredHeadroomMs) {
+      throw new Error(
+        `Native audio has ${headroomMs ?? 0} ms of PCM; ${requiredHeadroomMs} ms required before the stall`,
+      );
+    }
     const positionCount = buffer.positions.length;
     const before = audible();
     const sharedBefore = buffer.shared
@@ -487,11 +505,15 @@ test("MoQ plays real video and audio, pauses, and releases resources on transpor
             }
           : undefined,
     };
-  });
+  }, requiredHeadroomMs);
   await testInfo.attach("native-audio-main-thread-stall", {
     body: JSON.stringify(audioDuringStall),
     contentType: "application/json",
   });
+  expect(audioDuringStall.headroomMs).toBeGreaterThanOrEqual(
+    requiredHeadroomMs,
+  );
+  expect(Boolean(audioDuringStall.shared)).toBe(audioPath === "shared");
   expect(audioDuringStall.before).toBe(true);
   expect(audioDuringStall.after).toBe(true);
   if (audioDuringStall.shared) {
@@ -573,6 +595,9 @@ test("MoQ plays real video and audio, pauses, and releases resources on transpor
       ),
     )
     .toBe(true);
+  await expect
+    .poll(() => page.evaluate(() => window.moqAudioBuffers!.length))
+    .toBe(0);
   await expect
     .poll(() => [...established].every((id) => closed.has(id)))
     .toBe(true);
@@ -768,7 +793,14 @@ test("MoQ plays real video and audio, pauses, and releases resources on transpor
   await stats.getByRole("button", { name: "Close", exact: true }).click();
   await expect(stats).not.toBeVisible();
   expect(pageErrors).toEqual([]);
-});
+}
+
+for (const audioPath of ["shared", "postMessage"] as const) {
+  test(`MoQ plays real video and audio, pauses, and releases resources on transport switch (${audioPath})`, async ({
+    page,
+    request,
+  }, testInfo) => checkMoqPlayback({ page, request }, testInfo, audioPath));
+}
 
 test("MoQ connection loss falls back to a live transport that decodes video", async ({
   page,

@@ -3,7 +3,10 @@ package cmd
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"net"
@@ -18,6 +21,7 @@ import (
 	"time"
 
 	comatproto "github.com/bluesky-social/indigo/api/atproto"
+	"github.com/bluesky-social/indigo/atproto/atcrypto"
 	"github.com/bluesky-social/indigo/util"
 	"github.com/bluesky-social/indigo/xrpc"
 	"github.com/google/uuid"
@@ -30,6 +34,7 @@ import (
 	"stream.place/streamplace/pkg/config"
 	"stream.place/streamplace/pkg/crypto/spkey"
 	"stream.place/streamplace/pkg/log"
+	"stream.place/streamplace/pkg/moq"
 	"stream.place/streamplace/pkg/placestream"
 	"stream.place/streamplace/test/remote"
 )
@@ -237,6 +242,10 @@ func waitForNode(ctx context.Context, httpAddr string) error {
 }
 
 func runE2E(ctx context.Context, devEnvPath, httpsPDSHost, httpsStationHost string, httpsPort int, appBundleID string, externalStream, unapprovedStream bool, peerBinary string, websocketReplication bool) error {
+	audioStems := os.Getenv("E2E_AUDIO_STEMS") == "1"
+	if audioStems && (!externalStream || unapprovedStream || websocketReplication) {
+		return fmt.Errorf("audio stem fixtures require an approved external stream and MoQ replication")
+	}
 	// Ctrl-C / SIGTERM must unwind through the normal path, or none of the
 	// teardown below runs: Go's default handling exits immediately, which left
 	// the dev-env node, the forked node and the temp data dir behind.
@@ -397,6 +406,9 @@ func runE2E(ctx context.Context, devEnvPath, httpsPDSHost, httpsStationHost stri
 		fmt.Sprintf("SP_WEBSOCKET_URL=ws://%s", httpAddr),
 		fmt.Sprintf("SP_MOQ_URL=moqt://127.0.0.1:%d", moqPort),
 	}
+	if audioStems {
+		nodeEnv = append(nodeEnv, "SP_SYNDICATE="+out.Did)
+	}
 	if !unapprovedStream {
 		nodeEnv = append(nodeEnv, fmt.Sprintf("SP_ALLOWED_STREAMS=%s", out.Did))
 	}
@@ -418,6 +430,11 @@ func runE2E(ctx context.Context, devEnvPath, httpsPDSHost, httpsStationHost stri
 	defer killNode(ctx, nodeCmd, out.Did)
 	if err := waitForNode(ctx, httpAddr); err != nil {
 		return err
+	}
+
+	stationKey, err := e2eStationKey(ctx, httpAddr)
+	if err != nil {
+		return fmt.Errorf("station key: %w", err)
 	}
 
 	// A second node, a peer that syndicates whatever the first ingests: it
@@ -448,6 +465,7 @@ func runE2E(ctx context.Context, devEnvPath, httpsPDSHost, httpsStationHost stri
 	}
 	defer os.RemoveAll(peerDataDir) //nolint:errcheck
 	peerEnv := []string{
+		"SP_TRUSTED_TRANSCODERS=" + stationKey,
 		fmt.Sprintf("SP_ALLOWED_STREAMS=%s", out.Did),
 		fmt.Sprintf("SP_HTTP_ADDR=%s", peerAddr),
 		fmt.Sprintf("SP_HTTP_INTERNAL_ADDR=127.0.0.1:%d", peerInternalPort),
@@ -542,6 +560,34 @@ func runE2E(ctx context.Context, devEnvPath, httpsPDSHost, httpsStationHost stri
 	// Stream a test fixture in a loop so it outlasts any Maestro test run.
 	fixture := ""
 	g, streamCtx := errgroup.WithContext(ctx)
+	if audioStems {
+		origin, err := e2eAudioStemOrigin(filepath.Join(dataDir, "moq-tls", "tls.crt"), broadcasterHost, out.Did, moqPort)
+		if err != nil {
+			return fmt.Errorf("audio stem origin: %w", err)
+		}
+		publish := func() error {
+			origin.UpdatedAt = time.Now().UTC().Format(util.ISO8601)
+			return putRecord(streamCtx, xrpcc, "place.stream.broadcast.origin", out.Did, out.Did+"::"+origin.Server, origin)
+		}
+		if err := publish(); err != nil {
+			return fmt.Errorf("advertise audio stem fixture: %w", err)
+		}
+		g.Go(func() error {
+			ticker := time.NewTicker(30 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-streamCtx.Done():
+					return nil
+				case <-ticker.C:
+					if err := publish(); err != nil {
+						return fmt.Errorf("refresh audio stem origin: %w", err)
+					}
+				}
+			}
+		})
+	}
+
 	if !externalStream {
 		fixture = remote.RemoteFixture("3188c071b354f2e548d7f2d332699758e8e3ab1600280e5b07cb67eedc64f274/BigBuckBunny_1sGOP_240p30_NoBframes.mp4")
 		g.Go(func() error {
@@ -577,6 +623,13 @@ func runE2E(ctx context.Context, devEnvPath, httpsPDSHost, httpsStationHost stri
 	// plain-HTTP listener, for host-side checks of the records it stores.
 	vars := fmt.Sprintf("SERVER_URL=http://%s\nSERVER2_URL=http://%s\nACCOUNT_HANDLE=%s\nACCOUNT_DID=%s\nACCOUNT_PASSWORD=%s\nVIDEO_URI=%s\nE2E_FIXTURE_MP4=%s\nPDS_HTTP_URL=%s\n",
 		httpAddr, peerAddr, out.Handle, out.Did, password, videoURI, fixture, env.PDSURL)
+	if audioStems {
+		peerOrigin, err := e2eAudioStemOrigin(filepath.Join(peerDataDir, "moq-tls", "tls.crt"), peerAddr, out.Did, peerMoqPort)
+		if err != nil {
+			return fmt.Errorf("audio stem peer listener: %w", err)
+		}
+		vars += "E2E_PEER_MOQ_URL=" + *peerOrigin.MoqURL + "\n"
+	}
 	if externalStream || unapprovedStream {
 		vars += "E2E_STREAM_KEY=" + priv + "\n"
 	}
@@ -631,4 +684,55 @@ func publishLexicons(ctx context.Context, env e2eDevEnv) error {
 		}
 	}
 	return nil
+}
+
+// e2eStationKey returns the did:key the node at httpAddr signs transcodes with,
+// as a bare did:key because the harness's nodes serve plain HTTP.
+func e2eStationKey(ctx context.Context, httpAddr string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://%s/.well-known/did.json", httpAddr), nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("did.json: %s", resp.Status)
+	}
+	var doc struct {
+		VerificationMethod []struct {
+			PublicKeyMultibase string `json:"publicKeyMultibase"`
+		} `json:"verificationMethod"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
+		return "", fmt.Errorf("decode did.json: %w", err)
+	}
+	if len(doc.VerificationMethod) == 0 {
+		return "", fmt.Errorf("did.json publishes no key")
+	}
+	pub, err := atcrypto.ParsePublicMultibase(doc.VerificationMethod[0].PublicKeyMultibase)
+	if err != nil {
+		return "", err
+	}
+	return pub.DIDKey(), nil
+}
+
+// The signed fixture arrives as replicated media, so its harness account advertises it.
+func e2eAudioStemOrigin(certPath, host, did string, port int) (*placestream.BroadcastOrigin, error) {
+	cert, err := os.ReadFile(certPath)
+	if err != nil {
+		return nil, err
+	}
+	block, _ := pem.Decode(cert)
+	if block == nil || block.Type != "CERTIFICATE" {
+		return nil, fmt.Errorf("invalid listener certificate")
+	}
+	fingerprint := sha256.Sum256(block.Bytes)
+	endpoint := url.URL{Scheme: "moqt", Host: fmt.Sprintf("127.0.0.1:%d", port), RawQuery: url.Values{moq.CertHashParam: {hex.EncodeToString(fingerprint[:])}}.Encode()}
+	raw := endpoint.String()
+	websocket := url.URL{Scheme: "ws", Host: host, Path: "/xrpc/place.stream.live.subscribeSegments", RawQuery: url.Values{"streamer": {did}}.Encode()}
+	websocketURL := websocket.String()
+	return &placestream.BroadcastOrigin{LexiconTypeID: "place.stream.broadcast.origin", Streamer: did, Server: "did:web:" + host, MoqURL: &raw, WebsocketURL: &websocketURL}, nil
 }

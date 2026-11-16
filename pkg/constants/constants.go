@@ -2,6 +2,8 @@ package constants
 
 import "fmt"
 
+const IndefiniteArchival = -1
+
 var PLACE_STREAM_KEY = "place.stream.key"                                     //nolint:all
 var PLACE_STREAM_LIVESTREAM = "place.stream.livestream"                       //nolint:all
 var PLACE_STREAM_CHAT_MESSAGE = "place.stream.chat.message"                   //nolint:all

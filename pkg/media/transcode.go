@@ -19,10 +19,74 @@ import (
 )
 
 // Audio codec identification. muxl catalogs carry the MIME-ish codec string
-// (`mp4a.40.2` for AAC, `opus` for Opus). We complete every segment to carry
-// one of each so downstream pipelines can pick what they need.
+// (`mp4a.40.2` for AAC, `opus` for Opus). The main mix is completed to both.
 func isAACCodec(codec string) bool  { return strings.HasPrefix(codec, "mp4a") }
 func isOpusCodec(codec string) bool { return strings.HasPrefix(codec, "opus") }
+
+const maxStems = 2
+
+// audioTracks returns a catalog's audio renditions in track-id order.
+func audioTracks(cat *muxl.MuxlCatalog) []muxl.MuxlAudioConfig {
+	if cat == nil || cat.Audio == nil {
+		return nil
+	}
+	out := make([]muxl.MuxlAudioConfig, 0, len(cat.Audio.Renditions))
+	for _, a := range cat.Audio.Renditions {
+		out = append(out, a)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].TrackID() < out[j].TrackID() })
+	return out
+}
+
+// mainAudioGroup is the lowest alternateGroup among tracks: 0 for an
+// ungrouped segment.
+func mainAudioGroup(tracks []muxl.MuxlAudioConfig) uint32 {
+	var g uint32
+	for i, a := range tracks {
+		if i == 0 || a.AlternateGroup < g {
+			g = a.AlternateGroup
+		}
+	}
+	return g
+}
+
+// mainAudioTracks returns the main group's tracks (see mainAudioGroup), in
+// track-id order.
+func mainAudioTracks(tracks []muxl.MuxlAudioConfig) []muxl.MuxlAudioConfig {
+	g := mainAudioGroup(tracks)
+	var out []muxl.MuxlAudioConfig
+	for _, a := range tracks {
+		if a.AlternateGroup == g {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// stemOpusTracks selects one Opus track per higher group, sorted and bounded.
+func stemOpusTracks(tracks []muxl.MuxlAudioConfig) []muxl.MuxlAudioConfig {
+	main := mainAudioGroup(tracks)
+	byGroup := map[uint32]muxl.MuxlAudioConfig{}
+	var groups []uint32
+	for _, a := range tracks {
+		if a.AlternateGroup <= main || !isOpusCodec(a.Codec) {
+			continue
+		}
+		if _, seen := byGroup[a.AlternateGroup]; !seen {
+			groups = append(groups, a.AlternateGroup)
+			byGroup[a.AlternateGroup] = a
+		}
+	}
+	sort.Slice(groups, func(i, j int) bool { return groups[i] < groups[j] })
+	if len(groups) > maxStems {
+		groups = groups[:maxStems]
+	}
+	out := make([]muxl.MuxlAudioConfig, 0, len(groups))
+	for _, g := range groups {
+		out = append(out, byGroup[g])
+	}
+	return out
+}
 
 // transcodeManifestFor is the C2PA manifest a transcoded track is signed
 // with: opened + transcoded actions over the source ingredient, and the
@@ -88,18 +152,17 @@ func (mm *MediaManager) audioCompletionTarget(ctx context.Context, seg []byte) (
 		log.Warn(ctx, "codec-completion inspect: unwrap failed", "error", err)
 		return "", false
 	}
-	cat := catalogFromEvents(events)
-	if cat == nil || cat.Audio == nil || cat.Video == nil {
+	return completionTarget(catalogFromEvents(events))
+}
+
+func completionTarget(cat *muxl.MuxlCatalog) (target string, need bool) {
+	if cat == nil || cat.Video == nil {
 		return "", false
 	}
 	var haveAAC, haveOpus bool
-	for _, a := range cat.Audio.Renditions {
-		if isAACCodec(a.Codec) {
-			haveAAC = true
-		}
-		if isOpusCodec(a.Codec) {
-			haveOpus = true
-		}
+	for _, a := range mainAudioTracks(audioTracks(cat)) {
+		haveAAC = haveAAC || isAACCodec(a.Codec)
+		haveOpus = haveOpus || isOpusCodec(a.Codec)
 	}
 	return missingAudioCodec(haveAAC, haveOpus)
 }
@@ -107,11 +170,20 @@ func (mm *MediaManager) audioCompletionTarget(ctx context.Context, seg []byte) (
 // Validation already parsed the source's codecs. Reuse them rather than
 // instantiating another WASM module just to inspect its catalog.
 func audioCompletionTargetFromMedia(data *localdb.SegmentMediaData) (target string, need bool) {
-	if len(data.Video) == 0 {
+	if data == nil || len(data.Video) == 0 {
 		return "", false
+	}
+	var group uint32
+	for i, audio := range data.Audio {
+		if i == 0 || audio.AlternateGroup < group {
+			group = audio.AlternateGroup
+		}
 	}
 	var haveAAC, haveOpus bool
 	for _, audio := range data.Audio {
+		if audio.AlternateGroup != group {
+			continue
+		}
 		haveAAC = haveAAC || audio.Codec == "aac"
 		haveOpus = haveOpus || audio.Codec == "opus"
 	}
@@ -424,32 +496,48 @@ func selectSegmentTracks(ctx context.Context, seg []byte, videoID uint32, videoC
 }
 
 func selectEventTracks(events []*muxl.MuxlEvent, videoID uint32, videoCodec string, wantOpus bool) ([]byte, error) {
+	data, _, err := playbackTracks(events, videoID, videoCodec, wantOpus, false)
+	return data, err
+}
+
+func playbackTracks(events []*muxl.MuxlEvent, videoID uint32, videoCodec string, wantOpus, stems bool) ([]byte, []muxl.MuxlAudioConfig, error) {
 	cat := catalogFromEvents(events)
 	keep := map[uint32]bool{}
+	var audio []muxl.MuxlAudioConfig
+	allAudio := audioTracks(cat)
 	if cat != nil && cat.Video != nil && len(cat.Video.Renditions) > 0 {
 		video, ok := primaryVideoTrack(cat, videoID, videoCodec)
 		if !ok {
-			return nil, fmt.Errorf("no compatible video track %d (%s)", videoID, videoCodec)
+			return nil, nil, fmt.Errorf("no compatible video track %d (%s)", videoID, videoCodec)
 		}
 		keep[video.TrackID()] = true
 	} else if videoID != 0 {
-		return nil, fmt.Errorf("video track %d missing", videoID)
+		return nil, nil, fmt.Errorf("video track %d missing", videoID)
 	}
 	if cat != nil && cat.Audio != nil && len(cat.Audio.Renditions) > 0 {
 		var chosen uint32
+		var selected muxl.MuxlAudioConfig
 		found := false
-		for _, audio := range cat.Audio.Renditions {
+		for _, audio := range mainAudioTracks(allAudio) {
 			if (wantOpus && isOpusCodec(audio.Codec)) || (!wantOpus && isAACCodec(audio.Codec)) {
 				if !found || audio.TrackID() < chosen {
-					chosen, found = audio.TrackID(), true
+					chosen, selected, found = audio.TrackID(), audio, true
 				}
 			}
 		}
 		if !found {
-			return nil, fmt.Errorf("requested audio codec unavailable (opus=%t)", wantOpus)
+			return nil, nil, fmt.Errorf("requested audio codec unavailable (opus=%t)", wantOpus)
 		}
 		keep[chosen] = true
+		audio = append(audio, selected)
+		if stems {
+			for _, stem := range stemOpusTracks(allAudio) {
+				keep[stem.TrackID()] = true
+				audio = append(audio, stem)
+			}
+		}
 	}
+	sort.Slice(audio, func(i, j int) bool { return audio[i].TrackID() < audio[j].TrackID() })
 	ids := make([]uint32, 0, len(keep))
 	for id := range keep {
 		ids = append(ids, id)
@@ -465,7 +553,13 @@ func selectEventTracks(events []*muxl.MuxlEvent, videoID uint32, videoCodec stri
 		}
 	}
 	if len(out) == 0 {
-		return nil, fmt.Errorf("segment has no selected tracks")
+		return nil, nil, fmt.Errorf("segment has no selected tracks")
 	}
-	return out, nil
+	return out, audio, nil
+}
+
+// PlaybackAudioGroups shares main/stem selection with native MoQ publication.
+func PlaybackAudioGroups(cat *muxl.MuxlCatalog) (uint32, []muxl.MuxlAudioConfig) {
+	tracks := audioTracks(cat)
+	return mainAudioGroup(tracks), stemOpusTracks(tracks)
 }
