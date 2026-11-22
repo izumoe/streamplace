@@ -12,12 +12,20 @@ import {
   Square,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { place } from "streamplace";
 import { useStore } from "zustand";
 import {
+  useOAuthSession,
   usePDSAgent,
   useStreamplaceUrl,
   useUserProfile,
@@ -59,6 +67,7 @@ const LANG_TAG_PREFIX = "lang:";
 export function StreamInfoWidget({ store }: { store: LivestreamStore }) {
   const { t } = useTranslation("common");
   const agent = usePDSAgent();
+  const session = useOAuthSession();
   const url = useStreamplaceUrl();
   const profile = useUserProfile();
   const liveStore = useDashboardStore();
@@ -84,10 +93,58 @@ export function StreamInfoWidget({ store }: { store: LivestreamStore }) {
     string | undefined
   >();
   const [createPost, setCreatePost] = useState(true);
-  const [idleTimeout, setIdleTimeout] = useState(true);
+  const [postPermission, setPostPermission] = useState<{
+    session: NonNullable<typeof session>;
+    allowed: boolean;
+  } | null>(null);
+  const canPost =
+    !session || (postPermission?.session === session && postPermission.allowed);
+  const postingPending = !!session && postPermission?.session !== session;
+  const postingDenied =
+    !!session && postPermission?.session === session && !postPermission.allowed;
+  const [optionEdits, setOptionEdits] = useState<{
+    uri?: string;
+    canonicalUrl?: string;
+    pushNotification?: boolean;
+    idleTimeout?: boolean;
+  }>();
+  const edits = optionEdits?.uri === livestream?.uri ? optionEdits : undefined;
+  const canonicalUrl =
+    edits?.canonicalUrl ?? livestream?.record.canonicalUrl ?? "";
+  const sendPushNotification =
+    edits?.pushNotification ??
+    livestream?.record.notificationSettings?.pushNotification ??
+    true;
+  const idleTimeout =
+    edits?.idleTimeout ?? (livestream?.record.idleTimeoutSeconds ?? 300) > 0;
+  const canonicalUrlId = useId();
   const [loading, setLoading] = useState(false);
   const [endingLivestream, setEndingLivestream] = useState(false);
   const initializedRef = useRef(false);
+
+  useEffect(() => {
+    if (!session) return;
+    const controller = new AbortController();
+    void (async () => {
+      let allowed = true;
+      try {
+        const response = await session.fetchHandler("/oauth/introspect", {
+          method: "POST",
+          signal: controller.signal,
+        });
+        const info = response.ok ? await response.json() : null;
+        if (info?.active && typeof info.scope === "string") {
+          allowed = info.scope
+            .split(" ")
+            .includes("repo?collection=app.bsky.feed.post&action=create");
+        }
+      } catch {
+        // Older nodes may not expose introspection; the server still enforces permissions.
+      }
+      if (!controller.signal.aborted) setPostPermission({ session, allowed });
+    })();
+    return () => controller.abort();
+  }, [session]);
 
   useEffect(() => {
     if (!livestream || initializedRef.current) return;
@@ -99,9 +156,6 @@ export function StreamInfoWidget({ store }: { store: LivestreamStore }) {
       );
     }
     if (livestream.record.tags) setTags(livestream.record.tags as string[]);
-    if (typeof livestream.record.idleTimeoutSeconds === "number") {
-      setIdleTimeout(livestream.record.idleTimeoutSeconds > 0);
-    }
   }, [livestream]);
 
   useEffect(() => {
@@ -110,7 +164,21 @@ export function StreamInfoWidget({ store }: { store: LivestreamStore }) {
     }
   }, [livestream]);
 
-  const canSubmit = title.trim().length > 0 && !loading;
+  const validCanonicalUrl = useMemo(() => {
+    const value = canonicalUrl.trim();
+    if (!value) return true;
+    if (!/^https?:\/\/\S+$/i.test(value)) return false;
+    try {
+      return !!new URL(value).hostname;
+    } catch {
+      return false;
+    }
+  }, [canonicalUrl]);
+  const canSubmit =
+    title.trim().length > 0 &&
+    validCanonicalUrl &&
+    !loading &&
+    !((!hasLivestream || isEnded) && createPost && postingPending);
   const canEnd = hasLivestream && !isEnded && !endingLivestream;
 
   const buttonText = useMemo(() => {
@@ -165,13 +233,25 @@ export function StreamInfoWidget({ store }: { store: LivestreamStore }) {
     setLoading(true);
 
     try {
+      const starting = !hasLivestream || isEnded;
       const record = {
+        ...(starting
+          ? {
+              url: `${url}/${agent.did}`,
+              createdAt: new Date().toISOString(),
+              lastSeenAt: new Date().toISOString(),
+            }
+          : livestream!.record),
         $type: "place.stream.livestream",
         title: title.trim(),
-        url: `${url}/${agent.did}` as any,
-        createdAt: new Date().toISOString() as any,
-        lastSeenAt: new Date().toISOString() as any,
-        idleTimeoutSeconds: idleTimeout ? 300 : 0,
+        canonicalUrl: canonicalUrl.trim() || undefined,
+        notificationSettings: {
+          ...(!starting && livestream?.record.notificationSettings),
+          pushNotification: sendPushNotification,
+        },
+        idleTimeoutSeconds: idleTimeout
+          ? livestream?.record.idleTimeoutSeconds || 300
+          : 0,
         activity,
         tags: tags.length > 0 ? tags : undefined,
       } as any;
@@ -187,32 +267,38 @@ export function StreamInfoWidget({ store }: { store: LivestreamStore }) {
         }
       }
 
-      if (!hasLivestream || isEnded) {
-        const result = await agent.client.call(
-          place.stream.live.startLivestream,
-          {
-            livestream: record,
-            streamer: agent.did as any,
-            createBlueskyPost: createPost,
-          },
-        );
+      if (starting) {
+        await agent.client.call(place.stream.live.startLivestream, {
+          livestream: record,
+          streamer: agent.did as any,
+          createBlueskyPost: createPost && canPost,
+        });
         toast.success(
           t("livestream-announced", { defaultValue: "Livestream announced" }),
         );
       } else {
         const rkey = livestream!.uri.split("/").pop();
         if (!rkey) throw new Error("No rkey");
-        // Keep existing thumbnail on updates when no new one was selected
-        if (!record.thumb && livestream!.record.thumb) {
-          record.thumb = livestream!.record.thumb;
-        }
-        record.post = livestream!.record.post;
-        await agent.com.atproto.repo.putRecord({
+        const response = await agent.com.atproto.repo.putRecord({
           repo: agent.did,
           collection: "place.stream.livestream",
           rkey,
+          swapRecord: livestream!.cid,
           record,
         });
+        store.setState((state) =>
+          state.livestream?.uri === livestream!.uri &&
+          state.livestream.cid === livestream!.cid
+            ? {
+                livestream: {
+                  ...state.livestream,
+                  record,
+                  cid: response.data.cid,
+                },
+              }
+            : state,
+        );
+        setOptionEdits((current) => (current === edits ? undefined : current));
         toast.success(
           t("livestream-updated", { defaultValue: "Livestream updated" }),
         );
@@ -231,6 +317,11 @@ export function StreamInfoWidget({ store }: { store: LivestreamStore }) {
     tags,
     thumbnail,
     createPost,
+    canPost,
+    edits,
+    store,
+    sendPushNotification,
+    canonicalUrl,
     idleTimeout,
     canSubmit,
     hasLivestream,
@@ -478,10 +569,56 @@ export function StreamInfoWidget({ store }: { store: LivestreamStore }) {
 
         {/* Options */}
         <div className="space-y-2 rounded-md border border-(--color-border) p-3">
+          <div className="space-y-1.5">
+            <label
+              htmlFor={canonicalUrlId}
+              className="block text-sm text-(--color-fg)"
+            >
+              {t("canonical-url", { defaultValue: "Canonical URL" })}
+            </label>
+            <Input
+              id={canonicalUrlId}
+              type="url"
+              value={canonicalUrl}
+              disabled={loading}
+              onChange={(e) =>
+                setOptionEdits({
+                  ...edits,
+                  uri: livestream?.uri,
+                  canonicalUrl: e.target.value,
+                })
+              }
+              placeholder={`${url}/${profile?.handle ?? agent.did}`}
+              aria-invalid={!validCanonicalUrl}
+              aria-describedby={`${canonicalUrlId}-description`}
+            />
+            <p
+              id={`${canonicalUrlId}-description`}
+              className={cn(
+                "text-xs",
+                validCanonicalUrl
+                  ? "text-(--color-fg-muted)"
+                  : "text-destructive",
+              )}
+            >
+              {validCanonicalUrl
+                ? t("canonical-url-description", {
+                    defaultValue:
+                      "Link used in announcements. Leave blank to use this node’s stream page.",
+                  })
+                : t("canonical-url-invalid", {
+                    defaultValue: "Enter a complete http:// or https:// URL.",
+                  })}
+            </p>
+          </div>
           <label className="flex cursor-pointer items-center gap-2">
             <input
               type="checkbox"
-              checked={createPost}
+              checked={createPost && !postingDenied}
+              disabled={postingDenied || loading}
+              aria-describedby={
+                postingDenied ? `${canonicalUrlId}-posting` : undefined
+              }
               onChange={(e) => setCreatePost(e.target.checked)}
               className="rounded border-(--color-border)"
             />
@@ -491,11 +628,57 @@ export function StreamInfoWidget({ store }: { store: LivestreamStore }) {
               })}
             </span>
           </label>
+          {postingDenied && (
+            <div
+              id={`${canonicalUrlId}-posting`}
+              className="space-y-1 text-xs text-(--color-fg-muted)"
+            >
+              <p>
+                {t("bluesky-post-permission-missing", {
+                  defaultValue:
+                    "you haven't given us permission to post Bluesky posts for you",
+                })}
+              </p>
+              <p>
+                {t("bluesky-post-permission-sign-in", {
+                  defaultValue:
+                    "sign in again with Bluesky access enabled to change this.",
+                })}
+              </p>
+            </div>
+          )}
+          <label className="flex cursor-pointer items-center gap-2">
+            <input
+              type="checkbox"
+              checked={sendPushNotification}
+              disabled={loading}
+              onChange={(e) =>
+                setOptionEdits({
+                  ...edits,
+                  uri: livestream?.uri,
+                  pushNotification: e.target.checked,
+                })
+              }
+              className="rounded border-(--color-border)"
+            />
+            <span className="text-sm text-(--color-fg)">
+              {t("send-push-notification", {
+                defaultValue: "Send push notification",
+              })}
+            </span>
+          </label>
           <label className="flex cursor-pointer items-center gap-2">
             <input
               type="checkbox"
               checked={idleTimeout}
-              onChange={(e) => setIdleTimeout(e.target.checked)}
+              disabled={loading}
+              onChange={(e) =>
+                setOptionEdits({
+                  ...edits,
+                  uri: livestream?.uri,
+                  idleTimeout: e.target.checked,
+                })
+              }
               className="rounded border-(--color-border)"
             />
             <span className="text-sm text-(--color-fg)">
