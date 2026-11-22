@@ -32,6 +32,12 @@ content-warning-title = Heads up!
 content-warning-description = This may contain:
 
 ## Input Placeholders
+canonical-url = Canonical URL
+canonical-url-description = Link used in announcements. Leave blank to use this node’s stream page.
+canonical-url-invalid = Enter a complete http:// or https:// URL.
+send-push-notification = Send push notification
+bluesky-post-permission-missing = you haven't given us permission to post Bluesky posts for you
+bluesky-post-permission-sign-in = sign in again with Bluesky access enabled to change this.
 search-placeholder = Search...
 search-for-streamers = Search for streamers...
 message-input = Enter your message...
