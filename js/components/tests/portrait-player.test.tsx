@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { PlayerInner } from "../../app/components/mobile/player";
 import { Fullscreen } from "../src/components/mobile-player/fullscreen.native";
 import { streamNotificationManager } from "../src/components/stream-notification/stream-notification-manager";
@@ -265,6 +265,12 @@ vi.mock("../src", bindings);
 
 let container: HTMLDivElement;
 let root: ReturnType<typeof createRoot>;
+let MobileUi: typeof import("../../app/components/mobile/ui").MobileUi;
+beforeAll(async () => {
+  ({ MobileUi } = await vi.importActual<
+    typeof import("../../app/components/mobile/ui")
+  >("../../app/components/mobile/ui"));
+});
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   fixture.window = { width: 390, height: 844 };
@@ -283,9 +289,6 @@ it.each(["ios", "web"])(
   "puts the streamer profile above the audience notice on %s",
   async (platform) => {
     fixture.platform = platform;
-    const { MobileUi } = await vi.importActual<
-      typeof import("../../app/components/mobile/ui")
-    >("../../app/components/mobile/ui");
     await act(async () => root.render(<MobileUi hideMobileChat />));
     const profile = container.querySelector<HTMLButtonElement>(
       '[aria-label="Open profile for streamer.example"]',
